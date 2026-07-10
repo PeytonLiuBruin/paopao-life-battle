@@ -1,0 +1,9109 @@
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+  const buildVersion = "1.1.91";
+  const curtain = document.getElementById("curtain");
+  const startButton = document.getElementById("startButton");
+  const titleMark = document.querySelector(".title-mark");
+  const startTransition = document.getElementById("startTransition");
+  const endStats = document.getElementById("endStats");
+  const waterFill = document.getElementById("waterFill");
+  const waterValue = document.getElementById("waterValue");
+  const waterBlock = document.querySelector(".water-block");
+  const heartBubbles = Array.from(document.querySelectorAll(".heart-bubble"));
+  const comboChip = document.getElementById("comboChip");
+  const scoreEl = document.getElementById("score");
+  const timeEl = document.getElementById("timeValue");
+  const difficultyEl = document.getElementById("difficultyLevel");
+  const clearSkillButton = document.getElementById("clearSkill");
+  const clearSkillValue = document.getElementById("clearSkillValue");
+  const perfDebug = document.getElementById("perfDebug");
+  const debugLevelSelect = document.getElementById("debugLevel");
+  const debugJumpButton = document.getElementById("debugJump");
+  const debugStageInfo = document.getElementById("debugStageInfo");
+  const bubbleAtlas = new Image();
+  const bombBubbleImage = new Image();
+  bombBubbleImage.src = "./assets/bomb-bubble.png";
+  const bleachBubbleImage = new Image();
+  bleachBubbleImage.src = "./assets/bleach-bubble.png";
+  const catBubbleImage = new Image();
+  catBubbleImage.src = "./assets/cat-bubble.png";
+  const bubbleSpriteCell = 192;
+  const bubbleSpriteCols = 5;
+  const bubbleSpriteAnimationFrames = 140;
+  const bubbleSpriteAnimationCols = 20;
+  const bubbleSpriteAnimationRows = 7;
+  const bubbleSpriteAnimationSeconds = 10;
+  const bubbleSpriteSetCount = 2;
+  const bubbleSpriteFramePages = Array.from({ length: bubbleSpriteSetCount }, () => [[], []]);
+  for (let setIndex = 0; setIndex < bubbleSpriteFramePages.length; setIndex += 1) {
+    for (let colorIndex = 0; colorIndex < bubbleSpriteFramePages[setIndex].length; colorIndex += 1) {
+      const colorName = colorIndex === 0 ? "blue" : "pink";
+      for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
+        const image = new Image();
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.1.91`;
+        bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
+      }
+    }
+  }
+  const targetFrameMs = 1000 / 60;
+  const maxActiveBubbles = 12;
+  const spawnProtectionSeconds = 0.82;
+  const spawnProtectionIterations = 1;
+  const spawnProtectionStiffness = 0.24;
+  const spawnProtectionRestitution = 0.04;
+  const spawnProtectionFriction = 0.018;
+  const maxParticles = 72;
+  const maxRipples = 32;
+  const maxBlasts = 4;
+  const maxFloaters = 10;
+  const maxHints = 10;
+  const debugUpdateMs = 500;
+  const backgroundVisualScale = 0.8;
+  const performanceProfiles = [
+    {
+      name: "high",
+      dprCap: 1,
+      maxCanvasPixels: 520000,
+      backgroundScale: backgroundVisualScale,
+      backgroundFps: 42,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: true,
+      particles: maxParticles,
+      ripples: maxRipples,
+      blasts: maxBlasts,
+      floaters: maxFloaters,
+      hints: maxHints,
+      effectChance: 0.86,
+      bubbleDetail: 0.82,
+      textureOverlay: false,
+      fullScreenOverlays: true,
+      smoothingQuality: "high",
+    },
+    {
+      name: "balanced",
+      dprCap: 1,
+      maxCanvasPixels: 440000,
+      backgroundScale: backgroundVisualScale * 0.95,
+      backgroundFps: 36,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: true,
+      particles: 48,
+      ripples: 22,
+      blasts: maxBlasts,
+      floaters: 8,
+      hints: 7,
+      effectChance: 0.72,
+      bubbleDetail: 0.72,
+      textureOverlay: false,
+      fullScreenOverlays: true,
+      smoothingQuality: "medium",
+    },
+    {
+      name: "saver",
+      dprCap: 1,
+      maxCanvasPixels: 360000,
+      backgroundScale: backgroundVisualScale * 0.875,
+      backgroundFps: 28,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: false,
+      particles: 28,
+      ripples: 14,
+      blasts: 3,
+      floaters: 6,
+      hints: 5,
+      effectChance: 0.58,
+      bubbleDetail: 0.68,
+      textureOverlay: false,
+      fullScreenOverlays: false,
+      smoothingQuality: "medium",
+    },
+    {
+      name: "cool",
+      dprCap: 1,
+      maxCanvasPixels: 300000,
+      backgroundScale: backgroundVisualScale * 0.8,
+      backgroundFps: 24,
+      backgroundFrameSkip: 1,
+      targetFps: 60,
+      contours: false,
+      particles: 14,
+      ripples: 8,
+      blasts: 2,
+      floaters: 4,
+      hints: 3,
+      effectChance: 0.34,
+      bubbleDetail: 0.52,
+      textureOverlay: false,
+      fullScreenOverlays: false,
+      smoothingQuality: "medium",
+    },
+  ];
+  const waterBudgetRounds = [
+    { count: 10, total: 300 },
+    { count: 17, total: 250 },
+    { count: 23, total: 200 },
+    { count: 29, total: 150 },
+    { count: 33, total: 150 },
+    { count: 36, total: 120 },
+  ];
+  const stageDurationMs = 20000;
+  const stageEndGraceMs = 3000;
+
+  const palette = [
+    { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
+    { name: "雾玫粉", color: "#d8899d", deep: "#a05f73", light: "#f0c7d3" },
+  ];
+  const backgroundPalette = [
+    { color: "#8fcbd4", deep: "#62aeba", light: "#d8f0f3" },
+    { color: "#ee9fac", deep: "#d88798", light: "#f7c9d0" },
+  ];
+
+  const openTone = makeOpenTone();
+  const clearTone = makeClearTone();
+  const whiteTone = makeWhiteTone();
+  const bombTone = makeBombTone();
+  const boundaryTone = "#c9b7d7";
+  const waterPressureCap = 132;
+  const bombCooldownMs = 60000;
+  const comboBaseWindow = 2350;
+  const comboMinWindow = 1450;
+  const decolorDuration = 4200;
+  const decolorWarningMs = 1500;
+  const bleachRequiredHits = 3;
+  const bleachLifetimeMs = 5000;
+  const catBubbleMinLevel = 1;
+  const catBubbleCooldownMs = 60000;
+  const catBubbleRollIntervalMs = 10000;
+  const catBubbleTapRequired = 4;
+  const catBubbleHoldMs = 760;
+  const catBubbleWaterGain = 25;
+  const chargeBubbleWarningSeconds = 0.72;
+  const chargeBubbleFuseMinSeconds = 3.2;
+  const chargeBubbleFuseMaxSeconds = 4.45;
+  const chargeBubblePenalty = 25;
+  const correctWaterGain = 0.1;
+  const mistakeWaterPenalty = 25;
+  const gameOverWaterThreshold = 25;
+  const customPackStorageKey = "paopao.customBubblePack.v1";
+  const localLeaderboardStorageKey = "paopao.localLeaderboard.v1";
+  const localLeaderboardLimit = 80;
+  const customPackSchema = "paopao-bubble-pack@1";
+  const fairMatchDwell = 2.5;
+  const structuredPathMinMatch = fairMatchDwell + 0.35;
+  const clearSkillMaxUses = 3;
+  const edgeCycle = ["left", "right", "bottom", "top"];
+  const spawnRegions = [
+    { edge: "left", min: 0.14, max: 0.38, aimX: 0.68, aimY: 0.32 },
+    { edge: "left", min: 0.36, max: 0.64, aimX: 0.68, aimY: 0.5 },
+    { edge: "left", min: 0.62, max: 0.86, aimX: 0.66, aimY: 0.68 },
+    { edge: "right", min: 0.14, max: 0.38, aimX: 0.32, aimY: 0.32 },
+    { edge: "right", min: 0.36, max: 0.64, aimX: 0.32, aimY: 0.5 },
+    { edge: "right", min: 0.62, max: 0.86, aimX: 0.34, aimY: 0.68 },
+    { edge: "top", min: 0.18, max: 0.42, aimX: 0.36, aimY: 0.7 },
+    { edge: "top", min: 0.44, max: 0.72, aimX: 0.58, aimY: 0.7 },
+    { edge: "bottom", min: 0.18, max: 0.42, aimX: 0.36, aimY: 0.3 },
+    { edge: "bottom", min: 0.44, max: 0.72, aimX: 0.58, aimY: 0.3 },
+  ];
+
+  const state = {
+    width: 0,
+    height: 0,
+    dpr: 1,
+    running: false,
+    lastTime: 0,
+    visualTime: 0,
+    elapsed: 0,
+    score: 0,
+    correctBubbleCount: 0,
+    poppedCount: 0,
+    water: 100,
+    waterPressure: 0,
+    hiddenLeak: 0,
+    hiddenLeakActive: false,
+    wrongStreak: 0,
+    lastUsefulActionAt: 0,
+    combo: 0,
+    bestCombo: 0,
+    comboPulse: 0,
+    comboUntil: 0,
+    comboRecoveryUntil: 0,
+    comboRecoveryPower: 0,
+    clearSkillCharge: 1,
+    clearSkillUses: 0,
+    waterRoundIndex: 0,
+    waterRoundSpawned: 0,
+    waterOpportunityCount: 0,
+    stagePlan: null,
+    stageLevel: 1,
+    stageStartAt: 0,
+    stageFinalSpawnAt: 0,
+    stageSpawned: 0,
+    stageTargetSpawned: 0,
+    stageCorrectPops: 0,
+    stageMissedTargets: 0,
+    stageWrongPops: 0,
+    bombComboProgress: 0,
+    bombComboTarget: 18,
+    nextBombAt: 0,
+    nextChargeAt: 0,
+    chargeWave: null,
+    chargeWaveCounter: 0,
+    chargeLastPattern: "",
+    bombSpawnCursor: 0,
+    difficultyTier: 0,
+    difficultyFlash: 0,
+    difficultyBanners: [],
+    openPopCount: 0,
+    colorCursor: 0,
+    edgeCursor: 0,
+    nextPowerAt: 22000,
+    nextStreamAt: 18000,
+    nextSpawnAt: 0,
+    bubbleCounter: 0,
+    customBubblePack: null,
+    customPackStatus: "",
+    customPackLastSpawnAt: 0,
+    customHoldPointerId: null,
+    customHoldBubbleUid: null,
+    customHoldX: 0,
+    customHoldY: 0,
+    catBubbleCounter: 0,
+    catBubbleSpawned: 0,
+    lastCatBubbleAt: -Infinity,
+    nextCatBubbleRollAt: 0,
+    catMistakeCounting: false,
+    catMistakeCount: 0,
+    catMistakeTarget: 0,
+    catHoldPointerId: null,
+    catHoldBubbleId: null,
+    catHoldX: 0,
+    catHoldY: 0,
+    openUntil: 0,
+    flash: 0,
+    mistakeFlash: 0,
+    bubbles: [],
+    particles: [],
+    ripples: [],
+    blasts: [],
+    floaters: [],
+    hints: [],
+    spawnFlow: null,
+    spawnFlowIndex: 0,
+    backgroundFlow: {
+      phase: "hold",
+      elapsed: 0,
+      step: 0,
+      current: null,
+      from: null,
+      target: null,
+      hold: 14000,
+      duration: 9000,
+    },
+    activePointerId: null,
+    lastSwipeX: 0,
+    lastSwipeY: 0,
+  };
+
+  let audioContext;
+  const soundFiles = {
+    start: ["start.mp3"],
+    small: ["bubble_pop_small_1.mp3"],
+    regular: ["bubble_pop_regular_1.mp3", "bubble_pop_regular_2.mp3", "bubble_pop_regular_3.mp3", "bubble_pop_regular_4.mp3"],
+    big: ["bubble_pop_big_1.mp3", "bubble_pop_big_2.mp3"],
+  };
+  const soundBuffers = new Map();
+  const soundLoaders = new Map();
+  const soundDecks = new Map();
+  const lastSoundByGroup = new Map();
+  const warmAudioElements = [];
+  const comboPitchWindowSeconds = 1.5;
+  let popPitchStreak = 0;
+  let lastPopSoundAt = Number.NEGATIVE_INFINITY;
+  let introRunning = false;
+  let frameRequest = 0;
+  let lastFrameTime = 0;
+  let perfFrames = 0;
+  let perfFps = 0;
+  let perfLastTime = 0;
+  let perfLastUpdate = 0;
+  let lastHudWater = null;
+  let waterGainUntil = 0;
+  let waterDrainUntil = 0;
+  let waterShockUntil = 0;
+  let waterCriticalUntil = 0;
+  let lastWaterBand = "safe";
+  let waterLowVibrationArmed = true;
+  let performanceTier = initialPerformanceTier();
+  let initialTier = performanceTier;
+  let performanceWorkMs = targetFrameMs * 0.35;
+  let performanceSlowSince = 0;
+  let performanceCoolSince = 0;
+  let performanceLastChangeAt = 0;
+  let performanceLastResizeDpr = 1;
+  const frameStatSize = 600;
+  const frameIntervals = new Float32Array(frameStatSize);
+  const frameWorkTimes = new Float32Array(frameStatSize);
+  let frameStatIndex = 0;
+  let frameStatCount = 0;
+  let frameJankCount = 0;
+  let frameWorstMs = 0;
+
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    const profile = currentPerformanceProfile();
+    state.width = Math.max(1, rect.width);
+    state.height = Math.max(1, rect.height);
+    state.dpr = desiredCanvasDpr();
+    performanceLastResizeDpr = state.dpr;
+    canvas.width = Math.floor(state.width * state.dpr);
+    canvas.height = Math.floor(state.height * state.dpr);
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = profile.smoothingQuality;
+    if (window.PaopaoBackgroundEngine) {
+      window.PaopaoBackgroundEngine.setQuality?.({
+        scale: profile.backgroundScale,
+        fps: profile.backgroundFps,
+        frameSkip: profile.backgroundFrameSkip,
+        contours: profile.contours,
+      });
+      window.PaopaoBackgroundEngine.resize(state.width, state.height);
+    }
+  }
+
+  function rand(min, max) {
+    return min + Math.random() * (max - min);
+  }
+
+  function pickColorIndex() {
+    return Math.floor(Math.random() * palette.length);
+  }
+
+  function choose(list) {
+    return list[Math.floor(rand(0, list.length))];
+  }
+
+  function normalizeRange(value, fallback, min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY) {
+    const source = Array.isArray(value) ? value : [value, value];
+    const fallbackSource = Array.isArray(fallback) ? fallback : [fallback, fallback];
+    const first = Number.isFinite(Number(source[0])) ? Number(source[0]) : Number(fallbackSource[0]);
+    const second = Number.isFinite(Number(source[1])) ? Number(source[1]) : Number(fallbackSource[1] ?? fallbackSource[0]);
+    const low = clamp(Math.min(first, second), min, max);
+    const high = clamp(Math.max(first, second), min, max);
+    return [low, high];
+  }
+
+  function pickRange(range, fallback = 0) {
+    const normalized = normalizeRange(range, fallback);
+    return rand(normalized[0], normalized[1]);
+  }
+
+  function normalizeCustomPath(path) {
+    if (!path || typeof path !== "object") {
+      return { mode: "auto", points: [], curve: 0.68 };
+    }
+    const mode = path.mode === "draw" ? "draw" : path.mode === "points" ? "points" : "auto";
+    const rawCurve = Number(path.curve ?? path.smoothness ?? 0.68);
+    const curve = Number.isFinite(rawCurve) ? clamp(rawCurve, 0, 1) : 0.68;
+    const points = (Array.isArray(path.points) ? path.points : [])
+      .map((point) => ({
+        x: clamp(Number(point?.x), 0, 1),
+        y: clamp(Number(point?.y), 0, 1),
+      }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .slice(0, 96);
+    return {
+      mode: points.length >= 2 ? mode : "auto",
+      points: points.length >= 2 ? simplifyCustomPath(points) : [],
+      curve,
+    };
+  }
+
+  function simplifyCustomPath(points) {
+    if (points.length <= 48) return points;
+    const simplified = [points[0]];
+    const step = (points.length - 1) / 46;
+    for (let index = 1; index < 47; index += 1) {
+      simplified.push(points[Math.round(index * step)]);
+    }
+    simplified.push(points[points.length - 1]);
+    return simplified;
+  }
+
+  function normalizeCustomBubbleTemplate(template, index) {
+    if (!template || typeof template !== "object") return null;
+    const trajectoryChoices = ["straight", "softS", "arc", "zigzag", "spray", "fan", "sGroup", "arcDuo"];
+    const edgeChoices = ["random", "left", "right", "top", "bottom"];
+    const colorChoices = ["auto", "random", "background", "left", "right"];
+    const tapCount = clamp(Math.round(Number(template.tapCount ?? template.tapRequired ?? 1)), 0, 9);
+    const count = normalizeRange(template.count ?? template.repeat, [1, 1], 1, 12);
+    const size = normalizeRange(template.size ?? template.radius, [30, 44], 14, 86);
+    const bubbleCount = Math.round((count[0] + count[1]) * 0.5);
+    const sizes = Array.from({ length: bubbleCount }, (_, sizeIndex) => {
+      const raw = Array.isArray(template.sizes) ? Number(template.sizes[sizeIndex]) : NaN;
+      return clamp(Math.round(Number.isFinite(raw) ? raw : (size[0] + size[1]) * 0.5), 14, 86);
+    });
+    return {
+      id: String(template.id || `bubble-${index + 1}`),
+      label: String(template.label || template.name || `Bubble ${index + 1}`).slice(0, 28),
+      weight: clamp(Number(template.weight ?? 1), 0.05, 20),
+      levelMin: clamp(Math.round(Number(template.levelMin ?? template.minLevel ?? 1)), 1, 99),
+      levelMax: clamp(Math.round(Number(template.levelMax ?? template.maxLevel ?? 99)), 1, 99),
+      count,
+      spacing: normalizeRange(template.spacing ?? template.spacingPx, [8, 18], 0, 80),
+      spacingMs: normalizeRange(template.spacingMs ?? template.delayMs, [70, 130], 0, 1400),
+      size,
+      sizes,
+      speed: normalizeRange(template.speed, [48, 82], 8, 260),
+      tapCount: tapCount <= 0 ? 1 : tapCount,
+      holdMs: 0,
+      edge: edgeChoices.includes(template.edge) ? template.edge : "random",
+      lane: normalizeRange(template.lane, [0.22, 0.78], 0.08, 0.92),
+      aimX: normalizeRange(template.aimX ?? template.aim?.x, [0.3, 0.7], 0.05, 0.95),
+      aimY: normalizeRange(template.aimY ?? template.aim?.y, [0.24, 0.76], 0.05, 0.95),
+      trajectory: trajectoryChoices.includes(template.trajectory) ? template.trajectory : "straight",
+      amplitude: normalizeRange(template.amplitude, [0, 12], 0, 64),
+      frequency: normalizeRange(template.frequency, [1.4, 2.6], 0.4, 8),
+      arcBend: normalizeRange(template.arcBend, [0, 0], -110, 110),
+      arcLife: normalizeRange(template.arcLife, [2.1, 3.2], 0.5, 8),
+      colorMode: colorChoices.includes(template.colorMode ?? template.color) ? (template.colorMode ?? template.color) : "auto",
+      path: normalizeCustomPath(template.path),
+    };
+  }
+
+  function normalizeCustomBubblePack(input) {
+    let pack = input;
+    if (typeof pack === "string") {
+      try {
+        pack = JSON.parse(pack);
+      } catch {
+        return null;
+      }
+    }
+    if (!pack || typeof pack !== "object") return null;
+    const bubbles = (Array.isArray(pack.bubbles) ? pack.bubbles : [])
+      .map(normalizeCustomBubbleTemplate)
+      .filter(Boolean);
+    if (!bubbles.length) return null;
+    const spawn = pack.spawn && typeof pack.spawn === "object" ? pack.spawn : {};
+    return {
+      schema: customPackSchema,
+      name: String(pack.name || "Custom bubble pack").slice(0, 40),
+      description: String(pack.description || "").slice(0, 160),
+      spawn: {
+        minLevel: clamp(Math.round(Number(spawn.minLevel ?? 1)), 1, 99),
+        chance: clamp(Number(spawn.chance ?? 0.72), 0, 1),
+        intervalMs: normalizeRange(spawn.intervalMs, [520, 920], 160, 2400),
+        maxActive: clamp(Math.round(Number(spawn.maxActive ?? maxActiveBubbles)), 1, maxActiveBubbles),
+      },
+      bubbles,
+    };
+  }
+
+  function loadCustomBubblePack() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("pack") === "off") {
+      return null;
+    }
+    if (params.get("pack") === "clear") {
+      try {
+        window.localStorage.removeItem(customPackStorageKey);
+      } catch {
+        return null;
+      }
+      return null;
+    }
+    try {
+      return normalizeCustomBubblePack(window.localStorage.getItem(customPackStorageKey));
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCustomBubblePack(pack) {
+    const normalized = normalizeCustomBubblePack(pack);
+    try {
+      if (normalized) {
+        window.localStorage.setItem(customPackStorageKey, JSON.stringify(normalized));
+      } else {
+        window.localStorage.removeItem(customPackStorageKey);
+      }
+    } catch {
+      return null;
+    }
+    return normalized;
+  }
+
+  function colorWithAlpha(hex, alpha) {
+    const value = hex.replace("#", "");
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  function mixHex(a, b, amount) {
+    const read = (hex, start) => parseInt(hex.slice(start, start + 2), 16);
+    const ar = read(a, 1);
+    const ag = read(a, 3);
+    const ab = read(a, 5);
+    const br = read(b, 1);
+    const bg = read(b, 3);
+    const bb = read(b, 5);
+    const blend = (x, y) => Math.round(x + (y - x) * amount).toString(16).padStart(2, "0");
+    return `#${blend(ar, br)}${blend(ag, bg)}${blend(ab, bb)}`;
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function smoothstep(edge0, edge1, value) {
+    const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
+  function shortestAngleDelta(from, to) {
+    return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  }
+
+  function easeVelocityToward(bubble, desired, dt, options = {}) {
+    const desiredSpeed = Math.hypot(desired.vx, desired.vy);
+    if (!bubble || desiredSpeed <= 0.001) return;
+
+    const currentSpeed = Math.hypot(bubble.vx, bubble.vy);
+    if (currentSpeed <= 0.001) {
+      bubble.vx = desired.vx;
+      bubble.vy = desired.vy;
+      return;
+    }
+
+    const maxTurnRate = options.maxTurnRate ?? 1.35;
+    const maxTurn = Math.max(0.012, maxTurnRate * dt);
+    const currentAngle = Math.atan2(bubble.vy, bubble.vx);
+    const desiredAngle = Math.atan2(desired.vy, desired.vx);
+    const nextAngle = currentAngle + clamp(shortestAngleDelta(currentAngle, desiredAngle), -maxTurn, maxTurn);
+    const blend = clamp(options.blend ?? 0.08, 0, 0.42);
+    const nextSpeed = currentSpeed + (desiredSpeed - currentSpeed) * blend;
+
+    bubble.vx = Math.cos(nextAngle) * nextSpeed;
+    bubble.vy = Math.sin(nextAngle) * nextSpeed;
+  }
+
+  function safeSpawnAxisMargin(edge, radius = 0) {
+    const axis = edge === "left" || edge === "right" ? state.height : state.width;
+    const softEdge = axis * 0.17;
+    return clamp(Math.max(72, radius * 3.1, softEdge), 68, axis * 0.3);
+  }
+
+  function safePlayfieldMargin(radius = 0, extra = 0) {
+    const side = Math.min(state.width || 0, state.height || 0);
+    return Math.max(34 + extra, radius * 1.9 + extra, side * 0.064);
+  }
+
+  function clampToReadablePlayfield(point, radius = 0, extra = 0) {
+    const margin = safePlayfieldMargin(radius, extra);
+    return {
+      x: clamp(point.x, margin, state.width - margin),
+      y: clamp(point.y, margin, state.height - margin),
+    };
+  }
+
+  function isLikelyMobileDevice() {
+    try {
+      return window.matchMedia?.("(pointer: coarse)").matches || Math.min(window.innerWidth, window.innerHeight) <= 760;
+    } catch {
+      return Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 760;
+    }
+  }
+
+  function initialPerformanceTier() {
+    const cores = navigator.hardwareConcurrency || 4;
+    const memory = navigator.deviceMemory || 4;
+    const dpr = window.devicePixelRatio || 1;
+    const mobile = isLikelyMobileDevice();
+    if (cores <= 2 || memory <= 2) return 2;
+    if (mobile && (cores <= 4 || memory <= 3 || dpr >= 2.5)) return 1;
+    return 0;
+  }
+
+  function currentPerformanceProfile() {
+    return performanceProfiles[clamp(Math.round(performanceTier), 0, performanceProfiles.length - 1)] ?? performanceProfiles[0];
+  }
+
+  function desiredCanvasDpr() {
+    const rawDpr = window.devicePixelRatio || 1;
+    const profile = currentPerformanceProfile();
+    const area = Math.max(1, state.width * state.height);
+    const areaCap = Math.sqrt((profile.maxCanvasPixels || 900000) / area);
+    return Math.max(1, Math.min(rawDpr, profile.dprCap, areaCap));
+  }
+
+  function currentTargetFrameMs() {
+    return 1000 / clamp(currentPerformanceProfile().targetFps || 60, 30, 60);
+  }
+
+  function thermalTierFloor() {
+    if (!state.running || !isLikelyMobileDevice()) return initialTier;
+    const minutes = state.elapsed / 60000;
+    if (minutes >= 42) return Math.max(initialTier, 2);
+    if (minutes >= 18) return Math.max(initialTier, 1);
+    return initialTier;
+  }
+
+  function applyPerformanceProfile() {
+    const profile = currentPerformanceProfile();
+    if (window.PaopaoBackgroundEngine) {
+      window.PaopaoBackgroundEngine.setQuality?.({
+        scale: profile.backgroundScale,
+        fps: profile.backgroundFps,
+        frameSkip: profile.backgroundFrameSkip,
+        contours: profile.contours,
+      });
+    }
+    const nextDpr = desiredCanvasDpr();
+    if (state.width > 0 && Math.abs(nextDpr - performanceLastResizeDpr) > 0.04) {
+      resize();
+    }
+    trimRuntimeEffects();
+  }
+
+  function setPerformanceTier(nextTier, now = performance.now()) {
+    const clamped = clamp(Math.round(nextTier), 0, performanceProfiles.length - 1);
+    if (clamped === performanceTier) return;
+    performanceTier = clamped;
+    performanceLastChangeAt = now;
+    performanceSlowSince = 0;
+    performanceCoolSince = 0;
+    applyPerformanceProfile();
+  }
+
+  function effectLimit(name) {
+    const value = currentPerformanceProfile()[name];
+    if (Number.isFinite(value)) return Math.max(0, Math.floor(value));
+    if (name === "ripples") return maxRipples;
+    if (name === "blasts") return maxBlasts;
+    if (name === "floaters") return maxFloaters;
+    if (name === "hints") return maxHints;
+    return maxParticles;
+  }
+
+  function allowDecorativeEffect(priority = 1) {
+    const chance = currentPerformanceProfile().effectChance;
+    return chance >= 1 || Math.random() < clamp(chance * priority, 0, 1);
+  }
+
+  function updateAdaptivePerformance(now, frameElapsedMs, workMs) {
+    performanceWorkMs = performanceWorkMs * 0.88 + workMs * 0.12;
+    const floor = thermalTierFloor();
+    if (performanceTier < floor && now - performanceLastChangeAt > 3500) {
+      setPerformanceTier(floor, now);
+      return;
+    }
+
+    const frameBudget = currentTargetFrameMs();
+    const targetFps = currentPerformanceProfile().targetFps || 60;
+    const slowFrame = frameElapsedMs > frameBudget * 1.7 || performanceWorkMs > frameBudget * 0.72 || (perfFps > 0 && perfFps < targetFps * 0.78);
+    const coolFrame = performanceWorkMs < frameBudget * 0.4 && (!perfFps || perfFps >= targetFps * 0.94);
+
+    if (slowFrame) {
+      performanceSlowSince ||= now;
+      performanceCoolSince = 0;
+    } else if (coolFrame) {
+      performanceCoolSince ||= now;
+      performanceSlowSince = 0;
+    } else {
+      performanceSlowSince = 0;
+      performanceCoolSince = 0;
+    }
+
+    if (performanceSlowSince && now - performanceSlowSince > 3600 && now - performanceLastChangeAt > 6200) {
+      setPerformanceTier(performanceTier + 1, now);
+    } else if (
+      performanceCoolSince &&
+      now - performanceCoolSince > 18000 &&
+      now - performanceLastChangeAt > 14000 &&
+      performanceTier > floor
+    ) {
+      setPerformanceTier(performanceTier - 1, now);
+    }
+  }
+
+  function trimArray(list, maxLength) {
+    if (list.length > maxLength) {
+      list.splice(0, list.length - maxLength);
+    }
+  }
+
+  function trimRuntimeEffects() {
+    trimArray(state.particles, effectLimit("particles"));
+    trimArray(state.ripples, effectLimit("ripples"));
+    trimArray(state.blasts, effectLimit("blasts"));
+    trimArray(state.floaters, effectLimit("floaters"));
+    trimArray(state.hints, effectLimit("hints"));
+  }
+
+  function resetFrameStats() {
+    frameStatIndex = 0;
+    frameStatCount = 0;
+    frameJankCount = 0;
+    frameWorstMs = 0;
+  }
+
+  function recordFrameStats(frameMs, workMs) {
+    if (!Number.isFinite(frameMs) || frameMs <= 0) return;
+    const target = currentTargetFrameMs();
+    frameIntervals[frameStatIndex] = frameMs;
+    frameWorkTimes[frameStatIndex] = Number.isFinite(workMs) ? workMs : 0;
+    frameStatIndex = (frameStatIndex + 1) % frameStatSize;
+    frameStatCount = Math.min(frameStatSize, frameStatCount + 1);
+    frameWorstMs = Math.max(frameWorstMs, frameMs);
+    if (frameMs > target * 1.55 || frameMs > 28) {
+      frameJankCount += 1;
+    }
+  }
+
+  function percentile(sorted, percent) {
+    if (!sorted.length) return 0;
+    const index = clamp(Math.ceil(sorted.length * percent) - 1, 0, sorted.length - 1);
+    return sorted[index];
+  }
+
+  function frameStatsSummary() {
+    if (!frameStatCount) {
+      return { p95: 0, p99: 0, avgWork: performanceWorkMs, jank: 0, worst: 0 };
+    }
+    const frames = Array.from(frameIntervals.slice(0, frameStatCount)).sort((a, b) => a - b);
+    let workTotal = 0;
+    for (let i = 0; i < frameStatCount; i += 1) {
+      workTotal += frameWorkTimes[i];
+    }
+    return {
+      p95: percentile(frames, 0.95),
+      p99: percentile(frames, 0.99),
+      avgWork: workTotal / frameStatCount,
+      jank: frameJankCount,
+      worst: frameWorstMs,
+    };
+  }
+
+  function clearRuntimeEffects() {
+    state.bubbles = [];
+    state.particles = [];
+    state.ripples = [];
+    state.blasts = [];
+    state.floaters = [];
+    state.hints = [];
+    state.difficultyBanners = [];
+    state.activePointerId = null;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
+  }
+
+  function updatePerfDebug(now = performance.now(), force = false) {
+    if (!perfDebug || (!force && now - perfLastUpdate < debugUpdateMs)) return;
+    perfLastUpdate = now;
+    const profile = currentPerformanceProfile();
+    const megapixels = ((canvas.width * canvas.height) / 1000000).toFixed(2);
+    const stats = frameStatsSummary();
+    perfDebug.textContent =
+      `FPS ${Math.round(perfFps || 0)}/${profile.targetFps} ${profile.name} ` +
+      `p95 ${stats.p95.toFixed(1)} p99 ${stats.p99.toFixed(1)} ` +
+      `j${stats.jank} max${stats.worst.toFixed(0)} ` +
+      `w${stats.avgWork.toFixed(1)} dpr${state.dpr.toFixed(2)} ${megapixels}MP`;
+  }
+
+  function scheduleLoop() {
+    if (frameRequest || document.hidden || !state.running) return;
+    frameRequest = requestAnimationFrame(loop);
+  }
+
+  function displayDifficultyLevel() {
+    return Math.max(1, state.stageLevel || 1);
+  }
+
+  function targetCorrectRateForLevel(level) {
+    return clamp(
+      0.55 +
+        (level - 1) * 0.03 +
+        smoothstep(2, 7, level) * 0.09 +
+        smoothstep(7, 13, level) * 0.07 +
+        smoothstep(13, 24, level) * 0.02,
+      0.55,
+      0.98,
+    );
+  }
+
+  function bubbleCountForLevel(level) {
+    const budget = waterBudgetRounds[Math.min(level - 1, waterBudgetRounds.length - 1)];
+    if (level <= waterBudgetRounds.length) return budget.count;
+    const extra = level - waterBudgetRounds.length;
+    return Math.round(clamp(budget.count + extra * 1.08, budget.count, 44));
+  }
+
+  function activeBubbleLimit(level = displayDifficultyLevel()) {
+    const base = level <= 4 ? maxActiveBubbles : level <= 8 ? 7 : 6;
+    try {
+      if (isIslandChoreoPattern(currentBackgroundPatternId())) {
+        return Math.max(base, 10);
+      }
+    } catch {
+      return base;
+    }
+    return base;
+  }
+
+  function bubbleCapacityWeight(bubble) {
+    if (!bubble) return 0;
+    if ((bubble.islandChainId || bubble.pathLockedMotion) && bubble.age < 0) return 1;
+    if (bubble.age < -1.15) return 0.18;
+    if (bubble.age < -0.28) return 0.35;
+    return 1;
+  }
+
+  function bubbleCapacityPressure() {
+    return state.bubbles.reduce((sum, bubble) => sum + bubbleCapacityWeight(bubble), 0);
+  }
+
+  function bubbleCapacityRemaining(level = displayDifficultyLevel()) {
+    return Math.max(0, Math.floor(activeBubbleLimit(level) - bubbleCapacityPressure()));
+  }
+
+  function levelWaterDrainRate(level) {
+    const p = clamp((level - 1) / 14, 0, 1);
+    return clamp(
+      1.16 +
+        p * 1.15 +
+        smoothstep(1, 5, level) * 0.42 +
+        smoothstep(5, 11, level) * 0.34,
+      1.16,
+      3.05,
+    );
+  }
+
+  function stageWaterBudgetForLevel(level) {
+    const targetBubbles = Math.max(1, Math.round(bubbleCountForLevel(level) * targetCorrectRateForLevel(level)));
+    const sustain = level <= 3 ? 1.16 : level <= 8 ? 1.03 : level <= 15 ? 0.92 : 0.88;
+    const perTargetFloor = level <= 3 ? 0.16 : level <= 8 ? 0.085 : 0.052;
+    return levelWaterDrainRate(level) * (stageDurationMs / 1000) * sustain + targetBubbles * perTargetFloor;
+  }
+
+  function averageBubbleMissPenaltyForLevel(level) {
+    const p = clamp((level - 1) / 14, 0, 1);
+    return clamp(
+      0.62 +
+        p * 1.18 +
+        smoothstep(2, 8, level) * 0.34 +
+        smoothstep(7, 16, level) * 0.22,
+      0.62,
+      2.36,
+    );
+  }
+
+  function stageTypeWeights(level) {
+    const cappedLevel = Math.min(level, 10);
+    if (level <= 1) {
+      return {
+        bigRise: 0.3,
+        bigSide: 0.24,
+        normal: 0.46,
+        crossArc: 0,
+        machine: 0,
+        sGroup: 0,
+      };
+    }
+    const weights = {
+      bigRise: level <= 3 ? 0.18 : level <= 7 ? 0.15 : 0.13,
+      bigSide: level <= 3 ? 0.15 : level <= 7 ? 0.14 : 0.12,
+      normal: level <= 3 ? 0.28 : level <= 6 ? 0.25 : 0.22,
+      crossArc: level >= 2 ? 0.19 + cappedLevel * 0.011 : 0,
+      machine: level >= 3 ? 0.1 + cappedLevel * 0.008 : 0,
+      sGroup: level >= 2 ? 0.075 + cappedLevel * 0.008 : 0,
+    };
+    return weights;
+  }
+
+  function makeStagePlan(level) {
+    const totalBubbles = bubbleCountForLevel(level);
+    const correctRate = targetCorrectRateForLevel(level);
+    const targetBubbles = Math.max(1, Math.round(totalBubbles * correctRate));
+    const naturalDrainBudget = levelWaterDrainRate(level) * (stageDurationMs / 1000) * 1.06;
+    const baseMissPenalty = averageBubbleMissPenaltyForLevel(level);
+    const rewardCap = clamp(2.35 - smoothstep(4, 15, level) * 0.72, 1.42, 2.35);
+    const baseCorrectWater = clamp(
+      (naturalDrainBudget / totalBubbles + (1 - correctRate) * baseMissPenalty) / correctRate,
+      0.16,
+      rewardCap,
+    );
+    const baseWrongPenalty = baseMissPenalty * (1.58 + smoothstep(3, 12, level) * 0.28);
+    const totalWater = baseCorrectWater * targetBubbles;
+    return {
+      level,
+      totalBubbles,
+      targetBubbles,
+      correctRate,
+      totalWater,
+      perTargetWater: baseCorrectWater,
+      baseCorrectWater,
+      baseMissPenalty,
+      baseWrongPenalty,
+      weights: stageTypeWeights(level),
+    };
+  }
+
+  function resetStagePlan(level = displayDifficultyLevel()) {
+    state.stageLevel = level;
+    state.stagePlan = makeStagePlan(level);
+    state.stageStartAt = state.elapsed;
+    state.stageFinalSpawnAt = 0;
+    state.stageSpawned = 0;
+    state.stageTargetSpawned = 0;
+    state.stageCorrectPops = 0;
+    state.stageMissedTargets = 0;
+    state.stageWrongPops = 0;
+    state.spawnFlow = null;
+    state.spawnFlowIndex = 0;
+    state.waterPressure = 0;
+    state.nextSpawnAt = Math.min(state.nextSpawnAt || state.elapsed + 140, state.elapsed + 180);
+  }
+
+  function stageElapsedMs() {
+    return Math.max(0, state.elapsed - state.stageStartAt);
+  }
+
+  function stageRemainingBubbles() {
+    if (!state.stagePlan) return 0;
+    return Math.max(0, state.stagePlan.totalBubbles - state.stageSpawned);
+  }
+
+  function stageCompletion() {
+    if (!state.stagePlan) return 0;
+    return clamp(state.stageSpawned / Math.max(1, state.stagePlan.totalBubbles), 0, 1);
+  }
+
+  function activeStageTargetCount() {
+    return state.bubbles.reduce(
+      (count, bubble) =>
+        count +
+        (bubble.stageLevel === state.stageLevel && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0 ? 1 : 0),
+      0,
+    );
+  }
+
+  function applyStageAccuracyGate() {
+    return true;
+  }
+
+  function maybeAdvanceStage() {
+    if (!state.stagePlan) {
+      resetStagePlan(1);
+      return;
+    }
+    if (stageRemainingBubbles() > 0) return;
+    if (!state.stageFinalSpawnAt) state.stageFinalSpawnAt = state.elapsed;
+    const activeTargets = activeStageTargetCount();
+    const graceDone = state.elapsed - state.stageFinalSpawnAt >= stageEndGraceMs;
+    if (activeTargets > 0 && !graceDone) return;
+    const nextLevel = state.stageLevel + 1;
+    triggerDifficultyUp(nextLevel - 1);
+    resetStagePlan(nextLevel);
+  }
+
+  function backgroundTimingForLevel(level) {
+    const p = clamp((level - 1) / 14, 0, 1);
+    const earlyMotion = smoothstep(1, 4, level);
+    const midMotion = smoothstep(3, 8, level);
+    const lateMotion = smoothstep(7, 16, level);
+    return {
+      hold: clamp(6200 - earlyMotion * 1700 - midMotion * 2200 - lateMotion * 1800 - p * 800, 360, 6200),
+      duration: clamp(7800 - earlyMotion * 500 - midMotion * 700 + lateMotion * 2200, 5400, 9800),
+    };
+  }
+
+  function makeBackgroundLayout(level, step = 0) {
+    const p = clamp((level - 1) / 18, 0, 1);
+    const motion = 0.68 + smoothstep(1, 5, level) * 1.04 + smoothstep(7, 18, level) * 0.26;
+    const turn = smoothstep(1.2, 7, level);
+    const baseAngle = turn * Math.PI * 0.5;
+    const angleSway = (0.075 + smoothstep(2, 7, level) * 0.25 + smoothstep(7, 18, level) * 0.08) * Math.sin(step * 0.72);
+    const lateRoll = smoothstep(5, 18, level) * Math.sin(step * 0.37 + 0.8) * 0.32;
+    const mode = step % 8;
+    const splitAmp = level < 2 ? 0.075 : level < 4 ? 0.13 : level < 6 ? 0.18 : level < 8 ? 0.24 : 0.28 + p * 0.05;
+    const curveAmp = level < 2 ? 0.06 : level < 4 ? 0.105 : level < 6 ? 0.15 : level < 8 ? 0.19 : 0.23 + p * 0.035;
+    const width = level < 4 ? 0.03 : clamp(0.032 + Math.sin(step * 0.48) * (0.005 + p * 0.013), 0.023, 0.056);
+    const splitWave = [0.18, -0.34, 0.48, -0.28, 0.62, -0.46, 0.3, -0.2][mode];
+    const curveWave = [0.34, -0.28, 0.46, -0.58, 0.72, -0.42, 0.5, -0.32][mode];
+    return {
+      split: clamp(0.5 + splitAmp * splitWave * motion, 0.28, 0.72),
+      angle: clamp(baseAngle + angleSway + lateRoll, -0.16, Math.PI * 0.5),
+      curve: curveAmp * curveWave * motion,
+      phase: ((step * (level >= 7 ? 0.105 : 0.15)) % 1) + 0.08,
+      freq: 0.58 + (mode % 4) * 0.08 + p * 0.18,
+      width,
+    };
+  }
+
+  function mixBackgroundLayout(from, to, amount) {
+    return {
+      split: from.split + (to.split - from.split) * amount,
+      angle: (from.angle ?? 0) + ((to.angle ?? 0) - (from.angle ?? 0)) * amount,
+      curve: from.curve + (to.curve - from.curve) * amount,
+      phase: from.phase + (to.phase - from.phase) * amount,
+      freq: from.freq + (to.freq - from.freq) * amount,
+      width: from.width + (to.width - from.width) * amount,
+    };
+  }
+
+  function ensureBackgroundFlow() {
+    const flow = state.backgroundFlow;
+    if (flow.current) return;
+    const initial = makeBackgroundLayout(1, 0);
+    flow.phase = "hold";
+    flow.elapsed = 0;
+    flow.step = 0;
+    flow.current = initial;
+    flow.from = initial;
+    flow.target = initial;
+    Object.assign(flow, backgroundTimingForLevel(1));
+  }
+
+  function resetBackgroundFlow() {
+    state.backgroundFlow.current = null;
+    ensureBackgroundFlow();
+  }
+
+  function updateBackgroundFlow(dt) {
+    ensureBackgroundFlow();
+    const flow = state.backgroundFlow;
+    const level = displayDifficultyLevel();
+    const timing = backgroundTimingForLevel(level);
+    flow.elapsed += dt * 1000;
+
+    if (flow.phase === "hold") {
+      flow.hold = timing.hold;
+      if (flow.elapsed < flow.hold) return;
+      flow.phase = "move";
+      flow.elapsed = 0;
+      flow.duration = timing.duration;
+      flow.from = { ...flow.current };
+      flow.step += 1;
+      flow.target = makeBackgroundLayout(level, flow.step);
+      return;
+    }
+
+    const amount = smoothstep(0, 1, flow.elapsed / Math.max(1, flow.duration));
+    flow.current = mixBackgroundLayout(flow.from, flow.target, amount);
+    if (flow.elapsed >= flow.duration) {
+      flow.current = { ...flow.target };
+      flow.phase = "hold";
+      flow.elapsed = 0;
+      flow.hold = timing.hold;
+    }
+  }
+
+  function backgroundLayoutAt() {
+    ensureBackgroundFlow();
+    return state.backgroundFlow.current;
+  }
+
+  function backgroundAxes(layout = backgroundLayoutAt()) {
+    const cornerPower = levelThreeCornerPower();
+    const cornerElapsed = Math.max(0, state.elapsed - state.stageStartAt);
+    const cornerAngle = Math.PI * 0.31 + Math.sin(cornerElapsed / 6200) * 0.035;
+    const angle = (layout.angle ?? 0) + (cornerAngle - (layout.angle ?? 0)) * cornerPower;
+    return {
+      nx: Math.cos(angle),
+      ny: Math.sin(angle),
+      tx: -Math.sin(angle),
+      ty: Math.cos(angle),
+    };
+  }
+
+  function levelThreeCornerPower() {
+    if (displayDifficultyLevel() !== 3) return 0;
+    return smoothstep(0, 2600, Math.max(0, state.elapsed - state.stageStartAt));
+  }
+
+  function levelThreeCornerTravel() {
+    const elapsed = Math.max(0, state.elapsed - state.stageStartAt);
+    return smoothstep(0, 1, clamp(elapsed / 15800, 0, 1));
+  }
+
+  function bellCurve(value, center, width) {
+    const distance = (value - center) / Math.max(0.001, width);
+    return Math.exp(-distance * distance * 0.5);
+  }
+
+  function levelFiveTidePower() {
+    if (displayDifficultyLevel() !== 5) return 0;
+    return smoothstep(0, 2600, Math.max(0, state.elapsed - state.stageStartAt));
+  }
+
+  function backgroundBoundaryOffsetAt(tangent, layout = backgroundLayoutAt(), time = state.visualTime) {
+    const levelAmount = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
+    const u = tangent + 0.5;
+    const curve = Math.sin((u * layout.freq + layout.phase) * Math.PI * 2) * layout.curve;
+    const broad = Math.sin((u * 0.42 + layout.phase * 0.62 + 0.18) * Math.PI * 2) * layout.curve * 0.52;
+    const smallFlow = Math.sin(u * Math.PI * 2.1 + time / 36000) * (0.008 + levelAmount * 0.008);
+    const breathe = Math.sin(time / 26000) * (0.012 + levelAmount * 0.012);
+    const cornerPower = levelThreeCornerPower();
+    const cornerTime = Math.max(0, state.elapsed - state.stageStartAt);
+    const cornerTravel = levelThreeCornerTravel();
+    const cornerWidth = 0.62;
+    const retreatCorner = bellCurve(tangent, -0.72, cornerWidth);
+    const arrivingCorner = bellCurve(tangent, 0.72, cornerWidth);
+    const travelingCorner = bellCurve(tangent, -0.72 + cornerTravel * 1.44, 0.52);
+    const retreatStrength = 0.2 + (1 - cornerTravel) * 0.16;
+    const arrivingStrength = 0.2 + cornerTravel * 0.16;
+    const cornerSweep = (cornerTravel - 0.5) * 0.085;
+    const cornerWave =
+      Math.sin(tangent * Math.PI * 2.3 + cornerTime / 860) * 0.026 +
+      Math.sin(tangent * Math.PI * 4.1 - cornerTime / 1320 + 0.7) * 0.012;
+    const cornerFlow =
+      cornerPower *
+      (arrivingCorner * arrivingStrength -
+        retreatCorner * retreatStrength +
+        travelingCorner * 0.08 +
+        cornerSweep +
+        cornerWave * 0.72);
+    const tidePower = levelFiveTidePower();
+    const tideTime = Math.max(0, state.elapsed - state.stageStartAt);
+    const tide =
+      tidePower *
+      (Math.sin(u * Math.PI * 3.15 + tideTime / 760) * 0.038 +
+        Math.sin(u * Math.PI * 5.2 - tideTime / 1180 + 0.6) * 0.018 +
+        Math.sin(tideTime / 1320) * 0.022);
+    return layout.split - 0.5 + curve + broad + smallFlow + breathe + cornerFlow + tide;
+  }
+
+  function backgroundSignedAt(x, y, time = state.visualTime) {
+    if (window.PaopaoBackgroundEngine) {
+      return window.PaopaoBackgroundEngine.fieldAt(x, y, backgroundEngineTimeSeconds(time));
+    }
+    const layout = backgroundLayoutAt();
+    const axes = backgroundAxes(layout);
+    const px = state.width > 0 ? x / state.width - 0.5 : 0;
+    const py = state.height > 0 ? y / state.height - 0.5 : 0;
+    const tangent = px * axes.tx + py * axes.ty;
+    const normal = px * axes.nx + py * axes.ny;
+    return normal - backgroundBoundaryOffsetAt(tangent, layout, time);
+  }
+
+  function backgroundMixAt(x, y, time = state.visualTime) {
+    if (window.PaopaoBackgroundEngine) {
+      return window.PaopaoBackgroundEngine.mixAt(x, y, backgroundEngineTimeSeconds(time));
+    }
+    const layout = backgroundLayoutAt();
+    const softness = layout.width;
+    return smoothstep(-softness, softness, backgroundSignedAt(x, y, time));
+  }
+
+  function backgroundColorIndexAt(x, y, time = state.visualTime) {
+    if (window.PaopaoBackgroundEngine) {
+      const seconds = arguments.length >= 3 ? Math.max(0, time / 1000) : backgroundEngineTimeSeconds();
+      return window.PaopaoBackgroundEngine.colorIndexAt(x, y, seconds);
+    }
+    return backgroundMixAt(x, y, time) >= 0.5 ? 1 : 0;
+  }
+
+  function projectedBackgroundColorIndexAt(x, y, timeMs) {
+    if (window.PaopaoBackgroundEngine) {
+      return window.PaopaoBackgroundEngine.colorIndexAt(x, y, Math.max(0, timeMs / 1000));
+    }
+    return backgroundMixAt(x, y, timeMs) >= 0.5 ? 1 : 0;
+  }
+
+  function matchingPointForColor(colorIndex, preferredY = null) {
+    const top = Math.min(128, state.height * 0.2);
+    const bottom = Math.max(top + 30, state.height - 118);
+    const y = clamp(preferredY ?? rand(top, bottom), top, bottom);
+    const padding = Math.max(44, Math.min(state.width * 0.16, 72));
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const x = rand(padding, state.width - padding);
+      if (backgroundColorIndexAt(x, y) === colorIndex) {
+        return { x, y };
+      }
+    }
+
+    const fallbackY = y;
+    for (let x = padding; x <= state.width - padding; x += 18) {
+      if (backgroundColorIndexAt(x, fallbackY) === colorIndex) {
+        return { x, y: fallbackY };
+      }
+    }
+
+    return { x: colorIndex === 0 ? padding : state.width - padding, y };
+  }
+
+  function matchingPointForColorFromEdge(colorIndex, edge, preferredY = null, preferredX = null) {
+    const padding = Math.max(44, Math.min(state.width * 0.16, 72));
+    const top = Math.min(128, state.height * 0.2);
+    const bottom = Math.max(top + 30, state.height - 118);
+    let minX = padding;
+    let maxX = state.width - padding;
+    let minY = top;
+    let maxY = bottom;
+
+    if (edge === "left") minX = Math.max(minX, state.width * 0.48);
+    if (edge === "right") maxX = Math.min(maxX, state.width * 0.52);
+    if (edge === "top") minY = Math.max(minY, state.height * 0.46);
+    if (edge === "bottom") maxY = Math.min(maxY, state.height * 0.54);
+
+    const fixedY = edge === "left" || edge === "right" ? clamp(preferredY ?? rand(top, bottom), top, bottom) : null;
+    const fixedX = edge === "top" || edge === "bottom" ? clamp(preferredX ?? rand(padding, state.width - padding), padding, state.width - padding) : null;
+
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const x = fixedX ?? rand(minX, maxX);
+      const y = fixedY ?? rand(minY, maxY);
+      if (backgroundColorIndexAt(x, y) === colorIndex) {
+        return { x, y };
+      }
+    }
+
+    if (fixedY !== null) {
+      for (let x = minX; x <= maxX; x += 16) {
+        if (backgroundColorIndexAt(x, fixedY) === colorIndex) {
+          return { x, y: fixedY };
+        }
+      }
+    }
+
+    if (fixedX !== null) {
+      for (let y = minY; y <= maxY; y += 16) {
+        if (backgroundColorIndexAt(fixedX, y) === colorIndex) {
+          return { x: fixedX, y };
+        }
+      }
+    }
+
+    return matchingPointForColor(colorIndex, preferredY);
+  }
+
+  function aimedVelocity(fromX, fromY, target, speed, noise = 14) {
+    const dx = target.x - fromX;
+    const dy = target.y - fromY;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    return {
+      vx: (dx / length) * speed + rand(-noise, noise),
+      vy: (dy / length) * speed + rand(-noise, noise),
+    };
+  }
+
+  function bleachExitTarget(edge, radius, fromX, fromY) {
+    const margin = Math.max(64, radius * 2.6);
+    if (edge === "left") return { x: state.width + margin, y: clamp(fromY + rand(-state.height * 0.18, state.height * 0.18), margin, state.height - margin) };
+    if (edge === "right") return { x: -margin, y: clamp(fromY + rand(-state.height * 0.18, state.height * 0.18), margin, state.height - margin) };
+    if (edge === "top") return { x: clamp(fromX + rand(-state.width * 0.18, state.width * 0.18), margin, state.width - margin), y: state.height + margin };
+    return { x: clamp(fromX + rand(-state.width * 0.18, state.width * 0.18), margin, state.width - margin), y: -margin };
+  }
+
+  function randomBleachDashTarget(bubble, forceExit = false) {
+    const margin = Math.max(58, bubble.baseRadius * 2.2);
+    if (forceExit) {
+      const edge = edgeCycle[Math.floor(rand(0, edgeCycle.length))];
+      return pointFromEdge(edge, bubble.baseRadius, edge === "left" || edge === "right" ? rand(margin, state.height - margin) : rand(margin, state.width - margin));
+    }
+    const minDash = Math.min(state.width, state.height) * 0.38;
+    let target = { x: rand(margin, state.width - margin), y: rand(Math.max(112, margin), state.height - margin) };
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      target = { x: rand(margin, state.width - margin), y: rand(Math.max(112, margin), state.height - margin) };
+      if (Math.hypot(target.x - bubble.x, target.y - bubble.y) >= minDash) break;
+    }
+    return target;
+  }
+
+  function setBleachDash(bubble, forceExit = false) {
+    const d = difficulty();
+    const target = randomBleachDashTarget(bubble, forceExit);
+    const speed = forceExit ? rand(260 + d * 60, 340 + d * 80) : rand(210 + d * 52, 292 + d * 64);
+    const velocity = aimedVelocity(bubble.x, bubble.y, target, speed, 8);
+    bubble.vx = velocity.vx;
+    bubble.vy = velocity.vy;
+    bubble.steerTarget = target;
+    bubble.retargetAt = bubble.age + rand(0.48, 0.82);
+    bubble.wobbleSpeed = rand(2.1, 3.2);
+    bubble.drift = rand(-0.12, 0.12);
+    bubble.bleachEscaping = forceExit;
+  }
+
+  function pickBalancedColorIndex() {
+    const colorIndex = state.colorCursor;
+    state.colorCursor = 1 - state.colorCursor;
+    return colorIndex;
+  }
+
+  function pickSpawnEdge(preferred = null) {
+    if (preferred) return preferred;
+    if (Math.random() < 0.78) {
+      const edge = edgeCycle[state.edgeCursor % edgeCycle.length];
+      state.edgeCursor += 1;
+      return edge;
+    }
+    return edgeCycle[Math.floor(Math.random() * edgeCycle.length)];
+  }
+
+  function pickBombComboTarget() {
+    return Math.round(rand(36, 84));
+  }
+
+  function resetBombComboTimer() {
+    state.bombComboProgress = 0;
+    state.bombComboTarget = pickBombComboTarget();
+  }
+
+  function currentWaterBudgetRound() {
+    return waterBudgetRounds[Math.min(state.waterRoundIndex, waterBudgetRounds.length - 1)];
+  }
+
+  function bubbleDifficultyValueWeight(radius, speed, options = {}) {
+    const sizeWeight = clamp(42 / Math.max(16, radius), 0.68, 1.52);
+    const speedWeight = clamp(speed / 88, 0.62, 1.58);
+    const streamWeight = options.isStream ? 1.08 : 1;
+    const largeEase = radius >= 56 ? 0.9 : 1;
+    const smallPressure = radius <= 26 ? 1.08 : 1;
+    return clamp((sizeWeight * 0.56 + speedWeight * 0.44) * streamWeight * largeEase * smallPressure, 0.58, 1.82);
+  }
+
+  function nextBubbleWaterProfile(radius, speed, options = {}) {
+    const level = displayDifficultyLevel();
+    if (!state.stagePlan || state.stagePlan.level !== level) {
+      resetStagePlan(level);
+    }
+    const plan = state.stagePlan;
+    const weight = bubbleDifficultyValueWeight(radius, speed, options);
+    const waterValue = clamp(plan.baseCorrectWater * (0.72 + weight * 0.26), 0.1, 2.45);
+    const missPenalty = clamp(plan.baseMissPenalty * (0.72 + weight * 0.3), 0.22, 3.35);
+    const wrongPenalty = clamp(plan.baseWrongPenalty * (0.76 + weight * 0.34), missPenalty * 1.28, 5.25);
+    state.waterRoundSpawned += 1;
+    state.waterOpportunityCount += 1;
+    state.stageTargetSpawned += 1;
+    return {
+      waterValue,
+      missPenalty,
+      wrongPenalty,
+      difficultyWeight: weight,
+    };
+  }
+
+  function comboWaterBoost(base) {
+    if (state.combo <= 1) return 0;
+    return base * Math.min(0.24, (state.combo - 1) * 0.013);
+  }
+
+  function comboWaterBonus() {
+    return Math.min(0.8, Math.floor(Math.max(0, state.combo - 1) / 5) * 0.16);
+  }
+
+  function comboScoreBonus() {
+    return Math.min(4, Math.floor(Math.max(0, state.combo - 1) / 5));
+  }
+
+  function comboWindow() {
+    return Math.max(comboMinWindow, comboBaseWindow - Math.min(620, state.combo * 22));
+  }
+
+  function comboRank() {
+    if (state.combo >= 32) return "SSS";
+    if (state.combo >= 24) return "SS";
+    if (state.combo >= 17) return "S";
+    if (state.combo >= 11) return "A";
+    if (state.combo >= 7) return "B";
+    if (state.combo >= 4) return "C";
+    if (state.combo >= 2) return "D";
+    return "";
+  }
+
+  function comboRankStyle(rank = comboRank()) {
+    const styles = {
+      D: { color: "#b9e8f5", scale: 1.02, shadow: "#73c8dd" },
+      C: { color: "#9ff0d2", scale: 1.1, shadow: "#5cc9a8" },
+      B: { color: "#ffe08a", scale: 1.2, shadow: "#e0a83d" },
+      A: { color: "#ffb5cf", scale: 1.34, shadow: "#e06f98" },
+      S: { color: "#ff9f74", scale: 1.52, shadow: "#f15f4e" },
+      SS: { color: "#d99dff", scale: 1.72, shadow: "#9965e7" },
+      SSS: { color: "#fff2a3", scale: 1.95, shadow: "#ff78c8" },
+    };
+    return styles[rank] ?? { color: "#ffffff", scale: 1, shadow: "#ffffff" };
+  }
+
+  function formatTime(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  }
+
+  function scoreBreakdown() {
+    const seconds = Math.max(0, Math.floor(state.elapsed / 1000));
+    const timeScore = seconds;
+    const comboScore = state.bestCombo * 5;
+    const popScore = state.score;
+    return {
+      timeScore,
+      comboScore,
+      popScore,
+      total: timeScore + comboScore + popScore,
+    };
+  }
+
+  function normalizeLocalLeaderboardRecord(record) {
+    if (!record || typeof record !== "object") return null;
+    const createdAt = Number(record.createdAt);
+    const hitCount = Math.max(0, Math.round(Number(record.hitCount ?? record.score ?? 0)));
+    return {
+      id: String(record.id || `local-${createdAt || Date.now()}-${hitCount}`).slice(0, 48),
+      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+      level: Math.max(1, Math.round(Number(record.level ?? 1))),
+      hitCount,
+      bestCombo: Math.max(0, Math.round(Number(record.bestCombo ?? 0))),
+      elapsed: Math.max(0, Math.round(Number(record.elapsed ?? 0))),
+      total: Math.max(0, Math.round(Number(record.total ?? hitCount))),
+    };
+  }
+
+  function compareLocalLeaderboardRecords(left, right) {
+    return (
+      right.level - left.level ||
+      right.hitCount - left.hitCount ||
+      right.bestCombo - left.bestCombo ||
+      right.elapsed - left.elapsed ||
+      right.total - left.total ||
+      right.createdAt - left.createdAt
+    );
+  }
+
+  function loadLocalLeaderboardRecords() {
+    try {
+      const raw = window.localStorage.getItem(localLeaderboardStorageKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map(normalizeLocalLeaderboardRecord)
+        .filter(Boolean)
+        .sort(compareLocalLeaderboardRecords)
+        .slice(0, localLeaderboardLimit);
+    } catch {
+      return [];
+    }
+  }
+
+  function currentLocalLeaderboardRecord(stats) {
+    const createdAt = Date.now();
+    return {
+      id: `run-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt,
+      level: displayDifficultyLevel(),
+      hitCount: state.correctBubbleCount,
+      bestCombo: state.bestCombo,
+      elapsed: Math.max(0, Math.round(state.elapsed)),
+      total: stats.total,
+    };
+  }
+
+  function localLeaderboardRecordLabel(record, currentId) {
+    return `第${record.level}关`;
+  }
+
+  function formatLocalBubbleCount(count) {
+    const value = Math.max(0, Math.round(Number(count) || 0));
+    return value > 999 ? "999+个" : `${value}个`;
+  }
+
+  function localLeaderboardSlots(records, currentIndex, currentId) {
+    const tones = ["violet", "mint", "rose", "indigo", "violet"];
+    const visibleCount = Math.min(5, records.length);
+    const centeredStart = currentIndex - 2;
+    const maxStart = Math.max(0, records.length - visibleCount);
+    const start = clamp(centeredStart, 0, maxStart);
+    return records.slice(start, start + visibleCount).map((record, index) => {
+      const place = start + index + 1;
+      return {
+        place,
+        name: localLeaderboardRecordLabel(record, currentId),
+        score: formatLocalBubbleCount(record.hitCount),
+        tone: record.id === currentId ? "me" : tones[index],
+        empty: false,
+      };
+    });
+  }
+
+  function buildLocalLeaderboardContext(records, currentRecord) {
+    const currentIndex = Math.max(0, records.findIndex((record) => record.id === currentRecord.id));
+    const rank = currentIndex + 1;
+    const totalCount = records.length;
+    const percentile =
+      totalCount <= 1 ? 100 : clamp(Math.round(((totalCount - rank) / (totalCount - 1)) * 100), 0, 100);
+    return {
+      current: currentRecord,
+      records,
+      rank,
+      totalCount,
+      percentile,
+      leaderboard: localLeaderboardSlots(records, currentIndex, currentRecord.id),
+    };
+  }
+
+  function saveLocalLeaderboardResult(stats) {
+    const currentRecord = currentLocalLeaderboardRecord(stats);
+    const rankedRecords = [currentRecord, ...loadLocalLeaderboardRecords()].sort(compareLocalLeaderboardRecords);
+    try {
+      window.localStorage.setItem(
+        localLeaderboardStorageKey,
+        JSON.stringify(rankedRecords.slice(0, localLeaderboardLimit)),
+      );
+    } catch {
+      // Ranking still works for this result if local storage is unavailable.
+    }
+    return buildLocalLeaderboardContext(rankedRecords, currentRecord);
+  }
+
+  function comboProgress() {
+    if (state.combo <= 0) return 0;
+    return clamp((state.comboUntil - state.elapsed) / comboWindow(), 0, 1);
+  }
+
+  function chargeClearSkill(amount) {
+    if (state.clearSkillUses >= clearSkillMaxUses) {
+      state.clearSkillCharge = 0;
+      return;
+    }
+    if (state.clearSkillCharge >= 1) return;
+    state.clearSkillCharge = clamp(state.clearSkillCharge + amount, 0, 1);
+  }
+
+  function clearSkillChargeForBubble(bubble) {
+    if (!bubble) return 0.01;
+    return bubble.baseRadius <= 30 ? 0.005 : 0.01;
+  }
+
+  function chargeClearSkillByBubble(bubble) {
+    if (state.clearSkillUses <= 0) return;
+    chargeClearSkill(clearSkillChargeForBubble(bubble));
+  }
+
+  function chargeClearSkillByBubbles(bubbles) {
+    if (!bubbles?.length || state.clearSkillUses <= 0) return;
+    const amount = bubbles.reduce((sum, bubble) => sum + clearSkillChargeForBubble(bubble), 0);
+    chargeClearSkill(amount);
+  }
+
+  function registerCombo({ chargeSkill = true } = {}) {
+    state.combo += 1;
+    state.bestCombo = Math.max(state.bestCombo, state.combo);
+    state.comboPulse = 1;
+    state.comboUntil = Number.POSITIVE_INFINITY;
+    if (chargeSkill) {
+      state.bombComboProgress += 1;
+      if (state.combo >= 14 && state.bombComboProgress >= state.bombComboTarget) {
+        if (spawnComboBomb()) {
+          resetBombComboTimer();
+        } else {
+          state.bombComboProgress = state.bombComboTarget;
+        }
+      }
+    }
+  }
+
+  function armComboRecovery(comboValue) {
+    const levelFactor = smoothstep(4, 12, displayDifficultyLevel());
+    if (!state.running || comboValue < 4 || levelFactor <= 0) return;
+    const comboFactor = clamp((comboValue - 3) / 26, 0.18, 1);
+    state.comboRecoveryUntil = Math.max(state.comboRecoveryUntil, state.elapsed + 4600 + levelFactor * 1200);
+    state.comboRecoveryPower = Math.max(state.comboRecoveryPower, (0.08 + comboFactor * 0.16) * levelFactor);
+  }
+
+  function resetCombo({ recovery = true } = {}) {
+    if (recovery) {
+      armComboRecovery(state.combo);
+    }
+    state.combo = 0;
+    state.comboPulse = 0;
+    state.comboUntil = 0;
+    resetPopPitchChain();
+    resetBombComboTimer();
+  }
+
+  function makeOpenTone() {
+    return {
+      name: "全",
+      color: mixHex(palette[0].color, palette[1].color, 0.5),
+      deep: mixHex(palette[0].deep, palette[1].deep, 0.48),
+      light: mixHex(palette[0].light, palette[1].light, 0.46),
+    };
+  }
+
+  function makeClearTone() {
+    return {
+      name: "清",
+      color: mixHex(palette[0].light, palette[1].light, 0.5),
+      deep: mixHex(palette[0].deep, palette[1].deep, 0.5),
+      light: "#f7fbfa",
+    };
+  }
+
+  function makeWhiteTone() {
+    return {
+      name: "白",
+      color: "#ffffff",
+      deep: "#d7edf7",
+      light: "#ffffff",
+    };
+  }
+
+  function makeBombTone() {
+    return {
+      name: "爆",
+      color: "#b7adb8",
+      deep: "#6f6673",
+      light: "#f0e8ee",
+    };
+  }
+
+  function waterBandFor(value) {
+    if (value <= 8) return "critical";
+    if (value <= 18) return "danger";
+    if (value <= 32) return "low";
+    if (value <= 48) return "warn";
+    return "safe";
+  }
+
+  function waterBandRank(band) {
+    if (band === "critical") return 4;
+    if (band === "danger") return 3;
+    if (band === "low") return 2;
+    if (band === "warn") return 1;
+    return 0;
+  }
+
+  function redDotHeartSrc(filled) {
+    const fill = filled ? "#f43645" : "rgba(255,255,255,0.18)";
+    const stroke = filled ? "#fff3f5" : "rgba(255,255,255,0.58)";
+    const inner = filled ? "#ff7580" : "rgba(255,255,255,0.28)";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="23" fill="${fill}" stroke="${stroke}" stroke-width="5"/><circle cx="24" cy="22" r="7" fill="${inner}"/></svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  }
+
+  function updateHud() {
+    const water = Math.round(Math.max(0, Math.min(100, state.water)));
+    const exactWater = Math.max(0, Math.min(100, state.water));
+    const openActive = state.openUntil > state.elapsed && state.running;
+    if (lastHudWater !== null) {
+      const diff = exactWater - lastHudWater;
+      if (diff > 0.05) {
+        waterGainUntil = state.elapsed + clamp(420 + diff * 42, 420, 820);
+      } else if (diff < -0.012) {
+        const drop = Math.abs(diff);
+        waterDrainUntil = state.elapsed + clamp(340 + drop * 48, 360, 860);
+        if (drop >= 0.34) {
+          waterShockUntil = state.elapsed + clamp(240 + drop * 44, 280, 720);
+        }
+      }
+    }
+    const waterBand = waterBandFor(water);
+    const bandRank = waterBandRank(waterBand);
+    const previousBandRank = waterBandRank(lastWaterBand);
+    if (state.running && exactWater < 30 && waterLowVibrationArmed) {
+      waterLowVibrationArmed = false;
+      waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 520);
+      if (navigator.vibrate) {
+        navigator.vibrate(20);
+      }
+    } else if (exactWater > 36) {
+      waterLowVibrationArmed = true;
+    }
+    if (state.running && bandRank > previousBandRank) {
+      waterCriticalUntil = state.elapsed + (waterBand === "critical" ? 980 : waterBand === "danger" ? 720 : 440);
+      if ((waterBand === "danger" || waterBand === "critical") && navigator.vibrate) {
+        navigator.vibrate(waterBand === "critical" ? [18, 36, 18] : 18);
+      }
+    }
+    lastWaterBand = waterBand;
+    lastHudWater = exactWater;
+    heartBubbles.forEach((heart, index) => {
+      heart.src = redDotHeartSrc(exactWater >= (index + 1) * 25);
+    });
+    waterFill.style.width = `${water}%`;
+    waterValue.textContent = `${water}%`;
+    waterBlock.classList.toggle("warn", water <= 48);
+    waterBlock.classList.toggle("low", water <= 32);
+    waterBlock.classList.toggle("danger", water <= 18);
+    waterBlock.classList.toggle("critical", water <= 8);
+    waterBlock.classList.toggle("pulse", state.comboPulse > 0.16);
+    waterBlock.classList.toggle("open", openActive);
+    waterBlock.classList.toggle("combo-hot", state.combo >= 5);
+    waterBlock.classList.toggle("gain", state.running && state.elapsed < waterGainUntil);
+    waterBlock.classList.toggle("drain", state.running && state.elapsed < waterDrainUntil && state.elapsed >= waterGainUntil);
+    waterBlock.classList.toggle("shock", state.running && state.elapsed < waterShockUntil);
+    waterBlock.classList.toggle("critical-flash", state.running && state.elapsed < waterCriticalUntil);
+    comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
+    const rank = comboRank();
+    comboChip.dataset.rank = rank;
+    comboChip.classList.toggle("active", state.combo > 1);
+    comboChip.classList.toggle("ranked", Boolean(rank));
+    comboChip.classList.toggle("expiring", state.combo > 1 && comboProgress() < 0.32);
+    comboChip.classList.toggle("surge", state.combo >= 4 && state.comboPulse > 0.14);
+    comboChip.classList.toggle("milestone", state.combo >= 5 && state.combo % 5 === 0 && state.comboPulse > 0.2);
+    comboChip.textContent = openActive
+      ? state.combo > 1
+        ? `x${state.combo}`
+        : "续水"
+      : state.combo > 1
+        ? `x${state.combo}`
+        : "";
+    scoreEl.textContent = String(state.correctBubbleCount);
+    timeEl.textContent = formatTime(state.elapsed);
+    if (difficultyEl) {
+      difficultyEl.textContent = `Lv ${displayDifficultyLevel()}`;
+    }
+    const skillReady = state.clearSkillCharge >= 1 && state.clearSkillUses < clearSkillMaxUses;
+    clearSkillButton.style.setProperty("--clear-charge", state.clearSkillCharge.toFixed(3));
+    clearSkillButton.classList.toggle("ready", skillReady);
+    clearSkillButton.disabled = !state.running || !skillReady;
+    clearSkillValue.textContent =
+      state.clearSkillUses >= clearSkillMaxUses ? "DONE" : skillReady ? "READY" : `${Math.round(state.clearSkillCharge * 100)}%`;
+    updateDebugPanel();
+  }
+
+  function resetGame() {
+    state.running = true;
+    state.lastTime = performance.now();
+    state.elapsed = 0;
+    state.score = 0;
+    state.correctBubbleCount = 0;
+    state.poppedCount = 0;
+    state.water = 100;
+    lastHudWater = null;
+    waterGainUntil = 0;
+    waterDrainUntil = 0;
+    waterShockUntil = 0;
+    waterCriticalUntil = 0;
+    lastWaterBand = "safe";
+    waterLowVibrationArmed = true;
+    state.waterPressure = 0;
+    state.hiddenLeak = 0;
+    state.hiddenLeakActive = false;
+    state.wrongStreak = 0;
+    state.lastUsefulActionAt = 0;
+    resetCombo({ recovery: false });
+    state.bestCombo = 0;
+    state.comboRecoveryUntil = 0;
+    state.comboRecoveryPower = 0;
+    state.clearSkillCharge = 1;
+    state.clearSkillUses = 0;
+    state.waterRoundIndex = 0;
+    state.waterRoundSpawned = 0;
+    state.waterOpportunityCount = 0;
+    state.stageLevel = 1;
+    state.stageStartAt = 0;
+    state.stageFinalSpawnAt = 0;
+    state.stagePlan = null;
+    state.stageSpawned = 0;
+    state.stageTargetSpawned = 0;
+    state.stageCorrectPops = 0;
+    state.stageMissedTargets = 0;
+    state.stageWrongPops = 0;
+    resetBombComboTimer();
+    state.nextBombAt = 0;
+    state.nextChargeAt = stageDurationMs + rand(3600, 6800);
+    state.chargeWave = null;
+    state.chargeWaveCounter = 0;
+    state.chargeLastPattern = "";
+    state.bombSpawnCursor = 0;
+    state.difficultyTier = 0;
+    state.difficultyFlash = 0;
+    state.difficultyBanners = [];
+    state.openPopCount = 0;
+    state.colorCursor = pickColorIndex();
+    state.edgeCursor = Math.floor(rand(0, edgeCycle.length));
+    state.nextPowerAt = 22000;
+    state.nextStreamAt = 40000;
+    state.nextSpawnAt = 120;
+    state.bubbleCounter = 0;
+    state.customBubblePack = loadCustomBubblePack();
+    state.customPackStatus = state.customBubblePack ? `PACK ${state.customBubblePack.name}` : "";
+    state.customPackLastSpawnAt = 0;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+    state.customHoldX = 0;
+    state.customHoldY = 0;
+    state.catBubbleCounter = 0;
+    state.catBubbleSpawned = 0;
+    state.lastCatBubbleAt = -Infinity;
+    state.nextCatBubbleRollAt = 0;
+    state.catMistakeCounting = false;
+    state.catMistakeCount = 0;
+    state.catMistakeTarget = Math.floor(rand(10, 21));
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
+    state.catHoldX = 0;
+    state.catHoldY = 0;
+    state.spawnFlow = null;
+    state.spawnFlowIndex = 0;
+    resetStagePlan(1);
+    resetBackgroundFlow();
+    state.openUntil = 0;
+    state.flash = 0;
+    state.mistakeFlash = 0;
+    clearRuntimeEffects();
+    state.lastSwipeX = 0;
+    state.lastSwipeY = 0;
+    if (titleMark) {
+      titleMark.textContent = "泡泡补水";
+    }
+    updateHud();
+    curtain.classList.remove("result-mode");
+    curtain.classList.add("hidden");
+    endStats.textContent = "";
+    lastFrameTime = performance.now();
+    perfFrames = 0;
+    perfLastTime = lastFrameTime;
+    performanceWorkMs = currentTargetFrameMs() * 0.35;
+    performanceSlowSince = 0;
+    performanceCoolSince = 0;
+    resetFrameStats();
+    applyPerformanceProfile();
+    draw();
+    updatePerfDebug(lastFrameTime, true);
+    scheduleLoop();
+  }
+
+  function buildResultScreen(stats, localBoard) {
+    const level = displayDifficultyLevel();
+    const hitCount = state.correctBubbleCount;
+    let boardData = localBoard;
+    if (!boardData) {
+      const currentRecord = currentLocalLeaderboardRecord(stats);
+      boardData = buildLocalLeaderboardContext([currentRecord], currentRecord);
+    }
+    const rank = boardData.rank;
+    const percentile = boardData.percentile;
+    const totalCount = boardData.totalCount;
+    const leaderboard = boardData.leaderboard;
+
+    const root = document.createElement("div");
+    root.className = "result-screen";
+
+    const halo = document.createElement("div");
+    halo.className = "result-halo";
+    halo.setAttribute("aria-hidden", "true");
+
+    const summary = document.createElement("section");
+    summary.className = "result-panel result-summary";
+    summary.setAttribute("aria-label", "挑战数据");
+
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "result-eyebrow";
+    eyebrow.textContent = "当前到达";
+
+    const levelLine = document.createElement("div");
+    levelLine.className = "result-level";
+    const levelLabel = document.createElement("span");
+    levelLabel.textContent = "Level";
+    const levelNumber = document.createElement("strong");
+    levelNumber.textContent = String(level);
+    levelLine.append(levelLabel, levelNumber);
+
+    const metrics = document.createElement("div");
+    metrics.className = "result-metrics";
+    [
+      ["timer", "存活时间", formatTime(state.elapsed)],
+      ["target", "命中泡泡", String(hitCount)],
+      ["bolt", "最高连击", String(state.bestCombo)],
+      ["rank", "本地排名", `第${rank}名`],
+    ].forEach(([icon, label, value]) => {
+      const row = document.createElement("div");
+      row.className = "result-metric";
+      const iconEl = document.createElement("span");
+      iconEl.className = `result-icon result-icon-${icon}`;
+      iconEl.setAttribute("aria-hidden", "true");
+      const labelEl = document.createElement("b");
+      labelEl.textContent = label;
+      const valueEl = document.createElement("strong");
+      valueEl.textContent = value;
+      row.append(iconEl, labelEl, valueEl);
+      metrics.append(row);
+    });
+    summary.append(eyebrow, levelLine, metrics);
+
+    const board = document.createElement("section");
+    board.className = "result-panel result-board";
+    board.setAttribute("aria-label", "我的排名");
+    const boardTitle = document.createElement("div");
+    boardTitle.className = "result-board-title";
+    const boardMain = document.createElement("strong");
+    boardMain.textContent = "本地排名";
+    const boardSub = document.createElement("span");
+    if (totalCount <= 1) {
+      boardSub.textContent = "首局记录已保存";
+    } else if (rank === 1) {
+      boardSub.textContent = `本机历史最佳 / 共 ${totalCount} 局`;
+    } else {
+      const boardPercent = document.createElement("em");
+      boardPercent.textContent = `${percentile}%`;
+      boardSub.append("超过了 ", boardPercent, " 的本地记录");
+    }
+    boardTitle.append(boardMain, boardSub);
+
+    const rankList = document.createElement("div");
+    rankList.className = "result-rank-list";
+    rankList.style.setProperty("--rank-count", String(Math.max(1, leaderboard.length)));
+    leaderboard.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = `result-rank-card tone-${item.tone}`;
+      if (item.tone === "me") card.classList.add("is-me");
+      const place = document.createElement("b");
+      place.textContent = String(item.place);
+      const avatar = document.createElement("span");
+      avatar.className = "result-avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      const name = document.createElement("span");
+      name.textContent = item.name;
+      const score = document.createElement("strong");
+      score.textContent = String(item.score);
+      card.append(place, avatar, name, score);
+      rankList.append(card);
+    });
+    board.append(boardTitle, rankList);
+
+    const actions = document.createElement("div");
+    actions.className = "result-actions";
+    const homeButton = document.createElement("button");
+    homeButton.className = "result-action result-home";
+    homeButton.type = "button";
+    homeButton.textContent = "返回主页";
+    homeButton.addEventListener("click", () => {
+      curtain.classList.remove("result-mode");
+      titleMark.textContent = "泡泡补水";
+      startButton.textContent = "开始";
+      endStats.textContent = "";
+      clearRuntimeEffects();
+      updateHud();
+      draw();
+    });
+    const retryButton = document.createElement("button");
+    retryButton.className = "result-action result-retry";
+    retryButton.type = "button";
+    retryButton.textContent = "再来一局";
+    retryButton.addEventListener("click", playStartTransition);
+    actions.append(homeButton, retryButton);
+
+    root.append(halo, summary, board, actions);
+    return root;
+  }
+
+  function endGame() {
+    if (!state.running) return;
+    waterShockUntil = Math.max(waterShockUntil, state.elapsed + 720);
+    waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 1100);
+    lastWaterBand = "critical";
+    if (navigator.vibrate) {
+      navigator.vibrate([22, 38, 22]);
+    }
+    state.running = false;
+    curtain.classList.add("result-mode");
+    curtain.classList.remove("hidden");
+    if (titleMark) {
+      titleMark.textContent = "挑战结束";
+    }
+    startButton.textContent = "再来一局";
+    const stats = scoreBreakdown();
+    const localBoard = saveLocalLeaderboardResult(stats);
+    endStats.replaceChildren(buildResultScreen(stats, localBoard));
+    updateHud();
+    draw();
+    updatePerfDebug(performance.now(), true);
+  }
+
+  function isWaterGameOver() {
+    return state.water < gameOverWaterThreshold;
+  }
+
+  function difficulty() {
+    const level = displayDifficultyLevel();
+    const levelPart = clamp((level - 1) / 18, 0, 1);
+    const latePart = smoothstep(10, 30, level);
+    const stagePart = smoothstep(0.08, 0.92, stageCompletion());
+    const scorePart = smoothstep(12, 220, state.score);
+    return clamp(levelPart * 0.92 + latePart * 0.36 + stagePart * 0.1 + scorePart * 0.12, 0, 1.42);
+  }
+
+  function difficultyTier(value) {
+    return Math.max(0, displayDifficultyLevel() - 1);
+  }
+
+  function pushDifficultyBanner(level) {
+    const banners = state.difficultyBanners || (state.difficultyBanners = []);
+    banners.push({
+      level: Math.max(1, Math.round(level)),
+      startAt: state.elapsed,
+      life: 1750,
+      offsetX: rand(-0.035, 0.035),
+      drift: rand(-0.018, 0.018),
+      phase: rand(0, Math.PI * 2),
+    });
+    if (banners.length > 3) {
+      banners.splice(0, banners.length - 3);
+    }
+  }
+
+  function triggerDifficultyUp(tier) {
+    state.difficultyTier = tier;
+    state.difficultyFlash = 1;
+    state.flash = Math.max(state.flash, 0.12);
+    pushDifficultyBanner(tier + 1);
+  }
+
+  function requiredCorrectRate() {
+    return state.stagePlan?.correctRate ?? targetCorrectRateForLevel(displayDifficultyLevel());
+  }
+
+  function baseWaterDrainRate() {
+    const level = displayDifficultyLevel();
+    const p = clamp((level - 1) / 18, 0, 1);
+    const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.08 + p * 0.2);
+    return clamp(levelWaterDrainRate(level) + stageTension, 1.16, 3.32);
+  }
+
+  function waterPressureHorizon() {
+    return 7.8 - clamp((displayDifficultyLevel() - 1) / 18, 0, 1) * 2.2;
+  }
+
+  function waterDrainRate() {
+    const pressureRate = state.waterPressure / waterPressureHorizon();
+    return baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18 + hiddenLeakDrainRate();
+  }
+
+  function hiddenLeakWrongLimit() {
+    const level = displayDifficultyLevel();
+    if (level >= 9) return 2;
+    if (level >= 4) return 3;
+    return 4;
+  }
+
+  function hiddenLeakIdleLimit() {
+    const level = displayDifficultyLevel();
+    return 9000 - smoothstep(1, 8, level) * 2600 - smoothstep(8, 16, level) * 1300;
+  }
+
+  function hiddenLeakDrainRate() {
+    if (!state.hiddenLeakActive && state.hiddenLeak <= 0) return 0;
+    const level = displayDifficultyLevel();
+    const p = clamp((level - 1) / 14, 0, 1);
+    return state.hiddenLeak * (1.55 + p * 1.05 + smoothstep(5, 12, level) * 0.55);
+  }
+
+  function noteUsefulAction() {
+    state.lastUsefulActionAt = state.elapsed;
+    state.wrongStreak = 0;
+    state.hiddenLeak = 0;
+    state.hiddenLeakActive = false;
+  }
+
+  function noteWrongAction() {
+    state.wrongStreak += 1;
+    if (state.wrongStreak >= hiddenLeakWrongLimit()) {
+      state.hiddenLeakActive = true;
+      state.hiddenLeak = Math.max(state.hiddenLeak, clamp(0.46 + (state.wrongStreak - hiddenLeakWrongLimit()) * 0.18, 0, 1));
+    }
+  }
+
+  function updateHiddenLeak(dt) {
+    if (!state.running) return;
+    const idleOver = state.elapsed - state.lastUsefulActionAt - hiddenLeakIdleLimit();
+    if (idleOver > 0) {
+      state.hiddenLeakActive = true;
+      state.hiddenLeak = Math.max(state.hiddenLeak, clamp(idleOver / 4200, 0.18, 1));
+    }
+    if (!state.hiddenLeakActive) {
+      state.hiddenLeak = Math.max(0, state.hiddenLeak - dt * 2.6);
+      return;
+    }
+    state.hiddenLeak = clamp(state.hiddenLeak + dt * 0.18, 0, 1);
+  }
+
+  function drainWater(dt) {
+    const pressureRate = state.waterPressure / waterPressureHorizon();
+    state.waterPressure = Math.max(0, state.waterPressure - pressureRate * dt);
+  }
+
+  function formatWaterGain(value) {
+    const rounded = Math.round(value * 10) / 10;
+    return Math.abs(rounded - Math.round(rounded)) < 0.05 ? String(Math.round(rounded)) : rounded.toFixed(1);
+  }
+
+  function addWater(amount, options = {}) {
+    const applied = correctWaterGain;
+    state.water = Math.min(100, state.water + applied);
+    return applied;
+  }
+
+  function relieveWaterPressureOnCorrect(appliedWaterGain, bubble) {
+    if (state.waterPressure <= 0 || !isStageTargetBubble(bubble)) return;
+    const levelHelp = smoothstep(5, 14, displayDifficultyLevel());
+    const recoveryHelp = state.elapsed < state.comboRecoveryUntil ? 1.45 : 1;
+    const relief = (0.08 + appliedWaterGain * 0.1 + levelHelp * 0.14) * recoveryHelp;
+    state.waterPressure = Math.max(0, state.waterPressure - relief);
+  }
+
+  function waterOpportunityValue(bubble) {
+    if (bubble.isClear) return 8;
+    if (bubble.isBleach) return 3.6;
+    if (bubble.isBomb) return 4.2;
+    if (bubble.isWhite) return bubble.baseRadius <= 27 || bubble.isStream ? 1.4 : 2.2;
+    return bubble.waterValue ?? (bubble.baseRadius <= 27 ? 3.7 : 5.35);
+  }
+
+  function isSpecialBubble(bubble) {
+    return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isCat || bubble.isCharge));
+  }
+
+  function noteWaterOpportunity(bubble) {
+    if (!bubble || bubble.colorIndex < 0) return;
+  }
+
+  function recordStageCorrect(bubble) {
+    if (!state.stagePlan || !bubble) return;
+    if (bubble.colorIndex < 0 || bubble.isWhite || (bubble.waterValue ?? 0) <= 0) return;
+    state.correctBubbleCount += 1;
+    if (bubble.stageLevel !== state.stageLevel) return;
+    state.stageCorrectPops = Math.min(state.stageCorrectPops + 1, state.stagePlan.totalBubbles);
+  }
+
+  function isStageTargetBubble(bubble) {
+    return Boolean(bubble && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0);
+  }
+
+  function stageMistakePenalty(type, bubble) {
+    if (bubble) {
+      const value = type === "wrong" ? bubble.wrongPenalty : bubble.missPenalty;
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    const level = displayDifficultyLevel();
+    const p = clamp((level - 1) / 18, 0, 1);
+    const late = smoothstep(10, 26, level);
+    const sizeFactor = bubble ? clamp(bubble.baseRadius / 42, 0.62, 1.25) : 1;
+    if (type === "wrong") return (4.4 + p * 5.8 + late * 2.6) * sizeFactor;
+    return (1.35 + p * 3.15 + late * 1.65) * sizeFactor;
+  }
+
+  function penalizeStageMistake(bubble, type) {
+    if (!isStageTargetBubble(bubble)) return;
+    const penalty = mistakeWaterPenalty;
+    if (bubble.stageLevel === state.stageLevel) {
+      if (type === "wrong") state.stageWrongPops += 1;
+      if (type === "miss") state.stageMissedTargets += 1;
+    }
+    if (type === "wrong" && displayDifficultyLevel() >= catBubbleMinLevel) {
+      if (!state.catMistakeCounting) {
+        state.catMistakeCounting = true;
+        state.catMistakeCount = 0;
+        state.catMistakeTarget = Math.floor(rand(10, 21));
+      }
+      state.catMistakeCount += 1;
+    }
+    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * 0.85);
+    state.water = Math.max(0, state.water - penalty);
+    if (isWaterGameOver()) {
+      endGame();
+    }
+  }
+
+  function bubbleRadiusRange(d, kind = "normal") {
+    const shrink = smoothstep(0.04, 1, d);
+    const ranges = {
+      normal: [47, 55, 31, 40],
+      large: [60, 70, 43, 54],
+      tiny: [22, 28, 19, 23],
+      small: [35, 42, 24, 31],
+      stream: [20, 24, 20, 25],
+      cluster: [36, 44, 27, 35],
+      fan: [28, 35, 23, 30],
+    };
+    const [startMin, startMax, endMin, endMax] = ranges[kind] ?? ranges.normal;
+    const min = startMin + (endMin - startMin) * shrink;
+    const max = startMax + (endMax - startMax) * shrink;
+    return {
+      min: Math.max(15, min),
+      max: Math.max(17, max),
+    };
+  }
+
+  function radiusForDifficulty(d, kind = "normal") {
+    const range = bubbleRadiusRange(d, kind);
+    return rand(range.min, range.max);
+  }
+
+  function radiusForArchetype(type) {
+    const base = clamp(Math.min(state.width, state.height) * 0.125, 48, 68);
+    if (type === "bigRise") return base * rand(0.9, 1.0);
+    if (type === "bigSide") return base * rand(0.8, 0.9);
+    if (type === "machine") return rand(20, 30);
+    if (type === "sGroup") return rand(30, 42);
+    if (type === "small") return rand(26, 36);
+    return rand(38, 50);
+  }
+
+  function radiusJitter(d, base = 0.04, extra = 0.11) {
+    const amount = base + smoothstep(0.34, 1, d) * extra;
+    return rand(1 - amount, 1 + amount);
+  }
+
+  function pickBubbleSprite(colorIndex, radius, isStream) {
+    const base = colorIndex === 1 ? 5 : 0;
+    if (isStream || radius < 24) {
+      return base + (Math.random() < 0.68 ? 2 : 1);
+    }
+    if (radius < 34) {
+      return base + (Math.random() < 0.54 ? 1 : 4);
+    }
+    const choices = [0, 0, 1, 3, 4];
+    return base + choices[Math.floor(rand(0, choices.length))];
+  }
+
+  function spawnBubble(forceSmall = false, forcedKind = null, options = {}) {
+    if (!options.ignoreCapacity && bubbleCapacityRemaining() <= 0) return false;
+    const d = difficulty();
+    const edge = pickSpawnEdge(options.edge);
+    const kind = forcedKind === "open" ? "normal" : (forcedKind ?? "normal");
+    if (kind === "normal" && !options.ignoreStageBudget && state.stagePlan && state.stageSpawned >= state.stagePlan.totalBubbles) {
+      return false;
+    }
+    const isSuper = false;
+    const isClear = kind === "clear";
+    const isBleach = kind === "bleach";
+    const isBomb = kind === "bomb";
+    const isCat = kind === "cat";
+    const isCharge = kind === "charge";
+    const forcedSize = options.sizeKind ?? null;
+    const smallWave =
+      options.isStream ||
+      forcedSize === "small" ||
+      (forcedSize !== "normal" && (forceSmall || (d > 0.58 && Math.random() < (d - 0.42) * 0.34)));
+    const radiusKind = forcedSize === "large" ? "large" : smallWave ? "small" : "normal";
+    const radius = options.radius ?? (isBleach ? radiusForDifficulty(d, "normal") * rand(0.9, 1.04) : radiusForDifficulty(d, radiusKind));
+    if (
+      kind === "normal" &&
+      options.customPath?.mode?.includes("flow") &&
+      flowPathWouldOverlap(options.customPath, radius, options.delay ?? 0)
+    ) {
+      return false;
+    }
+    const margin = safeSpawnAxisMargin(edge, radius);
+    const calmSmall = kind === "normal" && radiusKind === "small";
+    const speed =
+      options.speed ??
+      (isBleach
+        ? rand(74 + d * 18, 104 + d * 26)
+        : calmSmall
+          ? rand(22 + d * 11, 38 + d * 24)
+          : rand(24 + d * 18, 50 + d * 42));
+    let x;
+    let y;
+
+    if (options.x !== undefined && options.y !== undefined) {
+      x = options.x;
+      y = options.y;
+    } else if (edge === "left") {
+      x = -radius;
+      y = rand(margin, state.height - margin);
+    } else if (edge === "right") {
+      x = state.width + radius;
+      y = rand(margin, state.height - margin);
+    } else if (edge === "bottom") {
+      x = rand(margin, state.width - margin);
+      y = state.height + radius;
+    } else {
+      x = rand(margin, state.width - margin);
+      y = -radius;
+    }
+
+    const colorIndex = kind === "normal" ? (options.colorIndex ?? pickBalancedColorIndex()) : -1;
+    if (
+      kind === "normal" &&
+      colorIndex >= 0 &&
+      options.customPath?.mode?.includes("flow") &&
+      !pathHasPlayableStructuredPath(options.customPath, colorIndex, fairMatchDwell, options.delay ?? 0)
+    ) {
+      return false;
+    }
+    if (
+      kind === "normal" &&
+      colorIndex >= 0 &&
+      structuredPathPatternActive() &&
+      !options.customPath &&
+      !options.allowFreePath
+    ) {
+      return false;
+    }
+    if (
+      kind === "normal" &&
+      colorIndex >= 0 &&
+      structuredPathPatternActive() &&
+      options.customPath &&
+      !options.customPath.trustedStructuredPath &&
+      !pathHasPlayableStructuredPath(options.customPath, colorIndex, structuredPathMinMatch, options.delay ?? 0)
+    ) {
+      return false;
+    }
+    const waterProfile =
+      kind === "normal"
+        ? options.waterProfile ?? nextBubbleWaterProfile(radius, speed, {
+            isStream: options.isStream,
+            sizeKind: radiusKind,
+            streamPattern: options.streamPattern,
+          })
+        : { waterValue: 0, missPenalty: 0, wrongPenalty: 0, difficultyWeight: 1 };
+    const waterValue = kind === "normal" ? (options.waterValue ?? waterProfile.waterValue) : 0;
+    const spriteColorIndex = colorIndex >= 0 ? colorIndex : pickColorIndex();
+    const spriteIndex = options.spriteIndex ?? pickBubbleSprite(spriteColorIndex, radius, smallWave);
+    const target =
+      options.target ??
+      (isBleach
+        ? bleachExitTarget(edge, radius, x, y)
+        : kind === "normal"
+        ? matchingPointForColorFromEdge(colorIndex, edge, y, x)
+        : {
+            x: rand(state.width * 0.24, state.width * 0.76),
+            y: rand(state.height * 0.24, state.height * 0.72),
+          });
+    const velocity = options.velocity ?? aimedVelocity(x, y, target, speed, isBleach ? 6 : calmSmall ? 4 : kind === "normal" ? 12 : 26);
+    const customHoldRequiredMs = Math.max(0, Math.round(options.holdRequiredMs ?? options.customHoldRequiredMs ?? 0));
+    const customTapRequired = Math.max(0, Math.round(options.tapRequired ?? options.customTapRequired ?? 1));
+    const spawnProtectMass = spawnProtectionMassForRadius(radius);
+    const nextBubbleUid = state.bubbleCounter + 1;
+    const bubble = {
+      uid: ++state.bubbleCounter,
+      x,
+      y,
+      vx: velocity.vx,
+      vy: velocity.vy,
+      steerTarget: target,
+      retargetAt: calmSmall ? rand(1.8, 3.0) : rand(1.2, 2.2),
+      hasEntered: false,
+      spriteIndex,
+      skinRotation: rand(-0.22, 0.22),
+      skinSpin: rand(-0.18, 0.18),
+      skinPhase: rand(0, Math.PI * 2),
+      radius: options.initialRadius ?? radius,
+      baseRadius: radius,
+      spawnProtectMass,
+      spawnProtectInvMass: 1 / spawnProtectMass,
+      waterValue,
+      missPenalty: waterProfile.missPenalty ?? 0,
+      wrongPenalty: waterProfile.wrongPenalty ?? 0,
+      difficultyWeight: waterProfile.difficultyWeight ?? 1,
+      colorIndex,
+      stageLevel: kind === "normal" ? state.stageLevel : 0,
+      isSuper,
+      isClear,
+      isBleach,
+      isBomb,
+      isCat,
+      isCharge,
+      chargeWarningSeconds: options.chargeWarningSeconds ?? chargeBubbleWarningSeconds,
+      chargeFuseSeconds: options.chargeFuseSeconds ?? rand(chargeBubbleFuseMinSeconds, chargeBubbleFuseMaxSeconds),
+      chargeExplodeAt: options.chargeExplodeAt ?? 0,
+      chargeXRatio: options.chargeXRatio ?? null,
+      chargeYRatio: options.chargeYRatio ?? null,
+      chargeWaveId: options.chargeWaveId ?? 0,
+      chargePattern: options.chargePattern ?? "",
+      chargeBeat: options.chargeBeat ?? 0,
+      chargeWasActive: false,
+      chargeResolved: false,
+      customLabel: options.customLabel ?? "",
+      customHits: 0,
+      customTapRequired: customTapRequired <= 0 && customHoldRequiredMs <= 0 ? 1 : customTapRequired,
+      customHoldMs: 0,
+      customHoldRequiredMs,
+      catId: isCat ? ++state.catBubbleCounter : 0,
+      catHits: 0,
+      catHoldMs: 0,
+      catTapRequired: options.catTapRequired ?? catBubbleTapRequired,
+      catHoldRequiredMs: options.catHoldRequiredMs ?? catBubbleHoldMs,
+      bleachHits: 0,
+      bleachRequiredHits,
+      bleachExpireAt: isBleach ? state.elapsed + bleachLifetimeMs : 0,
+      bleachHitCooldownUntil: 0,
+      bleachEscaping: false,
+      isWhite: Boolean(options.isWhite),
+      whiteUntil: options.whiteUntil ?? 0,
+      restoreState: null,
+      matchDwell: 0,
+      fairPassComplete: Boolean(options.fairPassComplete) || kind !== "normal",
+      isStream: Boolean(options.isStream),
+      streamPattern: options.streamPattern ?? "float",
+      streamPhase: options.streamPhase ?? rand(0, Math.PI * 2),
+      streamAmplitude: options.streamAmplitude ?? 0,
+      streamFrequency: options.streamFrequency ?? 3.6,
+      arcBend: options.arcBend ?? 0,
+      arcLife: options.arcLife ?? 2.8,
+      customPath: options.customPath ?? null,
+      exitAfterPath: Boolean(options.exitAfterPath),
+      pathLockedMotion: Boolean(options.pathLockedMotion),
+      pathComplete: false,
+      spawnRevealSeconds: options.spawnRevealSeconds ?? 0,
+      islandChainId: options.islandChainId ?? "",
+      islandChainSize: options.islandChainSize ?? 0,
+      islandChainLane: options.islandChainLane ?? 0,
+      wallSquash: 0,
+      wallSquashNx: 0,
+      wallSquashNy: 0,
+      openReady: false,
+      wobble: rand(0, Math.PI * 2),
+      wobbleSpeed: options.isStream ? (calmSmall ? rand(0.45, 0.82) : rand(0.6, 1.05)) : calmSmall ? rand(0.7, 1.35) : rand(1.1, 2.2),
+      drift: options.isStream ? (calmSmall ? rand(-0.14, 0.14) : rand(-0.28, 0.28)) : calmSmall ? rand(-0.42, 0.42) : rand(-1, 1),
+      age: -(options.delay ?? 0),
+      wasReady: false,
+      spin: rand(-1.6, 1.6),
+      edge,
+    };
+    state.bubbles.push(bubble);
+    if (kind === "normal" && !options.ignoreStageBudget) {
+      state.stageSpawned += 1;
+      if (state.stagePlan && state.stageSpawned >= state.stagePlan.totalBubbles) {
+        state.stageFinalSpawnAt = state.elapsed + Math.max(0, options.delay ?? 0) * 1000;
+      }
+    }
+    noteWaterOpportunity(bubble);
+
+    const hintColor = isBomb
+      ? bombTone.light
+      : isBleach
+        ? whiteTone.light
+        : isCat
+          ? "#fff6d6"
+          : isCharge
+            ? "#f7fbff"
+          : isClear
+            ? clearTone.color
+            : isSuper
+              ? openTone.color
+              : palette[colorIndex].color;
+    if (!options.quietHint) {
+      makeSpawnHint(edge, x, y, radius, hintColor, 0.46);
+    }
+    return true;
+  }
+
+  function pointFromEdge(edge, radius, offset) {
+    const margin = safeSpawnAxisMargin(edge, radius);
+    if (edge === "left") return { x: -radius, y: clamp(offset, margin, state.height - margin) };
+    if (edge === "right") return { x: state.width + radius, y: clamp(offset, margin, state.height - margin) };
+    if (edge === "top") return { x: clamp(offset, margin, state.width - margin), y: -radius };
+    return { x: clamp(offset, margin, state.width - margin), y: state.height + radius };
+  }
+
+  function normalizeVector(dx, dy, fallback = { x: 1, y: 0 }) {
+    const length = Math.hypot(dx, dy);
+    if (length < 0.001) return fallback;
+    return { x: dx / length, y: dy / length };
+  }
+
+  function pointOutsidePlayfield(point, radius, extra = 0) {
+    const margin = Math.max(radius * 1.45 + extra, 44 + extra);
+    return point.x < -margin || point.x > state.width + margin || point.y < -margin || point.y > state.height + margin;
+  }
+
+  function projectPointOutside(point, direction, radius) {
+    const margin = Math.max(radius * 2.2, 74);
+    const dx = direction.x;
+    const dy = direction.y;
+    const candidates = [];
+    if (Math.abs(dx) > 0.0001) {
+      candidates.push((dx > 0 ? state.width + margin - point.x : -margin - point.x) / dx);
+    }
+    if (Math.abs(dy) > 0.0001) {
+      candidates.push((dy > 0 ? state.height + margin - point.y : -margin - point.y) / dy);
+    }
+    const travel = candidates.filter((value) => value > 0).sort((a, b) => a - b)[0] ?? margin;
+    return {
+      x: point.x + dx * (travel + radius * 0.65),
+      y: point.y + dy * (travel + radius * 0.65),
+    };
+  }
+
+  function extendMotionPathEndpointsOffscreen(points, radius) {
+    if (!points?.length) return points || [];
+    const extended = [...points];
+    if (extended.length >= 2 && !pointOutsidePlayfield(extended[0], radius)) {
+      const first = extended[0];
+      const second = extended[1];
+      const direction = normalizeVector(first.x - second.x, first.y - second.y, edgeDirection(pathEdgeFromPoint(first)));
+      extended.unshift(projectPointOutside(first, direction, radius));
+    }
+    if (extended.length >= 2 && !pointOutsidePlayfield(extended[extended.length - 1], radius)) {
+      const last = extended[extended.length - 1];
+      const previous = extended[extended.length - 2];
+      const direction = normalizeVector(last.x - previous.x, last.y - previous.y, edgeDirection(oppositeEdge(pathEdgeFromPoint(last))));
+      extended.push(projectPointOutside(last, direction, radius));
+    }
+    return extended;
+  }
+
+  function makeMotionPathFromSampledPoints(mode, motionPoints, radius, speed, minDuration, maxDuration) {
+    const points = extendMotionPathEndpointsOffscreen(motionPoints, radius);
+    const segments = [];
+    let totalLength = 0;
+    for (let i = 1; i < points.length; i += 1) {
+      totalLength += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+      segments.push(totalLength);
+    }
+    return {
+      mode,
+      points,
+      segments,
+      totalLength,
+      radius,
+      duration: clamp(totalLength / Math.max(18, speed), minDuration, maxDuration),
+      elapsed: 0,
+    };
+  }
+
+  function hasActiveCatBubble() {
+    return state.bubbles.some((bubble) => bubble.isCat);
+  }
+
+  function catBubbleById(catId) {
+    return state.bubbles.find((bubble) => bubble.isCat && bubble.catId === catId) ?? null;
+  }
+
+  function spawnCatBubble(reason = "level") {
+    if (!state.running || displayDifficultyLevel() < catBubbleMinLevel) return false;
+    if (hasActiveCatBubble()) return false;
+    if (bubbleCapacityRemaining() <= 0) return false;
+
+    const d = difficulty();
+    const edge = pickSpawnEdge();
+    const radius = clamp(radiusForDifficulty(d, "large") * rand(1.08, 1.22), 46, 72);
+    const offset =
+      edge === "left" || edge === "right"
+        ? rand(state.height * 0.28, state.height * 0.72)
+        : rand(state.width * 0.24, state.width * 0.76);
+    const start = pointFromEdge(edge, radius, offset);
+    const target = {
+      x: rand(state.width * 0.28, state.width * 0.72),
+      y: rand(state.height * 0.28, state.height * 0.72),
+    };
+    const speed = rand(32 + d * 8, 48 + d * 12);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, 8);
+    const spawned = spawnBubble(false, "cat", {
+      edge,
+      x: start.x,
+      y: start.y,
+      target,
+      velocity,
+      radius,
+      speed,
+      quietHint: false,
+    });
+
+    if (spawned) {
+      state.catBubbleSpawned += 1;
+      state.lastCatBubbleAt = state.elapsed;
+      state.ripples.push({
+        x: clamp(start.x, 0, state.width),
+        y: clamp(start.y, 0, state.height),
+        radius: radius * 0.7,
+        age: 0,
+        life: 0.48,
+        color: "#fff6d6",
+        power: reason === "mistake" ? 0.98 : 0.72,
+      });
+    }
+    return spawned;
+  }
+
+  function maybeActivateCatBubbleSystem() {
+    if (displayDifficultyLevel() < catBubbleMinLevel) return;
+    if (state.water > 75 || hasActiveCatBubble()) return;
+    if (state.elapsed - (state.lastCatBubbleAt ?? -Infinity) < catBubbleCooldownMs) return;
+    if (state.elapsed < (state.nextCatBubbleRollAt ?? 0)) return;
+    state.nextCatBubbleRollAt = state.elapsed + catBubbleRollIntervalMs;
+    const chance = state.water <= 25 ? 0.25 : 0.1;
+    if (Math.random() < chance) {
+      spawnCatBubble(state.water <= 25 ? "critical" : "low");
+    }
+  }
+
+  function hasActiveChargeBubble() {
+    return activeChargeBubbleCount() > 0;
+  }
+
+  function activeChargeBubbleCount() {
+    return state.bubbles.reduce((count, bubble) => count + (bubble.isCharge && !bubble.chargeResolved ? 1 : 0), 0);
+  }
+
+  function maxActiveChargeBubblesForLevel(level = displayDifficultyLevel()) {
+    if (level <= 2) return 2;
+    if (level <= 5) return 3;
+    return 4;
+  }
+
+  function nextChargeBubbleDelay(level = displayDifficultyLevel()) {
+    if (level <= 1) return rand(12000, 18000);
+    if (level <= 2) return rand(9000, 13600);
+    if (level <= 5) return rand(8000, 12000);
+    if (level <= 8) return rand(7000, 10500);
+    return rand(6400, 9600);
+  }
+
+  function chargePoint(xRatio, yRatio) {
+    return { xRatio, yRatio };
+  }
+
+  function chargePatternPool(level) {
+    if (level <= 2) return ["intro"];
+    if (level <= 4) return ["row", "diagonal", "stagger"];
+    if (level <= 7) return ["row", "diagonal", "stagger", "breath", "v"];
+    return ["row", "diagonal", "stagger", "breath", "v", "surround", "wave", "frame", "vertical"];
+  }
+
+  function chargePatternBeats(pattern, level) {
+    const rowY = [0.35, 0.49, 0.63][Math.floor(rand(0, 3))];
+    const rowY2 = clamp(rowY + (rowY < 0.5 ? 0.14 : -0.14), 0.3, 0.7);
+    const xs = [0.23, 0.41, 0.59, 0.77];
+    if (pattern === "intro") {
+      return [
+        [chargePoint(0.42, 0.46)],
+        [chargePoint(0.58, 0.57)],
+      ];
+    }
+    if (pattern === "row") {
+      return [
+        [chargePoint(xs[0], rowY), chargePoint(xs[1], rowY), chargePoint(xs[3], rowY)],
+        [chargePoint(xs[1], rowY2), chargePoint(xs[2], rowY2)],
+        [chargePoint(xs[0], rowY), chargePoint(xs[2], rowY), chargePoint(xs[3], rowY)],
+      ];
+    }
+    if (pattern === "diagonal") {
+      return [
+        [chargePoint(0.27, 0.31)],
+        [chargePoint(0.42, 0.43)],
+        [chargePoint(0.58, 0.56)],
+        [chargePoint(0.73, 0.69)],
+      ];
+    }
+    if (pattern === "stagger") {
+      return [
+        [chargePoint(xs[0], 0.38), chargePoint(xs[2], 0.38)],
+        [chargePoint(xs[1], 0.6), chargePoint(xs[3], 0.6)],
+        [chargePoint(xs[0], 0.38), chargePoint(xs[2], 0.38)],
+      ];
+    }
+    if (pattern === "breath") {
+      return [
+        [chargePoint(0.5, 0.49)],
+        [chargePoint(0.36, 0.43), chargePoint(0.64, 0.55)],
+        [chargePoint(0.28, 0.58), chargePoint(0.5, 0.36), chargePoint(0.72, 0.58)],
+        [],
+        [chargePoint(0.4, 0.52), chargePoint(0.6, 0.52)],
+      ];
+    }
+    if (pattern === "v") {
+      return [
+        [chargePoint(0.29, 0.36)],
+        [chargePoint(0.5, 0.65)],
+        [chargePoint(0.71, 0.36)],
+      ];
+    }
+    if (pattern === "surround") {
+      return [
+        [chargePoint(0.28, 0.34), chargePoint(0.72, 0.66)],
+        [chargePoint(0.72, 0.34)],
+        [chargePoint(0.28, 0.66), chargePoint(0.62, 0.5)],
+      ];
+    }
+    if (pattern === "wave") {
+      return [
+        [chargePoint(0.25, 0.53)],
+        [chargePoint(0.4, 0.38), chargePoint(0.55, 0.54)],
+        [chargePoint(0.7, 0.4)],
+      ];
+    }
+    if (pattern === "frame") {
+      return [
+        [chargePoint(0.3, 0.34), chargePoint(0.7, 0.34)],
+        [chargePoint(0.72, 0.62)],
+        [chargePoint(0.3, 0.66), chargePoint(0.5, 0.66)],
+      ];
+    }
+    return [
+      [chargePoint(0.38, 0.29), chargePoint(0.38, 0.56)],
+      [chargePoint(0.62, 0.42)],
+      [chargePoint(0.62, 0.68), chargePoint(0.38, 0.68)],
+    ];
+  }
+
+  function trimChargeBeat(points, maxCount, seed) {
+    if (points.length <= maxCount) return points;
+    if (maxCount <= 1) return [points[seed % points.length]];
+    if (maxCount === 2 && points.length === 3) {
+      const options = [[0, 2], [0, 1], [1, 2]];
+      return options[seed % options.length].map((index) => points[index]);
+    }
+    const omitted = seed % points.length;
+    return points.filter((_, index) => index !== omitted).slice(0, maxCount);
+  }
+
+  function transformChargePoint(point, mirrorX, mirrorY, offsetX, offsetY) {
+    const x = mirrorX ? 1 - point.xRatio : point.xRatio;
+    const y = mirrorY ? 1 - point.yRatio : point.yRatio;
+    return {
+      xRatio: clamp(x + offsetX + rand(-0.004, 0.004), 0.21, 0.79),
+      yRatio: clamp(y + offsetY + rand(-0.004, 0.004), 0.23, 0.75),
+    };
+  }
+
+  function createChargeWave(level) {
+    const choices = chargePatternPool(level).filter((pattern) => pattern !== state.chargeLastPattern);
+    const pool = choices.length ? choices : chargePatternPool(level);
+    const pattern = pool[Math.floor(rand(0, pool.length))];
+    const waveId = ++state.chargeWaveCounter;
+    const peak = level >= 9 && waveId % 5 === 0;
+    const maxPerBeat = level <= 2 ? 1 : level <= 5 ? 2 : level <= 8 ? 3 : peak ? 4 : 3;
+    const mirrorX = Math.random() < 0.5;
+    const mirrorY = pattern === "diagonal" || pattern === "v" || pattern === "wave" ? Math.random() < 0.5 : false;
+    const offsetX = rand(-0.018, 0.018);
+    const offsetY = rand(-0.018, 0.018);
+    let beats = chargePatternBeats(pattern, level).map((points, index) => ({
+      points: trimChargeBeat(points, maxPerBeat, waveId + index).map((point) => transformChargePoint(point, mirrorX, mirrorY, offsetX, offsetY)),
+      pause: points.length === 0,
+    }));
+    if (peak) {
+      beats.push({
+        points: [0.23, 0.41, 0.59, 0.77].map((x) => transformChargePoint(chargePoint(x, 0.5), mirrorX, false, offsetX, offsetY)),
+        pause: false,
+      });
+    }
+    if (level <= 2) beats = beats.slice(0, Math.random() < 0.72 ? 1 : 2);
+    if (level <= 4 && beats.length > 3) beats = beats.slice(0, 3);
+    state.chargeLastPattern = pattern;
+    return {
+      id: waveId,
+      level,
+      pattern,
+      peak,
+      beats,
+      beatIndex: 0,
+      beatMs: level <= 2 ? rand(1050, 1250) : level <= 5 ? rand(900, 1120) : level <= 8 ? rand(780, 990) : rand(720, 920),
+      nextBeatAt: state.elapsed + rand(260, 460),
+      retries: 0,
+      spawned: 0,
+    };
+  }
+
+  function chargeWaveSpawnBudget(level) {
+    const activeCharges = activeChargeBubbleCount();
+    const chargeSlots = Math.max(0, maxActiveChargeBubblesForLevel(level) - activeCharges);
+    const committedScene = state.bubbles.reduce((count, bubble) => {
+      if (bubble.chargeResolved || bubble.age < -1.1) return count;
+      return count + 1;
+    }, 0);
+    const sceneCap = Math.min(9, activeBubbleLimit(level) + 2);
+    return Math.max(0, Math.min(chargeSlots, sceneCap - committedScene));
+  }
+
+  function chargeBubbleSpawnPoint(radius, preferredPoint = null) {
+    const preferred = preferredPoint ?? chargePoint(rand(0.24, 0.76), rand(0.26, 0.72));
+    const blockers = state.bubbles.filter((bubble) => !bubble.chargeResolved && bubble.age > -0.65);
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      const spread = attempt === 0 ? 0 : Math.min(0.055, 0.012 + attempt * 0.004);
+      const angle = attempt * 2.399 + (state.chargeWaveCounter % 5) * 0.41;
+      const candidate = {
+        xRatio: clamp(preferred.xRatio + Math.cos(angle) * spread, 0.21, 0.79),
+        yRatio: clamp(preferred.yRatio + Math.sin(angle) * spread, 0.23, 0.75),
+      };
+      candidate.x = state.width * candidate.xRatio;
+      candidate.y = state.height * candidate.yRatio;
+      const clear = blockers.every((bubble) => {
+        const otherRadius = bubble.baseRadius ?? bubble.radius ?? 24;
+        const gap = bubble.isCharge ? (radius + otherRadius) * 1.1 + 6 : radius + otherRadius + 10;
+        return Math.hypot(candidate.x - bubble.x, candidate.y - bubble.y) >= gap;
+      });
+      if (clear) return candidate;
+    }
+    return null;
+  }
+
+  function spawnChargeBubble(options = {}) {
+    if (!state.running) return false;
+    const level = displayDifficultyLevel();
+    const maxActive = options.allowStack ? maxActiveChargeBubblesForLevel(level) : 1;
+    const activeCharges = activeChargeBubbleCount();
+    if (activeCharges >= maxActive) return false;
+    const radius = clamp(Math.min(state.width, state.height) * rand(0.066, 0.084) * (options.peak ? 1.06 : 1), 26, 38);
+    const spawnPoint = chargeBubbleSpawnPoint(radius, options.point);
+    if (!spawnPoint) return false;
+    const xRatio = spawnPoint.xRatio;
+    const yRatio = spawnPoint.yRatio;
+    const x = spawnPoint.x;
+    const y = spawnPoint.y;
+    const activeFuseSeconds = rand(chargeBubbleFuseMinSeconds, chargeBubbleFuseMaxSeconds);
+    const totalFuseSeconds = chargeBubbleWarningSeconds + activeFuseSeconds;
+    const spawned = spawnBubble(false, "charge", {
+      edge: "top",
+      x,
+      y,
+      target: { x, y },
+      velocity: { vx: 0, vy: 0 },
+      radius,
+      initialRadius: radius * 0.07,
+      speed: 0,
+      fairPassComplete: true,
+      quietHint: true,
+      chargeWarningSeconds: chargeBubbleWarningSeconds,
+      chargeFuseSeconds: activeFuseSeconds,
+      chargeExplodeAt: state.elapsed + totalFuseSeconds * 1000,
+      chargeXRatio: xRatio,
+      chargeYRatio: yRatio,
+      chargeWaveId: options.waveId ?? 0,
+      chargePattern: options.pattern ?? "random",
+      chargeBeat: options.beatIndex ?? 0,
+      spawnRevealSeconds: 0,
+      ignoreCapacity: true,
+    });
+    return spawned;
+  }
+
+  function maybeSpawnChargeBubble() {
+    if (!state.running) return;
+    const level = displayDifficultyLevel();
+    if (level < 2) {
+      state.chargeWave = null;
+      return;
+    }
+
+    if (!state.chargeWave) {
+      if (state.elapsed < state.nextChargeAt) return;
+      if (activeChargeBubbleCount() > 0) {
+        state.nextChargeAt = state.elapsed + rand(900, 1500);
+        return;
+      }
+      state.chargeWave = createChargeWave(level);
+      state.nextChargeAt = Number.POSITIVE_INFINITY;
+      return;
+    }
+
+    const wave = state.chargeWave;
+    if (Math.abs(level - wave.level) > 1) {
+      state.chargeWave = null;
+      state.nextChargeAt = state.elapsed + rand(2200, 3600);
+      return;
+    }
+    if (state.elapsed < wave.nextBeatAt) return;
+    const beat = wave.beats[wave.beatIndex];
+    if (!beat) {
+      state.chargeWave = null;
+      state.nextChargeAt = state.elapsed + nextChargeBubbleDelay(level) + (wave.peak ? 1800 : 0);
+      return;
+    }
+
+    if (beat.pause) {
+      wave.beatIndex += 1;
+      wave.retries = 0;
+      wave.nextBeatAt = state.elapsed + wave.beatMs * 1.55;
+      return;
+    }
+
+    const budget = chargeWaveSpawnBudget(level);
+    let spawned = 0;
+    for (const point of beat.points) {
+      if (spawned >= budget) break;
+      if (spawnChargeBubble({
+        allowStack: true,
+        point,
+        waveId: wave.id,
+        pattern: wave.pattern,
+        beatIndex: wave.beatIndex,
+        peak: wave.peak,
+      })) {
+        spawned += 1;
+      }
+    }
+
+    if (spawned <= 0 && wave.retries < 3) {
+      wave.retries += 1;
+      wave.nextBeatAt = state.elapsed + rand(260, 380);
+      return;
+    }
+
+    wave.spawned += spawned;
+    wave.beatIndex += 1;
+    wave.retries = 0;
+    wave.nextBeatAt = state.elapsed + wave.beatMs * rand(0.92, 1.08);
+  }
+
+  function spawnComboBomb() {
+    if (!state.running || bubbleCapacityRemaining() <= 0) return false;
+    if (state.elapsed < state.nextBombAt) return false;
+    const d = difficulty();
+    const edge = edgeCycle[state.bombSpawnCursor % edgeCycle.length];
+    state.bombSpawnCursor += 1;
+    const radius = radiusForDifficulty(d, "stream") * rand(0.72, 0.9);
+    const horizontal = edge === "left" || edge === "right";
+    const anchor =
+      (horizontal ? state.height : state.width) *
+      clamp(0.5 + Math.sin(state.combo * 0.47 + state.bombSpawnCursor) * 0.24, 0.22, 0.78);
+    const start = pointFromEdge(edge, radius, anchor);
+    const target = horizontal
+      ? {
+          x: edge === "left" ? state.width * 0.76 : state.width * 0.24,
+          y: clamp(anchor + Math.sin(state.combo * 0.31) * state.height * 0.13, state.height * 0.22, state.height * 0.78),
+        }
+      : {
+          x: clamp(anchor + Math.cos(state.combo * 0.29) * state.width * 0.13, state.width * 0.22, state.width * 0.78),
+          y: edge === "top" ? state.height * 0.72 : state.height * 0.28,
+        };
+    const speed = rand(148 + d * 42, 196 + d * 62);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, 2);
+    const spawned = spawnBubble(false, "bomb", {
+      edge,
+      x: start.x,
+      y: start.y,
+      target,
+      velocity,
+      radius,
+      speed,
+    });
+    if (spawned) {
+      state.nextBombAt = state.elapsed + bombCooldownMs;
+    }
+    return spawned;
+  }
+
+  function makeSpawnHint(edge, x, y, radius, color, alpha = 0.36, count = 1) {
+    return;
+    const size = clamp(radius * (3.15 + Math.min(2.35, Math.sqrt(count) * 0.5)), 34, 124);
+    const depth = clamp(radius * (1.55 + Math.min(1.05, count * 0.04)), 22, 62);
+    const inset = Math.max(12, depth * 0.62);
+    const hintX = edge === "left" ? inset : edge === "right" ? state.width - inset : clamp(x, 0, state.width);
+    const hintY = edge === "top" ? inset : edge === "bottom" ? state.height - inset : clamp(y, 0, state.height);
+    state.hints.push({
+      edge,
+      x: hintX,
+      y: hintY,
+      size,
+      depth,
+      color,
+      alpha,
+      age: 0,
+    });
+    trimArray(state.hints, effectLimit("hints"));
+  }
+
+  function spawnBubbleStream(d) {
+    const edge = pickSpawnEdge();
+    const streamLevel = displayDifficultyLevel();
+    const sameColorStream = streamLevel <= 1;
+    const streamColorIndex = sameColorStream ? pickBalancedColorIndex() : null;
+    const pattern = sameColorStream ? "spray" : d > 0.38 && Math.random() < 0.46 + d * 0.2 ? "zigzag" : "spray";
+    const desiredCount =
+      streamLevel <= 3
+        ? Math.round(rand(10, 14))
+        : streamLevel === 4
+          ? Math.round(rand(13 + d * 2, 18 + d * 3))
+          : Math.round(rand(16 + d * 2, 22 + d * 3));
+    const count = Math.min(desiredCount, Math.max(0, activeBubbleLimit() - state.bubbles.length));
+    if (count <= 0) return;
+    const radius = radiusForDifficulty(d, "stream");
+    const cadence =
+      streamLevel <= 3
+        ? rand(0.078, 0.105)
+        : sameColorStream
+          ? rand(0.058, 0.078)
+          : rand(0.064, 0.09);
+    const laneGap = radius * rand(1.55, 1.85);
+    const anchor =
+      edge === "left" || edge === "right"
+        ? rand(116, state.height - 132)
+        : rand(102, state.width - 102);
+    const speed = sameColorStream ? rand(96 + d * 14, 116 + d * 24) : rand(76 + d * 18, 100 + d * 36);
+    const horizontal = edge === "left" || edge === "right";
+    const mainX = edge === "left" ? 1 : edge === "right" ? -1 : 0;
+    const mainY = edge === "top" ? 1 : edge === "bottom" ? -1 : 0;
+    const perpX = horizontal ? 0 : 1;
+    const perpY = horizontal ? 1 : 0;
+    const nozzle = pointFromEdge(edge, radius, anchor);
+
+    makeSpawnHint(edge, nozzle.x, nozzle.y, radius, sameColorStream ? palette[streamColorIndex].light : clearTone.light, 0.4, count);
+
+    for (let i = 0; i < count; i += 1) {
+      const colorIndex = sameColorStream ? streamColorIndex : pickBalancedColorIndex();
+      const pulse = Math.floor(i / 2);
+      const lane = i % 2 === 0 ? -1 : 1;
+      const weave = Math.sin(pulse * 0.72) * radius * 0.18;
+      const laneOffset = lane * laneGap * 0.52 + weave;
+      const forwardOffset = pulse * radius * 0.24 + (i % 2) * radius * 0.08;
+      const start = {
+        x: nozzle.x - mainX * forwardOffset + perpX * laneOffset,
+        y: nozzle.y - mainY * forwardOffset + perpY * laneOffset,
+      };
+      const crossOffset = -lane * laneGap * (1.55 + d * 0.2) + Math.sin(pulse * 0.58) * 16;
+      const preferredY = horizontal ? start.y + crossOffset : null;
+      const target = matchingPointForColorFromEdge(colorIndex, edge, preferredY, start.x + crossOffset);
+      const velocity = aimedVelocity(start.x, start.y, target, speed + pulse * 0.8, 3);
+      velocity.vx += perpX * -lane * (12 + d * 6);
+      velocity.vy += perpY * -lane * (12 + d * 6);
+      spawnBubble(true, "normal", {
+        edge,
+        x: start.x,
+        y: start.y,
+        colorIndex,
+        target,
+        velocity,
+        radius: radius * (1 + lane * 0.018) * radiusJitter(d, 0.02, 0.04),
+        speed,
+        isStream: true,
+        streamPattern: pattern,
+        streamPhase: pulse * 0.72 + lane * 0.42,
+        streamAmplitude: pattern === "zigzag" ? 8 + d * 12 : 4 + d * 6,
+        streamFrequency: pattern === "zigzag" ? 4.4 + d * 1.2 : 2.8 + d,
+        arcBend: (lane > 0 ? 1 : -1) * rand(10 + d * 6, 24 + d * 10),
+        arcLife: rand(1.9, 2.7),
+        delay: pulse * cadence + (i % 2) * cadence * 0.36,
+        quietHint: true,
+      });
+    }
+  }
+
+  function spawnBubbleCluster(d, maxCount = 4) {
+    const edge = pickSpawnEdge();
+    const count = Math.min(maxCount, Math.max(0, activeBubbleLimit() - state.bubbles.length), Math.round(rand(2, 3 + d * 2)));
+    if (count <= 0) return;
+    const radius = radiusForDifficulty(d, "cluster");
+    const spacing = radius * rand(1.38, 1.72);
+    const sharedColor = pickBalancedColorIndex();
+    const anchor =
+      edge === "left" || edge === "right"
+        ? rand(92, state.height - 104)
+        : rand(82, state.width - 82);
+
+    const hintPoint = pointFromEdge(edge, radius, anchor);
+    makeSpawnHint(edge, hintPoint.x, hintPoint.y, radius, palette[sharedColor].light, 0.38, count);
+
+    for (let i = 0; i < count; i += 1) {
+      const colorIndex = sharedColor;
+      const offset = anchor + (i - (count - 1) / 2) * spacing;
+      const start = pointFromEdge(edge, radius, offset);
+      if (spawnPointCrowded(start.x, start.y, radius, colorIndex)) continue;
+      const target = matchingPointForColorFromEdge(colorIndex, edge, edge === "left" || edge === "right" ? start.y : null, start.x);
+      spawnBubble(false, "normal", {
+        edge,
+        x: start.x,
+        y: start.y,
+        colorIndex,
+        target,
+        radius: radius * radiusJitter(d, 0.035, 0.085),
+        speed: rand(28 + d * 18, 48 + d * 32),
+        quietHint: true,
+      });
+    }
+  }
+
+  function spawnBubbleFan(d, maxCount = 4) {
+    const edge = pickSpawnEdge();
+    const count = Math.min(maxCount, Math.max(0, activeBubbleLimit() - state.bubbles.length), Math.round(rand(3, 4 + d * 2)));
+    if (count <= 0) return;
+    const radius = radiusForDifficulty(d, "fan");
+    const sharedColor = pickBalancedColorIndex();
+    const anchor =
+      edge === "left" || edge === "right"
+        ? rand(96, state.height - 112)
+        : rand(86, state.width - 86);
+    const start = pointFromEdge(edge, radius, anchor);
+
+    makeSpawnHint(edge, start.x, start.y, radius, palette[sharedColor].light, 0.36, count);
+
+    for (let i = 0; i < count; i += 1) {
+      const colorIndex = sharedColor;
+      const spread = (i - (count - 1) / 2) * rand(34, 52);
+      const bubbleStart = pointFromEdge(edge, radius, anchor + spread * 0.78);
+      if (spawnPointCrowded(bubbleStart.x, bubbleStart.y, radius, colorIndex)) continue;
+      const preferredY = edge === "left" || edge === "right" ? bubbleStart.y + spread : null;
+      const target = matchingPointForColorFromEdge(colorIndex, edge, preferredY, bubbleStart.x + spread);
+      const speed = rand(48 + d * 24, 70 + d * 36);
+      const velocity = aimedVelocity(bubbleStart.x, bubbleStart.y, target, speed, 6);
+      spawnBubble(true, "normal", {
+        edge,
+        x: bubbleStart.x,
+        y: bubbleStart.y,
+        colorIndex,
+        target,
+        velocity,
+        radius: radius * radiusJitter(d, 0.035, 0.075),
+        speed,
+        isStream: true,
+        streamPattern: "fan",
+        streamPhase: i * 0.52,
+        streamAmplitude: 6 + d * 8,
+        streamFrequency: 2.4 + d,
+        quietHint: true,
+      });
+    }
+  }
+
+  function spawnAxisLength(edge) {
+    return edge === "left" || edge === "right" ? state.height : state.width;
+  }
+
+  function pointFromSpawnRegion(region, radius, progress, jitter = 0.035) {
+    const axis = spawnAxisLength(region.edge);
+    const center = region.start + (region.end - region.start) * smoothstep(0, 1, progress);
+    const drift = Math.sin(progress * Math.PI * 2 + region.phase) * (region.max - region.min) * 0.08;
+    const offset = clamp((center + drift + rand(-jitter, jitter)) * axis, region.min * axis, region.max * axis);
+    return pointFromEdge(region.edge, radius, offset);
+  }
+
+  function offsetSpawnPointAlongEdge(point, edge, offset, radius) {
+    const margin = Math.max(54, radius * 2.25);
+    if (edge === "left" || edge === "right") {
+      return { x: point.x, y: clamp(point.y + offset, margin, state.height - margin) };
+    }
+    return { x: clamp(point.x + offset, margin, state.width - margin), y: point.y };
+  }
+
+  function makeSpawnRegion(base, phase = 0) {
+    const span = base.max - base.min;
+    const center = rand(base.min + span * 0.24, base.max - span * 0.24);
+    const drift = rand(-span * 0.32, span * 0.32);
+    return {
+      ...base,
+      start: clamp(center - drift * 0.5, base.min, base.max),
+      end: clamp(center + drift * 0.5, base.min, base.max),
+      phase: rand(0, Math.PI * 2) + phase,
+    };
+  }
+
+  function oppositeEdge(edge) {
+    if (edge === "left") return "right";
+    if (edge === "right") return "left";
+    if (edge === "top") return "bottom";
+    return "top";
+  }
+
+  function createSpawnFlow() {
+    const level = displayDifficultyLevel();
+    if (!state.stagePlan || state.stagePlan.level !== level) {
+      resetStagePlan(level);
+    }
+    const d = difficulty();
+    const type = chooseSpawnArchetype(level, d);
+    const forcedEdge =
+      type === "bigRise"
+        ? "bottom"
+        : type === "bigSide"
+          ? Math.random() < 0.5 ? "left" : "right"
+          : null;
+    const candidates = forcedEdge ? spawnRegions.filter((region) => region.edge === forcedEdge) : spawnRegions;
+    const primaryIndex = (state.spawnFlowIndex * (level < 4 ? 3 : 4) + Math.floor(rand(0, Math.min(3, candidates.length)))) % candidates.length;
+    const primaryBase = candidates[primaryIndex];
+    const secondaryBase =
+      type === "crossArc"
+        ? spawnRegions.filter((region) => region.edge === oppositeEdge(primaryBase.edge))[
+            (primaryIndex + Math.floor(rand(0, 3))) % spawnRegions.filter((region) => region.edge === oppositeEdge(primaryBase.edge)).length
+          ]
+        : Math.random() < (level <= 1 ? 0.18 : level < 4 ? 0.52 : 0.58)
+          ? spawnRegions[(primaryIndex + Math.floor(rand(3, spawnRegions.length - 1))) % spawnRegions.length]
+          : null;
+    state.spawnFlowIndex += 1;
+    return {
+      startAt: state.elapsed,
+      duration:
+        level <= 1
+          ? rand(4300, 6800)
+          : type === "machine" || type === "crossArc" || type === "sGroup"
+            ? rand(2400, 4000)
+            : rand(3000, 5600) - d * 380,
+      primary: makeSpawnRegion(primaryBase),
+      secondary: secondaryBase ? makeSpawnRegion(secondaryBase, 1.4) : null,
+      type,
+      share: rand(0.72, 0.86),
+      peak: rand(0.42, 0.62),
+      usedBurst: false,
+      usedLarge: false,
+    };
+  }
+
+  function chooseSpawnArchetype(level, d) {
+    const weights = state.stagePlan?.weights ?? stageTypeWeights(level);
+    const choices = Object.entries(weights)
+      .map(([type, weight]) => [type, Math.max(0, weight * rand(0.94, 1.06) + d * 0.02)])
+      .filter(([, weight]) => weight > 0);
+    const total = choices.reduce((sum, [, weight]) => sum + weight, 0);
+    let roll = Math.random() * total;
+    for (const [type, weight] of choices) {
+      roll -= weight;
+      if (roll <= 0) return type;
+    }
+    return "normal";
+  }
+
+  function ensureSpawnFlow() {
+    if (!state.spawnFlow || state.elapsed >= state.spawnFlow.startAt + state.spawnFlow.duration) {
+      state.spawnFlow = createSpawnFlow();
+    }
+    return state.spawnFlow;
+  }
+
+  function spawnFlowProgress(flow) {
+    return clamp((state.elapsed - flow.startAt) / Math.max(1, flow.duration), 0, 1);
+  }
+
+  function spawnFlowRhythm(flow) {
+    const progress = spawnFlowProgress(flow);
+    const pulse = Math.sin(progress * Math.PI);
+    const peak = Math.exp(-Math.pow((progress - flow.peak) / 0.18, 2));
+    return clamp(0.48 + pulse * 0.62 + peak * 0.36, 0.42, 1.62);
+  }
+
+  function scheduleFlowSpawn(flow, count = 1) {
+    const d = difficulty();
+    const remaining = Math.max(1, stageRemainingBubbles());
+    const remainingMs = Math.max(700, state.stageStartAt + stageDurationMs - state.elapsed);
+    const budgetInterval = remainingMs / remaining;
+    const base =
+      flow.type === "bigRise"
+        ? 1120
+        : flow.type === "bigSide"
+          ? 980
+          : flow.type === "crossArc"
+            ? 620
+          : flow.type === "machine" && !flow.usedBurst
+            ? 420
+            : flow.type === "sGroup"
+              ? 680
+              : 760;
+    const flowInterval = (base * rand(0.82, 1.18)) / spawnFlowRhythm(flow) - d * 130;
+    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.72, 1.08)), 260, 1420);
+    const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 420 : 0;
+    state.nextSpawnAt = state.elapsed + interval + Math.max(0, count - 1) * 500 + phraseRest;
+  }
+
+  function pickFlowRegion(flow) {
+    if (flow.type === "bigRise" || flow.type === "bigSide" || flow.type === "machine" || flow.type === "sGroup" || flow.type === "crossArc") return flow.primary;
+    return flow.secondary && Math.random() > flow.share ? flow.secondary : flow.primary;
+  }
+
+  function activeLargeBubbleCount() {
+    return state.bubbles.reduce((count, bubble) => count + (bubble.age >= -0.2 && bubble.baseRadius >= 42 ? 1 : 0), 0);
+  }
+
+  function spawnPointCrowded(x, y, radius, colorIndex) {
+    for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
+      const other = state.bubbles[i];
+      if (other.age < -0.75) continue;
+      const dx = x - other.x;
+      const dy = y - other.y;
+      const bigOrDifferent = radius >= 36 || other.baseRadius >= 36 || (colorIndex >= 0 && other.colorIndex >= 0 && colorIndex !== other.colorIndex);
+      const sameTrain = other.islandChainId && colorIndex === other.colorIndex;
+      const minDistance = (radius + other.baseRadius) * (sameTrain ? 0.58 : bigOrDifferent ? 0.98 : 0.76);
+      if (dx * dx + dy * dy < minDistance * minDistance) return true;
+    }
+    return false;
+  }
+
+  function customTemplatesForLevel(level) {
+    const pack = state.customBubblePack;
+    if (!pack || level < pack.spawn.minLevel) return [];
+    return pack.bubbles.filter((template) => level >= template.levelMin && level <= template.levelMax && template.weight > 0);
+  }
+
+  function chooseCustomTemplate(templates) {
+    const total = templates.reduce((sum, template) => sum + template.weight, 0);
+    let roll = Math.random() * total;
+    for (const template of templates) {
+      roll -= template.weight;
+      if (roll <= 0) return template;
+    }
+    return templates[templates.length - 1] ?? null;
+  }
+
+  function edgeForCustomTemplate(template) {
+    return template.edge === "random" ? pickSpawnEdge() : template.edge;
+  }
+
+  function customColorIndex(template, start) {
+    if (template.colorMode === "left") return 0;
+    if (template.colorMode === "right") return 1;
+    if (template.colorMode === "random") return pickColorIndex();
+    if (template.colorMode === "background") {
+      return backgroundColorIndexAt(clamp(start.x, 0, state.width), clamp(start.y, 0, state.height));
+    }
+    return pickBalancedColorIndex();
+  }
+
+  function customStartPoint(template, edge, radius, index, count) {
+    const axis = spawnAxisLength(edge);
+    const center = pickRange(template.lane, 0.5);
+    const laneSpread = count > 1 ? (index - (count - 1) / 2) * rand(0.026, 0.048) : 0;
+    const lane = clamp(center + laneSpread, 0.08, 0.92);
+    return pointFromEdge(edge, radius, lane * axis);
+  }
+
+  function customTargetPoint(template, edge, start, colorIndex) {
+    if (template.colorMode === "auto" && Math.random() < 0.38) {
+      return matchingPointForColorFromEdge(colorIndex, edge, start.y, start.x);
+    }
+    return {
+      x: pickRange(template.aimX, 0.5) * state.width,
+      y: pickRange(template.aimY, 0.5) * state.height,
+    };
+  }
+
+  function customTrajectoryOptions(template, index) {
+    const trajectory = template.trajectory;
+    const amplitude = pickRange(template.amplitude, 0);
+    const frequency = pickRange(template.frequency, 1.8);
+    const arcBend = pickRange(template.arcBend, 0);
+    const useStream = trajectory !== "straight" || amplitude > 0;
+    const streamPattern =
+      trajectory === "straight"
+        ? "float"
+        : trajectory === "arc"
+          ? "arcDrift"
+          : trajectory === "fan"
+            ? "fan"
+            : trajectory;
+    return {
+      isStream: useStream,
+      streamPattern,
+      streamAmplitude: trajectory === "straight" ? amplitude * 0.35 : amplitude,
+      streamFrequency: frequency,
+      streamPhase: index * 0.58 + rand(0, Math.PI * 2),
+      arcBend,
+      arcLife: pickRange(template.arcLife, 2.6),
+    };
+  }
+
+  function pathEdgeFromPoint(point) {
+    const left = point.x;
+    const right = state.width - point.x;
+    const top = point.y;
+    const bottom = state.height - point.y;
+    const min = Math.min(left, right, top, bottom);
+    if (min === left) return "left";
+    if (min === right) return "right";
+    if (min === top) return "top";
+    return "bottom";
+  }
+
+  function customPathForTemplate(template, radius, speed, index, count) {
+    const points = template.path?.points;
+    if (!points || points.length < 2) return null;
+    const first = points[0];
+    const last = points[points.length - 1];
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
+    const length = Math.max(0.001, Math.hypot(dx, dy));
+    const spacing = pickRange(template.spacing, 12);
+    const stagger = count > 1 ? (index % 2 === 0 ? 1 : -1) * Math.ceil(index / 2) : 0;
+    const laneGap = Math.min(radius * 0.82 + spacing * 0.42, radius + 34);
+    const wiggle = Math.sin((state.bubbleCounter + index * 17.13) * 1.618) * Math.min(radius * 0.1, Math.max(1.5, spacing * 0.16));
+    const offsetAmount = stagger * laneGap + wiggle;
+    const offsetX = (-dy / length) * offsetAmount;
+    const offsetY = (dx / length) * offsetAmount;
+    const pixelPoints = points.map((point) => ({
+      x: clamp(point.x * state.width + offsetX, radius * 0.35, state.width - radius * 0.35),
+      y: clamp(point.y * state.height + offsetY, radius * 0.35, state.height - radius * 0.35),
+    }));
+    const motionPoints = sampleCurvedCustomPath(pixelPoints, template.path.curve ?? 0.68, {
+      minX: radius * 0.35,
+      maxX: state.width - radius * 0.35,
+      minY: radius * 0.35,
+      maxY: state.height - radius * 0.35,
+    });
+    return makeMotionPathFromSampledPoints(template.path.mode, motionPoints, radius, speed, 1.15, 10.5);
+  }
+
+  function sampleCurvedCustomPath(points, curve = 0.68, bounds = {}) {
+    if (!points || points.length < 2) return points || [];
+    const strength = clamp(curve, 0, 1);
+    if (strength <= 0.01) return points;
+    const sampled = [points[0]];
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[Math.max(0, i - 1)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(points.length - 1, i + 2)];
+      const distance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const steps = clamp(Math.ceil(distance / 18), 5, 16);
+      for (let step = 1; step <= steps; step += 1) {
+        const t = step / steps;
+        sampled.push(clampPathPoint(blendCurvedPoint(points, p0, p1, p2, p3, t, strength), bounds));
+      }
+    }
+    return simplifyPixelPath(sampled, 112);
+  }
+
+  function blendCurvedPoint(allPoints, p0, p1, p2, p3, t, strength) {
+    const lineX = p1.x + (p2.x - p1.x) * t;
+    const lineY = p1.y + (p2.y - p1.y) * t;
+    if (allPoints.length === 2) {
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const bend = Math.sin(t * Math.PI) * distance * 0.18 * strength;
+      return { x: lineX - (dy / distance) * bend, y: lineY + (dx / distance) * bend };
+    }
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const curveX =
+      0.5 *
+      (2 * p1.x +
+        (-p0.x + p2.x) * t +
+        (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+        (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+    const curveY =
+      0.5 *
+      (2 * p1.y +
+        (-p0.y + p2.y) * t +
+        (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+        (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+    return {
+      x: lineX + (curveX - lineX) * strength,
+      y: lineY + (curveY - lineY) * strength,
+    };
+  }
+
+  function clampPathPoint(point, bounds) {
+    return {
+      x: clamp(point.x, bounds.minX ?? 0, bounds.maxX ?? state.width),
+      y: clamp(point.y, bounds.minY ?? 0, bounds.maxY ?? state.height),
+    };
+  }
+
+  function simplifyPixelPath(points, maxPoints) {
+    if (points.length <= maxPoints) return points;
+    const simplified = [points[0]];
+    const step = (points.length - 1) / (maxPoints - 2);
+    for (let index = 1; index < maxPoints - 1; index += 1) {
+      simplified.push(points[Math.round(index * step)]);
+    }
+    simplified.push(points[points.length - 1]);
+    return simplified;
+  }
+
+  function clampPathInteriorToReadable(points, radius, lead = 1, tail = 1) {
+    if (!points?.length) return points || [];
+    return points.map((point, index) => {
+      if (index < lead || index >= points.length - tail) return point;
+      return clampToReadablePlayfield(point, radius, 14);
+    });
+  }
+
+  function readablePlayfieldCorrection(point, radius, extra = 8) {
+    const margin = safePlayfieldMargin(radius, extra);
+    const minX = margin;
+    const maxX = state.width - margin;
+    const minY = margin;
+    const maxY = state.height - margin;
+    return {
+      dx: point.x < minX ? minX - point.x : point.x > maxX ? maxX - point.x : 0,
+      dy: point.y < minY ? minY - point.y : point.y > maxY ? maxY - point.y : 0,
+    };
+  }
+
+  function softReadablePoint(point, radius, extra = 8, strength = 0.58) {
+    const correction = readablePlayfieldCorrection(point, radius, extra);
+    if (Math.abs(correction.dx) < 0.001 && Math.abs(correction.dy) < 0.001) return point;
+    return {
+      x: point.x + correction.dx * strength,
+      y: point.y + correction.dy * strength,
+    };
+  }
+
+  function smoothPathInterior(points, passes = 1, lead = 1, tail = 1) {
+    if (!points?.length || points.length <= lead + tail + 2) return points || [];
+    let smoothed = points.map((point) => ({ x: point.x, y: point.y }));
+    for (let pass = 0; pass < passes; pass += 1) {
+      const source = smoothed;
+      smoothed = source.map((point, index) => {
+        if (index < lead || index >= source.length - tail) return point;
+        const previous = source[index - 1];
+        const next = source[index + 1];
+        return {
+          x: point.x * 0.62 + (previous.x + next.x) * 0.19,
+          y: point.y * 0.62 + (previous.y + next.y) * 0.19,
+        };
+      });
+    }
+    return smoothed;
+  }
+
+  function softKeepPathInteriorReadable(points, radius, strength = 0.58, lead = 1, tail = 1) {
+    if (!points?.length) return points || [];
+    const corrected = points.map((point, index) => {
+      if (index < lead || index >= points.length - tail) return point;
+      const correction = readablePlayfieldCorrection(point, radius, 8);
+      const distance = Math.hypot(correction.dx, correction.dy);
+      if (distance < 0.001) return point;
+      const pull = clamp(strength * (0.38 + Math.min(1, distance / Math.max(32, radius * 1.45)) * 0.62), 0.18, strength);
+      return {
+        x: point.x + correction.dx * pull,
+        y: point.y + correction.dy * pull,
+      };
+    });
+    return smoothPathInterior(corrected, 1, lead, tail);
+  }
+
+  function pointAtCustomPath(path, amount) {
+    const points = path.points;
+    if (!points?.length) return null;
+    if (points.length === 1 || amount <= 0) return points[0];
+    if (amount >= 1) return points[points.length - 1];
+    const targetLength = path.totalLength * amount;
+    let previousLength = 0;
+    for (let i = 1; i < points.length; i += 1) {
+      const currentLength = path.segments[i - 1];
+      if (targetLength <= currentLength) {
+        const segmentLength = Math.max(0.001, currentLength - previousLength);
+        const t = clamp((targetLength - previousLength) / segmentLength, 0, 1);
+        return {
+          x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
+          y: points[i - 1].y + (points[i].y - points[i - 1].y) * t,
+        };
+      }
+      previousLength = currentLength;
+    }
+    return points[points.length - 1];
+  }
+
+  function flowPathWouldOverlap(path, radius, delaySeconds = 0) {
+    if (!path?.points?.length || !path.mode?.includes("flow")) return false;
+    const horizon = Math.min(6.4, Math.max(3.2, delaySeconds + path.duration * 0.72));
+    for (const other of state.bubbles) {
+      const otherPath = other.customPath;
+      if (
+        other.isCharge ||
+        other.isCat ||
+        other.isBleach ||
+        other.isBomb ||
+        other.isClear ||
+        !otherPath?.points?.length ||
+        !otherPath.mode?.includes("flow")
+      ) {
+        continue;
+      }
+      const otherWait = Math.max(0, -(other.age ?? 0));
+      const threshold = (radius + other.baseRadius) * 0.78;
+      for (let future = 0.36; future <= horizon; future += 0.42) {
+        const newElapsed = future - delaySeconds;
+        const otherElapsed = (otherPath.elapsed ?? 0) + future - otherWait;
+        if (newElapsed < 0 || otherElapsed < 0 || newElapsed >= path.duration || otherElapsed >= otherPath.duration) continue;
+        const point = pointAtCustomPath(path, newElapsed / Math.max(0.001, path.duration));
+        const otherPoint = pointAtCustomPath(otherPath, otherElapsed / Math.max(0.001, otherPath.duration));
+        if (!point || !otherPoint) continue;
+        const pointVisible = point.x + radius > 0 && point.x - radius < state.width && point.y + radius > 0 && point.y - radius < state.height;
+        const otherVisible =
+          otherPoint.x + other.baseRadius > 0 &&
+          otherPoint.x - other.baseRadius < state.width &&
+          otherPoint.y + other.baseRadius > 0 &&
+          otherPoint.y - other.baseRadius < state.height;
+        if (!pointVisible || !otherVisible) continue;
+        if (Math.hypot(point.x - otherPoint.x, point.y - otherPoint.y) < threshold) return true;
+      }
+    }
+    return false;
+  }
+
+  function pointAtCustomPathWithOffset(path, amount, laneOffset = path?.laneOffset ?? 0) {
+    const point = pointAtCustomPath(path, amount);
+    if (!point) return null;
+    if (!laneOffset) return point;
+    const tangentWindow = path?.protectedPath ? 0.034 : 0.012;
+    const next = pointAtCustomPath(path, Math.min(1, amount + tangentWindow));
+    const previous = pointAtCustomPath(path, Math.max(0, amount - tangentWindow));
+    const directionPoint = next && (next.x !== point.x || next.y !== point.y) ? next : previous;
+    if (!directionPoint) return point;
+    const dx = directionPoint.x - point.x;
+    const dy = directionPoint.y - point.y;
+    const length = Math.max(0.001, Math.hypot(dx, dy));
+    const offsetEnvelope = path?.protectedPath
+      ? smoothstep(0.035, 0.16, amount) * (1 - smoothstep(0.84, 0.975, amount))
+      : 1;
+    const offset = laneOffset * offsetEnvelope;
+    return {
+      x: point.x + (-dy / length) * offset,
+      y: point.y + (dx / length) * offset,
+    };
+  }
+
+  function customTemplateRadius(template, index) {
+    const customSize = Array.isArray(template.sizes) ? Number(template.sizes[index]) : NaN;
+    return Number.isFinite(customSize) ? clamp(customSize, 14, 86) : pickRange(template.size, 38);
+  }
+
+  function customGroupDelay(template, index, speed) {
+    if (index <= 0) return 0;
+    const spacing = pickRange(template.spacing, 12);
+    let distance = 0;
+    for (let i = 1; i <= index; i += 1) {
+      const previous = customTemplateRadius(template, i - 1);
+      const current = customTemplateRadius(template, i);
+      distance += previous + current + spacing;
+    }
+    return distance / Math.max(12, speed);
+  }
+
+  function advanceCustomPathBubble(bubble, dt) {
+    const path = bubble.customPath;
+    if (!path?.points?.length) return false;
+    const holdingForFairPass =
+      isStageTargetBubble(bubble) &&
+      !bubble.fairPassComplete &&
+      bubble.wasReady &&
+      cachedBubbleHasMatchingPatch(bubble);
+    const fairProgress = clamp((bubble.matchDwell ?? 0) / fairMatchDwell, 0, 1);
+    const pathRate = holdingForFairPass ? 0.62 + smoothstep(0, 1, fairProgress) * 0.38 : 1;
+    if (holdingForFairPass) {
+      bubble.fairHoldSeconds = (bubble.fairHoldSeconds ?? 0) + dt;
+    }
+    path.elapsed = Math.min(path.duration, (path.elapsed ?? 0) + dt * pathRate);
+    const amount = clamp(path.elapsed / Math.max(0.001, path.duration), 0, 1);
+    const point = pointAtCustomPath(path, amount);
+    const lookAhead = path.protectedPath ? 0.02 : 0.012;
+    const next = pointAtCustomPath(path, Math.min(1, amount + lookAhead));
+    if (!point) return false;
+    if (next && (next.x !== point.x || next.y !== point.y)) {
+      easeVelocityToward(
+        bubble,
+        {
+          vx: (next.x - point.x) / lookAhead / path.duration,
+          vy: (next.y - point.y) / lookAhead / path.duration,
+        },
+        dt,
+        {
+          maxTurnRate: path.protectedPath ? 1.04 : 1.34,
+          blend: path.protectedPath ? 0.16 : 0.22,
+        },
+      );
+    }
+    const lanePoint = pointAtCustomPathWithOffset(path, amount);
+    let pathX = lanePoint?.x ?? point.x;
+    let pathY = lanePoint?.y ?? point.y;
+    if (next && path.swayAmplitude > 0) {
+      const dx = next.x - point.x;
+      const dy = next.y - point.y;
+      const length = Math.max(0.001, Math.hypot(dx, dy));
+      const envelope = Math.sin(amount * Math.PI);
+      const sway =
+        Math.sin(path.elapsed * (path.swayFrequency ?? 4.2) + (path.swayPhase ?? 0)) *
+        path.swayAmplitude *
+        envelope;
+      pathX += (-dy / length) * sway;
+      pathY += (dx / length) * sway;
+    }
+    if (path.protectedPath && amount > 0.06 && amount < 0.94) {
+      const correction = readablePlayfieldCorrection({ x: pathX, y: pathY }, bubble.radius, 8);
+      if (Math.abs(correction.dx) > 0.001 || Math.abs(correction.dy) > 0.001) {
+        const pull = path.mode === "island-safe" ? 0.24 : path.mode?.includes("flow") ? 0.08 : 0.34;
+        const correctionEnvelope =
+          smoothstep(0.06, 0.18, amount) * (1 - smoothstep(0.82, 0.94, amount));
+        pathX += correction.dx * pull * correctionEnvelope;
+        pathY += correction.dy * pull * correctionEnvelope;
+      }
+    }
+    bubble.x = pathX;
+    bubble.y = pathY;
+    if (path.elapsed >= path.duration) {
+      const finalPoint = pointAtCustomPathWithOffset(path, 1) ?? point;
+      const previousPoint = pointAtCustomPathWithOffset(path, 0.975) ?? pointAtCustomPath(path, 0.975) ?? point;
+      const dx = finalPoint.x - previousPoint.x;
+      const dy = finalPoint.y - previousPoint.y;
+      const length = Math.max(0.001, Math.hypot(dx, dy));
+      const exitSpeed = Math.max(56, Math.hypot(bubble.vx, bubble.vy), path.totalLength / Math.max(0.001, path.duration) * 0.72);
+      bubble.x = finalPoint.x;
+      bubble.y = finalPoint.y;
+      easeVelocityToward(
+        bubble,
+        {
+          vx: (dx / length) * exitSpeed,
+          vy: (dy / length) * exitSpeed,
+        },
+        dt,
+        {
+          maxTurnRate: path.protectedPath ? 1.05 : 1.35,
+          blend: 0.26,
+        },
+      );
+      bubble.pathComplete = true;
+      if (path.completeFairPass !== false || (bubble.wasReady && (bubble.matchDwell ?? 0) >= fairMatchDwell)) {
+        bubble.fairPassComplete = true;
+      }
+      bubble.streamAmplitude = 0;
+      bubble.arcBend = 0;
+      bubble.drift = 0;
+      bubble.customPath = null;
+    }
+    return true;
+  }
+
+  function spawnCustomTemplateBubble(template, index, count) {
+    const radius = customTemplateRadius(template, index);
+    const speed = pickRange(template.speed, 68);
+    const customPath = customPathForTemplate(template, radius, speed, index, count);
+    const edge = customPath ? pathEdgeFromPoint(customPath.points[0]) : edgeForCustomTemplate(template);
+    let start = customPath ? customPath.points[0] : customStartPoint(template, edge, radius, index, count);
+    let colorIndex = customColorIndex(template, start);
+    for (let attempt = 0; !customPath && attempt < 5 && spawnPointCrowded(start.x, start.y, radius, colorIndex); attempt += 1) {
+      start = customStartPoint(template, edge, radius, index + attempt * 0.37, count + attempt * 0.2);
+      colorIndex = customColorIndex(template, start);
+    }
+    if (spawnPointCrowded(start.x, start.y, radius, colorIndex)) return false;
+
+    const target = customPath ? customPath.points[customPath.points.length - 1] : customTargetPoint(template, edge, start, colorIndex);
+    const velocity = aimedVelocity(start.x, start.y, target, speed, 4);
+    return spawnBubble(radius <= 28, "normal", {
+      edge,
+      x: start.x,
+      y: start.y,
+      colorIndex,
+      target,
+      velocity,
+      radius,
+      speed,
+      ...(customPath ? {} : customTrajectoryOptions(template, index)),
+      customPath,
+      delay: customGroupDelay(template, index, speed),
+      tapRequired: template.tapCount,
+      holdRequiredMs: 0,
+      customLabel: template.label,
+      quietHint: index > 0,
+    });
+  }
+
+  function scheduleCustomPackSpawn(count = 1) {
+    const pack = state.customBubblePack;
+    const interval = pickRange(pack?.spawn?.intervalMs, [520, 920]);
+    state.nextSpawnAt = state.elapsed + interval + Math.max(0, count - 1) * 52;
+  }
+
+  function trySpawnCustomPackWave(remainingStage) {
+    const pack = state.customBubblePack;
+    if (!pack || remainingStage <= 0) return false;
+    if (state.bubbles.length >= Math.min(activeBubbleLimit(), pack.spawn.maxActive)) return false;
+    if (Math.random() > pack.spawn.chance) return false;
+    const templates = customTemplatesForLevel(displayDifficultyLevel());
+    const template = chooseCustomTemplate(templates);
+    if (!template) return false;
+
+    const desiredCount = Math.round(pickRange(template.count, 1));
+    const count = Math.min(desiredCount, remainingStage, Math.max(0, activeBubbleLimit() - state.bubbles.length));
+    let spawned = 0;
+    for (let index = 0; index < count; index += 1) {
+      if (spawnCustomTemplateBubble(template, index, count)) spawned += 1;
+    }
+    if (spawned <= 0) return false;
+    state.customPackLastSpawnAt = state.elapsed;
+    state.customPackStatus = `${pack.name} · ${template.label}`;
+    scheduleCustomPackSpawn(spawned);
+    return true;
+  }
+
+  function targetForArchetype(flow, region, start, colorIndex) {
+    if (flow.type === "bigRise") {
+      return {
+        x: clamp(start.x + rand(-state.width * 0.12, state.width * 0.12), state.width * 0.16, state.width * 0.84),
+        y: -state.height * rand(0.08, 0.18),
+      };
+    }
+    if (flow.type === "bigSide") {
+      const toRight = region.edge === "left";
+      return {
+        x: toRight ? state.width + state.width * 0.14 : -state.width * 0.14,
+        y: clamp(start.y + rand(-state.height * 0.08, state.height * 0.08), state.height * 0.18, state.height * 0.82),
+      };
+    }
+    return matchingPointForColorFromEdge(colorIndex, region.edge, start.y, start.x);
+  }
+
+  function speedForArchetype(type, sizeKind, d) {
+    const late = smoothstep(0.64, 1.28, d);
+    const calm = 1 - late * 0.18;
+    if (type === "bigRise") return rand(30 + d * 12, 44 + d * 18) * calm;
+    if (type === "bigSide") return rand(40 + d * 14, 58 + d * 22) * calm;
+    if (type === "machine") return rand(78 + d * 18, 104 + d * 25) * calm;
+    if (type === "crossArc") return rand(56 + d * 16, 78 + d * 22) * calm;
+    if (type === "sGroup") return rand(42 + d * 14, 60 + d * 20) * calm;
+    if (sizeKind === "small") return rand(44 + d * 14, 64 + d * 22) * calm;
+    return rand(42 + d * 16, 66 + d * 24) * calm;
+  }
+
+  function clampInsidePlayfield(point, radius = 0) {
+    return clampToReadablePlayfield(point, radius, -12);
+  }
+
+  function addPointVector(point, direction, amount, side = null, sideAmount = 0) {
+    return {
+      x: point.x + direction.x * amount + (side?.x ?? 0) * sideAmount,
+      y: point.y + direction.y * amount + (side?.y ?? 0) * sideAmount,
+    };
+  }
+
+  function matchingRelaxPoint(colorIndex, anchor, edge, radius, offsets) {
+    const fallback = clampInsidePlayfield(anchor, radius);
+    const candidates = [];
+    for (const offset of offsets) {
+      candidates.push(
+        clampInsidePlayfield(
+          {
+            x: anchor.x + offset.x,
+            y: anchor.y + offset.y,
+          },
+          radius,
+        ),
+      );
+    }
+    candidates.push(fallback);
+
+    for (const candidate of candidates) {
+      if (backgroundColorIndexAt(candidate.x, candidate.y) === colorIndex) {
+        return candidate;
+      }
+    }
+    return matchingPointForColorFromEdge(colorIndex, edge, fallback.y, fallback.x);
+  }
+
+  function buildRelaxFlowPath(flow, region, start, colorIndex, radius, speed, sizeKind, exitTarget = null) {
+    if (colorIndex < 0 || flow.type === "machine") return null;
+    const edge = region.edge;
+    const inward = edgeDirection(edge);
+    const horizontal = edge === "left" || edge === "right";
+    const tangent = horizontal ? { x: 0, y: 1 } : { x: 1, y: 0 };
+    const longSpan = horizontal ? state.width : state.height;
+    const crossSpan = horizontal ? state.height : state.width;
+    const seed = Math.sin((state.bubbleCounter + 1) * 1.731 + start.x * 0.011 + start.y * 0.017 + colorIndex * 2.23);
+    const sign = seed >= 0 ? 1 : -1;
+    const small = sizeKind === "small";
+    const group = flow.type === "sGroup" || small;
+    const entryDepth = clamp(longSpan * rand(small ? 0.16 : 0.18, small ? 0.25 : 0.3), radius * 3.2, longSpan * 0.38);
+    const entryLane = sign * clamp(crossSpan * rand(0.045, 0.095), radius * 1.2, radius * 3.4);
+    const matchTarget = matchingPointForColorFromEdge(colorIndex, edge, start.y, start.x);
+    const phraseWidth = clamp(crossSpan * rand(group ? 0.052 : 0.048, group ? 0.092 : 0.082), radius * 1.15, radius * 3.1);
+    const hookDepth = clamp(longSpan * rand(0.06, 0.1), radius * 1.8, radius * 4.4);
+    const entry = clampInsidePlayfield(addPointVector(start, inward, entryDepth, tangent, entryLane), radius);
+    const approach = clampInsidePlayfield(addPointVector(matchTarget, inward, -hookDepth, tangent, -sign * phraseWidth * 0.45), radius);
+    const matchA = matchingRelaxPoint(colorIndex, matchTarget, edge, radius, [
+      { x: tangent.x * sign * phraseWidth * 0.22 + inward.x * radius * 0.12, y: tangent.y * sign * phraseWidth * 0.22 + inward.y * radius * 0.12 },
+      { x: tangent.x * sign * phraseWidth * 0.38 + inward.x * radius * 0.28, y: tangent.y * sign * phraseWidth * 0.38 + inward.y * radius * 0.28 },
+    ]);
+    const matchB = matchingRelaxPoint(colorIndex, matchTarget, edge, radius, [
+      { x: tangent.x * sign * phraseWidth * 0.48 + inward.x * hookDepth * 0.55, y: tangent.y * sign * phraseWidth * 0.48 + inward.y * hookDepth * 0.55 },
+      { x: tangent.x * sign * phraseWidth * 0.28 + inward.x * hookDepth * 0.7, y: tangent.y * sign * phraseWidth * 0.28 + inward.y * hookDepth * 0.7 },
+    ]);
+    const matchC = matchingRelaxPoint(colorIndex, matchTarget, edge, radius, [
+      { x: tangent.x * sign * phraseWidth * 0.18 + inward.x * hookDepth * 0.92, y: tangent.y * sign * phraseWidth * 0.18 + inward.y * hookDepth * 0.92 },
+      { x: inward.x * hookDepth, y: inward.y * hookDepth },
+    ]);
+    const exitDirection =
+      exitTarget && pointOutsidePlayfield(exitTarget, radius, -18)
+        ? normalizeVector(exitTarget.x - matchC.x, exitTarget.y - matchC.y, inward)
+        : inward;
+    const exitGuide = clampInsidePlayfield(
+      {
+        x: matchC.x + exitDirection.x * clamp(longSpan * rand(0.2, 0.32), radius * 4, longSpan * 0.46) + tangent.x * sign * phraseWidth * rand(0.05, 0.22),
+        y: matchC.y + exitDirection.y * clamp(longSpan * rand(0.2, 0.32), radius * 4, longSpan * 0.46) + tangent.y * sign * phraseWidth * rand(0.05, 0.22),
+      },
+      radius,
+    );
+    const points = [start, entry, approach, matchA, matchB, matchC, exitGuide];
+    if (exitTarget && pointOutsidePlayfield(exitTarget, radius, -18)) {
+      points.push(exitTarget);
+    }
+    const pathSpeed = speed * (group ? 0.7 : small ? 0.74 : 0.66);
+    const minDuration = group ? 4.8 : small ? 4.35 : 5.25;
+    const maxDuration = group ? 11.8 : small ? 10.8 : 12.8;
+    const path = motionPathFromPoints(points, radius, pathSpeed, group ? 0.8 : 0.76, minDuration, maxDuration, "relax-flow");
+    path.steerTarget = matchTarget;
+    return ensureIslandPathFairWindow(path, colorIndex, fairMatchDwell + 0.35);
+  }
+
+  function buildPredictableMatchPath(edge, start, colorIndex, radius, speed, seed = 0, exitTarget = null, mode = "predictable-flow") {
+    if (colorIndex < 0) return null;
+    const inward = edgeDirection(edge);
+    const horizontal = edge === "left" || edge === "right";
+    const tangent = horizontal ? { x: 0, y: 1 } : { x: 1, y: 0 };
+    const longSpan = horizontal ? state.width : state.height;
+    const crossSpan = horizontal ? state.height : state.width;
+    const sign = Math.sin(seed * 1.37 + start.x * 0.013 + start.y * 0.017 + colorIndex) >= 0 ? 1 : -1;
+    const matchTarget = matchingPointForColorFromEdge(colorIndex, edge, start.y, start.x);
+    const entryDepth = clamp(longSpan * 0.22, radius * 3.2, longSpan * 0.36);
+    const phraseWidth = clamp(crossSpan * 0.075, radius * 1.35, radius * 3.4);
+    const hookDepth = clamp(longSpan * 0.085, radius * 2.2, radius * 5.2);
+    const entry = clampInsidePlayfield(addPointVector(start, inward, entryDepth, tangent, sign * phraseWidth * 0.64), radius);
+    const approach = clampInsidePlayfield(addPointVector(matchTarget, inward, -hookDepth, tangent, -sign * phraseWidth * 0.45), radius);
+    const matchA = matchingRelaxPoint(colorIndex, matchTarget, edge, radius, [
+      { x: tangent.x * sign * phraseWidth * 0.22 + inward.x * radius * 0.16, y: tangent.y * sign * phraseWidth * 0.22 + inward.y * radius * 0.16 },
+      { x: tangent.x * sign * phraseWidth * 0.42 + inward.x * hookDepth * 0.34, y: tangent.y * sign * phraseWidth * 0.42 + inward.y * hookDepth * 0.34 },
+    ]);
+    const matchB = matchingRelaxPoint(colorIndex, matchTarget, edge, radius, [
+      { x: tangent.x * -sign * phraseWidth * 0.28 + inward.x * hookDepth * 0.56, y: tangent.y * -sign * phraseWidth * 0.28 + inward.y * hookDepth * 0.56 },
+      { x: inward.x * hookDepth * 0.74, y: inward.y * hookDepth * 0.74 },
+    ]);
+    const exitDirection =
+      exitTarget && pointOutsidePlayfield(exitTarget, radius, -18)
+        ? normalizeVector(exitTarget.x - matchB.x, exitTarget.y - matchB.y, inward)
+        : inward;
+    const exitGuide = clampInsidePlayfield(
+      {
+        x: matchB.x + exitDirection.x * clamp(longSpan * 0.24, radius * 4.4, longSpan * 0.42) + tangent.x * sign * phraseWidth * 0.28,
+        y: matchB.y + exitDirection.y * clamp(longSpan * 0.24, radius * 4.4, longSpan * 0.42) + tangent.y * sign * phraseWidth * 0.28,
+      },
+      radius,
+    );
+    const points = [start, entry, approach, matchA, matchB, exitGuide];
+    if (exitTarget && pointOutsidePlayfield(exitTarget, radius, -18)) {
+      points.push(exitTarget);
+    }
+    const path = motionPathFromPoints(points, radius, speed * 0.68, 0.86, 4.9, 12.4, mode);
+    path.steerTarget = matchTarget;
+    path.completeFairPass = false;
+    path.protectedPath = true;
+    path.trustedStructuredPath = true;
+    return ensureIslandPathFairWindow(path, colorIndex, fairMatchDwell + 0.35);
+  }
+
+  function spawnFlowBubble(flow, options = {}) {
+    const d = difficulty();
+    const level = displayDifficultyLevel();
+    let region = options.region ?? pickFlowRegion(flow);
+    const progress = spawnFlowProgress(flow);
+    const sizeKind =
+      options.sizeKind ??
+      (flow.type === "bigRise" || flow.type === "bigSide"
+        ? "large"
+        : flow.type === "sGroup"
+          ? Math.random() < 0.48 ? "small" : "normal"
+          : Math.random() < 0.14 ? "small" : "normal");
+    const radius =
+      options.radius ??
+      (flow.type === "bigRise" || flow.type === "bigSide" || flow.type === "sGroup"
+        ? radiusForArchetype(flow.type)
+        : radiusForArchetype(sizeKind));
+    let colorIndex = options.colorIndex ?? pickBalancedColorIndex();
+    const spawnProgress = clamp(progress + (options.progressOffset ?? 0), 0, 1);
+    const startLaneOffset = options.startLaneOffset ?? 0;
+    const startPointFor = (sourceRegion, sourceProgress, jitter) => {
+      const point = pointFromSpawnRegion(sourceRegion, radius, sourceProgress, jitter);
+      return startLaneOffset ? offsetSpawnPointAlongEdge(point, sourceRegion.edge, startLaneOffset, radius) : point;
+    };
+    let start = startPointFor(region, spawnProgress, options.startJitter ?? 0.035);
+    if (options.colorIndex === undefined && (flow.type === "bigRise" || flow.type === "bigSide")) {
+      colorIndex = backgroundColorIndexAt(clamp(start.x, 0, state.width), clamp(start.y, 0, state.height));
+    }
+    const allowClusterStartOverlap = Boolean(options.allowClusterStartOverlap);
+    for (let attempt = 0; !allowClusterStartOverlap && attempt < 6 && spawnPointCrowded(start.x, start.y, radius, colorIndex); attempt += 1) {
+      region = attempt > 2 && flow.secondary ? flow.secondary : region;
+      start = startPointFor(region, clamp(progress + attempt * 0.05, 0, 1), 0.06);
+    }
+    if (!allowClusterStartOverlap && spawnPointCrowded(start.x, start.y, radius, colorIndex)) return false;
+    if (options.colorIndex === undefined && (flow.type === "bigRise" || flow.type === "bigSide")) {
+      colorIndex = backgroundColorIndexAt(clamp(start.x, 0, state.width), clamp(start.y, 0, state.height));
+    }
+
+    const target = targetForArchetype(flow, region, start, colorIndex);
+    const speed = speedForArchetype(flow.type, sizeKind, d) * (options.speedMultiplier ?? 1);
+    const customPath = options.customPath ?? buildRelaxFlowPath(flow, region, start, colorIndex, radius, speed, sizeKind, target);
+    if (customPath) {
+      customPath.protectedPath = true;
+      customPath.completeFairPass = false;
+      customPath.trustedStructuredPath = true;
+    }
+    const pathStart = customPath?.points?.[0] ?? start;
+    const pathAim = customPath?.points?.[1] ?? target;
+    const steerTarget = customPath?.steerTarget ?? target;
+    const velocity = aimedVelocity(pathStart.x, pathStart.y, pathAim, speed, sizeKind === "small" ? 3 : flow.type === "bigRise" || flow.type === "bigSide" ? 3 : 8);
+    const curvedMotion = level >= 2 && flow.type !== "machine";
+    const motionRoll = Math.random();
+    const calmSmall = sizeKind === "small";
+    const motionIsStream = options.isStream ?? (flow.type === "sGroup" || (curvedMotion && motionRoll < (calmSmall ? 0.38 : flow.type === "bigRise" ? 0.38 : 0.74)));
+    const motionPattern = options.streamPattern ?? (flow.type === "sGroup" ? "sGroup" : motionRoll < 0.42 ? "softS" : "arcDrift");
+    const motionAmplitude =
+      options.streamAmplitude ??
+      (flow.type === "sGroup" ? rand(calmSmall ? 9 : 14, calmSmall ? 17 : 24) : motionIsStream ? rand(calmSmall ? 3 + d * 2 : 5 + d * 4, calmSmall ? 8 + d * 4 : 13 + d * 9) : 0);
+    const motionFrequency = flow.type === "sGroup" ? rand(calmSmall ? 1.45 : 1.9, calmSmall ? 2.15 : 2.7) : rand(calmSmall ? 0.9 : 1.25, calmSmall ? 1.55 + d * 0.25 : 2.25 + d * 0.45);
+    const motionArc =
+      curvedMotion && Math.random() < (calmSmall ? 0.32 : flow.type === "bigRise" ? 0.44 : 0.68)
+        ? (Math.random() < 0.5 ? -1 : 1) * rand(calmSmall ? 10 + d * 4 : 18 + d * 8, calmSmall ? 24 + d * 8 : 42 + d * 18)
+        : 0;
+    const spawned = spawnBubble(sizeKind === "small", "normal", {
+      edge: customPath ? pathEdgeFromPoint(pathStart) : region.edge,
+      x: pathStart.x,
+      y: pathStart.y,
+      colorIndex,
+      target: steerTarget,
+      velocity,
+      radius,
+      speed,
+      sizeKind,
+      isStream: motionIsStream,
+      streamPattern: motionPattern,
+      streamAmplitude: motionAmplitude,
+      streamFrequency: motionFrequency,
+      arcBend: options.arcBend ?? motionArc,
+      arcLife: options.arcLife ?? rand(2.15, 3.35),
+      customPath,
+      exitAfterPath: Boolean(customPath),
+      pathLockedMotion: Boolean(customPath),
+      quietHint: Boolean(options.quietHint),
+      delay: options.delay ?? 0,
+    });
+    if (spawned && sizeKind === "large") flow.usedLarge = true;
+    return spawned;
+  }
+
+  function spawnFlowSmallCluster(flow, maxAllowed = maxActiveBubbles) {
+    const level = displayDifficultyLevel();
+    const d = difficulty();
+    const capacity = bubbleCapacityRemaining();
+    const islandActive = isIslandChoreoPattern(currentBackgroundPatternId());
+    const desired = Math.round(rand(level <= 2 ? 2 : 3, islandActive || level >= 6 ? 4 : 3));
+    const count = Math.min(desired, maxAllowed, capacity);
+    if (count < 2) return 0;
+
+    const region = pickFlowRegion(flow);
+    const sharedColor = pickBalancedColorIndex();
+    const baseRadius = clamp(radiusForDifficulty(d, "small"), 25, 34);
+    const start = pointFromSpawnRegion(region, baseRadius, spawnFlowProgress(flow), 0.012);
+    const target = targetForArchetype(flow, region, start, sharedColor);
+    const speed = speedForArchetype(flow.type, "small", d) * (islandActive ? 1.04 : 1.02);
+    const basePath = buildRelaxFlowPath(flow, region, start, sharedColor, baseRadius, speed, "small", target);
+    if (!basePath) return 0;
+    basePath.mode = "cluster-flow";
+    basePath.protectedPath = true;
+    basePath.completeFairPass = false;
+    basePath.trustedStructuredPath = true;
+    const pathSpeed = Math.max(48, basePath.totalLength / Math.max(0.001, basePath.duration));
+    makeSpawnHint(region.edge, start.x, start.y, baseRadius, palette[sharedColor].light, 0.22, count);
+    let delay = 0;
+    let previousRadius = baseRadius;
+    let spawned = 0;
+
+    for (let i = 0; i < count; i += 1) {
+      const radius = clamp(baseRadius * radiusJitter(d, 0.035, 0.07), 24, 36);
+      if (i > 0) {
+        delay += clamp((previousRadius + radius + 18) / pathSpeed, 0.82, 1.18);
+      }
+      previousRadius = radius;
+      const customPath = cloneMotionPath(basePath, i * 0.16);
+      const pathStart = customPath.points[0];
+      const pathAim = customPath.points[1] ?? target;
+      const velocity = aimedVelocity(pathStart.x, pathStart.y, pathAim, speed, 1);
+      const didSpawn = spawnBubble(true, "normal", {
+        edge: pathEdgeFromPoint(pathStart),
+        x: pathStart.x,
+        y: pathStart.y,
+        colorIndex: sharedColor,
+        target: customPath.steerTarget ?? target,
+        velocity,
+        radius,
+        speed,
+        sizeKind: "small",
+        isStream: true,
+        streamPattern: "spray",
+        streamAmplitude: 0,
+        streamFrequency: 1,
+        customPath,
+        exitAfterPath: true,
+        pathLockedMotion: true,
+        delay,
+        quietHint: true,
+      });
+      if (didSpawn) spawned += 1;
+    }
+    return spawned;
+  }
+
+  function spawnFlowGun(flow, maxAllowed = maxActiveBubbles) {
+    const d = difficulty();
+    const region = flow.primary;
+    const colorIndex = pickBalancedColorIndex();
+    const count = Math.min(Math.round(rand(3, 4)), maxAllowed, bubbleCapacityRemaining());
+    if (count <= 0) return 0;
+    const radius = clamp(radiusForArchetype("machine") * 1.08, 24, 32);
+    const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.012);
+    makeSpawnHint(region.edge, base.x, base.y, radius, palette[colorIndex].light, 0.3, count);
+    const inward = edgeDirection(region.edge);
+    const horizontal = region.edge === "left" || region.edge === "right";
+    const perp = horizontal ? { x: 0, y: 1 } : { x: 1, y: 0 };
+    const fan = rand(-0.22, 0.22);
+    const target = {
+      x: base.x + (inward.x + perp.x * fan) * state.width * rand(0.78, 1.02),
+      y: base.y + (inward.y + perp.y * fan) * state.height * rand(0.78, 1.02),
+    };
+    const speed = speedForArchetype("machine", "small", d) * rand(0.88, 0.98);
+    const basePath = buildPredictableMatchPath(region.edge, base, colorIndex, radius, speed, state.spawnFlowIndex * 3.1, target, "machine-flow");
+    if (!basePath) return 0;
+    const pathSpeed = Math.max(54, basePath.totalLength / Math.max(0.001, basePath.duration));
+    let delay = 0;
+    let previousRadius = radius;
+    let spawned = 0;
+    for (let i = 0; i < count; i += 1) {
+      const bubbleRadius = clamp(radius * radiusJitter(d, 0.035, 0.08), 24, 34);
+      if (i > 0) {
+        delay += clamp((previousRadius + bubbleRadius + 14) / pathSpeed, 0.7, 0.98);
+      }
+      previousRadius = bubbleRadius;
+      const customPath = cloneMotionPath(basePath, i * 0.18);
+      const pathStart = customPath.points[0];
+      const pathAim = customPath.points[1] ?? target;
+      const velocity = aimedVelocity(pathStart.x, pathStart.y, pathAim, speed, 1);
+      const didSpawn = spawnBubble(true, "normal", {
+        edge: pathEdgeFromPoint(pathStart),
+        x: pathStart.x,
+        y: pathStart.y,
+        colorIndex,
+        target,
+        velocity,
+        radius: bubbleRadius,
+        speed,
+        isStream: true,
+        streamPattern: "spray",
+        streamAmplitude: 0,
+        streamFrequency: 1,
+        streamPhase: i * 0.48,
+        arcBend: 0,
+        arcLife: rand(2.15, 3.0),
+        customPath,
+        exitAfterPath: true,
+        pathLockedMotion: true,
+        delay,
+        quietHint: true,
+      });
+      if (didSpawn) spawned += 1;
+    }
+    flow.usedBurst = true;
+    return spawned;
+  }
+
+  function spawnFlowCrossArc(flow, maxAllowed = maxActiveBubbles) {
+    const d = difficulty();
+    const capacity = bubbleCapacityRemaining();
+    const total = Math.min(4, maxAllowed, capacity);
+    if (total <= 1) return 0;
+
+    const regions = [flow.primary, flow.secondary ?? flow.primary];
+    const firstCount = Math.ceil(total / 2);
+    const counts = [firstCount, total - firstCount];
+    const phraseColor = pickBalancedColorIndex();
+    let spawned = 0;
+
+    for (let side = 0; side < 2; side += 1) {
+      const region = regions[side];
+      const sideCount = counts[side];
+      if (!region || sideCount <= 0) continue;
+
+      const inward = edgeDirection(region.edge);
+      const horizontal = region.edge === "left" || region.edge === "right";
+      const perp = horizontal ? { x: 0, y: 1 } : { x: 1, y: 0 };
+      const radius = clamp(radiusForDifficulty(d, "stream") * rand(1.12, 1.28), 23, 31);
+      const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.018);
+      const curveSign = side === 0 ? 1 : -1;
+      const target = {
+        x: base.x + inward.x * state.width * rand(0.76, 0.94) + perp.x * curveSign * state.width * rand(0.07, 0.11),
+        y: base.y + inward.y * state.height * rand(0.76, 0.94) + perp.y * curveSign * state.height * rand(0.07, 0.11),
+      };
+      const speed = speedForArchetype("crossArc", "small", d) * rand(0.84, 0.96);
+      const basePath = buildPredictableMatchPath(region.edge, base, phraseColor, radius, speed, side * 9.7 + state.spawnFlowIndex * 2.3, target, "crossarc-flow");
+      if (!basePath) continue;
+      const pathSpeed = Math.max(52, basePath.totalLength / Math.max(0.001, basePath.duration));
+      let sideDelay = side * 0.72;
+
+      for (let i = 0; i < sideCount; i += 1) {
+        if (i > 0) {
+          sideDelay += clamp((radius * 2 + 14) / pathSpeed, 0.72, 0.98);
+        }
+        const customPath = cloneMotionPath(basePath, i * 0.2 + side * Math.PI);
+        const pathStart = customPath.points[0];
+        const pathAim = customPath.points[1] ?? target;
+        const velocity = aimedVelocity(pathStart.x, pathStart.y, pathAim, speed, 1);
+        const didSpawn = spawnBubble(true, "normal", {
+          edge: pathEdgeFromPoint(pathStart),
+          x: pathStart.x,
+          y: pathStart.y,
+          colorIndex: phraseColor,
+          target,
+          velocity,
+          radius,
+          speed,
+          isStream: true,
+          streamPattern: "arcDuo",
+          streamAmplitude: 0,
+          streamFrequency: 1,
+          streamPhase: i * 0.34 + side * Math.PI,
+          arcBend: 0,
+          arcLife: rand(2.35, 3.2),
+          customPath,
+          exitAfterPath: true,
+          pathLockedMotion: true,
+          delay: sideDelay,
+          quietHint: true,
+        });
+        if (didSpawn) spawned += 1;
+      }
+    }
+
+    flow.usedBurst = true;
+    return spawned;
+  }
+
+  function spawnFlowSGroup(flow, maxAllowed = maxActiveBubbles) {
+    const count = Math.min(Math.round(rand(2, 3)), maxAllowed, bubbleCapacityRemaining());
+    if (count <= 0) return 0;
+    const region = flow.primary;
+    const colorIndex = pickBalancedColorIndex();
+    let spawned = 0;
+    for (let i = 0; i < count; i += 1) {
+      if (spawnFlowBubble(flow, {
+        region,
+        sizeKind: i === count - 1 && count > 2 ? "small" : "normal",
+        radius: i === count - 1 && count > 2 ? clamp(radiusForDifficulty(difficulty(), "small"), 24, 34) : undefined,
+        colorIndex,
+        delay: i * rand(0.58, 0.76),
+        quietHint: i > 0,
+      })) {
+        spawned += 1;
+      }
+    }
+    flow.usedBurst = true;
+    return spawned;
+  }
+
+  const backgroundPatternIds = [
+    "WAVE_CENTER",
+    "WAVE_TIDE",
+    "ROTATE_TOP_TO_SIDE",
+    "ROTATE_SIDE_TO_DIAGONAL",
+    "ISLAND_PINK",
+    "ISLAND_BLUE",
+    "FOLD",
+    "ORBIT",
+    "BRAID",
+  ];
+  const highBackgroundPatternIds = ["ISLAND_PINK", "FOLD", "ISLAND_BLUE", "ORBIT", "BRAID"];
+  const islandChoreoPatterns = {
+    ISLAND_PINK: { sign: -1, cornerX: 0.16, cornerY: 0.2, centerX: 0.51, centerY: 0.5, radius: 0.37 },
+    ISLAND_BLUE: { sign: 1, cornerX: 0.84, cornerY: 0.78, centerX: 0.48, centerY: 0.52, radius: 0.37 },
+  };
+
+  function backgroundPatternIdForLevel(level) {
+    const safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+    if (safeLevel <= backgroundPatternIds.length) return backgroundPatternIds[safeLevel - 1];
+    return highBackgroundPatternIds[(safeLevel - backgroundPatternIds.length - 1) % highBackgroundPatternIds.length];
+  }
+
+  function currentBackgroundLevel() {
+    return window.PaopaoBackgroundEngine?.levelAt?.(backgroundEngineTimeSeconds()) ?? displayDifficultyLevel();
+  }
+
+  function currentBackgroundPatternId() {
+    return backgroundPatternIdForLevel(currentBackgroundLevel());
+  }
+
+  function currentBackgroundCycleInfo() {
+    const seconds = Math.max(0.001, stageDurationMs / 1000);
+    const time = backgroundEngineTimeSeconds();
+    const raw = Math.max(0, time / seconds);
+    const level = Math.floor(raw) + 1;
+    return {
+      level,
+      local: raw - Math.floor(raw),
+      flow: time * 0.34,
+    };
+  }
+
+  function currentWavePatternId() {
+    return currentBackgroundPatternId();
+  }
+
+  function isWaveChoreoPattern(patternId) {
+    return patternId === "WAVE_CENTER" || patternId === "WAVE_TIDE" || patternId === "ROTATE_TOP_TO_SIDE" || patternId === "ROTATE_SIDE_TO_DIAGONAL";
+  }
+
+  function structuredPathPatternActive(patternId = currentBackgroundPatternId()) {
+    return isWaveChoreoPattern(patternId) || isIslandChoreoPattern(patternId);
+  }
+
+  function isTideLikeChoreoPattern(patternId) {
+    return patternId === "WAVE_TIDE" || patternId === "ROTATE_TOP_TO_SIDE" || patternId === "ROTATE_SIDE_TO_DIAGONAL";
+  }
+
+  function isIslandChoreoPattern(patternId) {
+    return patternId === "ISLAND_PINK" || patternId === "ISLAND_BLUE";
+  }
+
+  function islandChoreoInfo(patternId) {
+    const pattern = islandChoreoPatterns[patternId];
+    if (!pattern) return null;
+    const cycle = currentBackgroundCycleInfo();
+    let travel = 0;
+    if (cycle.local < 0.28) {
+      travel = smoothstep(0.02, 0.28, cycle.local);
+    } else if (cycle.local < 0.68) {
+      travel = 1;
+    } else {
+      travel = 1 - smoothstep(0.7, 0.94, cycle.local);
+    }
+    const hold = smoothstep(0.18, 0.3, cycle.local) * (1 - smoothstep(0.68, 0.86, cycle.local));
+    const breathe = Math.sin(cycle.flow * Math.PI * 2 * 0.92) * 0.018 * hold;
+    const centerX = pattern.cornerX + (pattern.centerX - pattern.cornerX) * travel + breathe;
+    const centerY = pattern.cornerY + (pattern.centerY - pattern.cornerY) * travel - breathe * 0.75;
+    const shortSide = Math.min(state.width, state.height);
+    return {
+      cx: centerX * state.width,
+      cy: centerY * state.height,
+      rx: shortSide * pattern.radius * 0.72,
+      ry: shortSide * pattern.radius * 1.04,
+      local: cycle.local,
+      hold,
+      islandColorIndex: pattern.sign > 0 ? 0 : 1,
+      outsideColorIndex: pattern.sign > 0 ? 1 : 0,
+    };
+  }
+
+  function islandChoreoRouteType(runIndex) {
+    const routeTypes = ["chainS", "mirrorArc", "orbitTrain", "threeDuo", "chainS", "orbitSolo", "mirrorArc"];
+    return routeTypes[runIndex % routeTypes.length];
+  }
+
+  function islandOrbitPoint(info, angle, scale = 1, tangentBias = 0) {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return {
+      x: info.cx + cos * info.rx * scale - sin * info.rx * 0.12 * tangentBias,
+      y: info.cy + sin * info.ry * scale + cos * info.ry * 0.12 * tangentBias,
+    };
+  }
+
+  function pushPointOutsideIsland(point, info, minScale = 1.16) {
+    const dx = point.x - info.cx;
+    const dy = point.y - info.cy;
+    const normalizedX = dx / Math.max(1, info.rx);
+    const normalizedY = dy / Math.max(1, info.ry);
+    const islandDistance = Math.hypot(normalizedX, normalizedY);
+    if (islandDistance >= minScale) return point;
+    if (islandDistance < 0.001) {
+      return { x: info.cx, y: info.cy - info.ry * minScale };
+    }
+    const scale = minScale / islandDistance;
+    return {
+      x: info.cx + dx * scale,
+      y: info.cy + dy * scale,
+    };
+  }
+
+  function pullPointInsideIsland(point, info, maxScale = 0.72) {
+    const dx = point.x - info.cx;
+    const dy = point.y - info.cy;
+    const normalizedX = dx / Math.max(1, info.rx);
+    const normalizedY = dy / Math.max(1, info.ry);
+    const islandDistance = Math.hypot(normalizedX, normalizedY);
+    if (islandDistance <= maxScale) return point;
+    if (islandDistance < 0.001) return { x: info.cx, y: info.cy };
+    const scale = maxScale / islandDistance;
+    return {
+      x: info.cx + dx * scale,
+      y: info.cy + dy * scale,
+    };
+  }
+
+  function mixPoint(a, b, amount) {
+    return {
+      x: a.x + (b.x - a.x) * amount,
+      y: a.y + (b.y - a.y) * amount,
+    };
+  }
+
+  function islandPointAtScale(point, info, scale, fallbackAngle = -Math.PI / 2) {
+    const dx = point.x - info.cx;
+    const dy = point.y - info.cy;
+    const normalizedX = dx / Math.max(1, info.rx);
+    const normalizedY = dy / Math.max(1, info.ry);
+    const distance = Math.hypot(normalizedX, normalizedY);
+    const angle = distance > 0.001 ? Math.atan2(normalizedY, normalizedX) : fallbackAngle;
+    return {
+      x: info.cx + Math.cos(angle) * info.rx * scale,
+      y: info.cy + Math.sin(angle) * info.ry * scale,
+    };
+  }
+
+  function islandPointMatchesActualColor(point, radius, colorIndex) {
+    const sample = clampToReadablePlayfield(point, radius, 6);
+    return backgroundColorIndexAt(sample.x, sample.y) === colorIndex;
+  }
+
+  function nudgeIslandPointToActualColor(point, info, radius, colorIndex, fallbackAngle = -Math.PI / 2) {
+    if (islandPointMatchesActualColor(point, radius, colorIndex)) return point;
+    const islandColor = colorIndex === info.islandColorIndex;
+    const scales = islandColor
+      ? [0.34, 0.42, 0.5, 0.58, 0.66]
+      : [1.22, 1.38, 1.56, 1.78, 2.02];
+    for (const scale of scales) {
+      const candidate = clampToReadablePlayfield(islandPointAtScale(point, info, scale, fallbackAngle), radius, 10);
+      if (islandPointMatchesActualColor(candidate, radius, colorIndex)) {
+        return candidate;
+      }
+    }
+    return point;
+  }
+
+  function pushPointOffscreenFromIsland(point, info, radius) {
+    const margin = Math.max(92, radius * 3.4);
+    const dx = point.x - info.cx;
+    const dy = point.y - info.cy;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const candidates = [];
+    if (unitX > 0.001) candidates.push((state.width + margin - info.cx) / unitX);
+    if (unitX < -0.001) candidates.push((-margin - info.cx) / unitX);
+    if (unitY > 0.001) candidates.push((state.height + margin - info.cy) / unitY);
+    if (unitY < -0.001) candidates.push((-margin - info.cy) / unitY);
+    const exitDistance = Math.min(...candidates.filter((value) => value > 0));
+    const targetDistance = Number.isFinite(exitDistance) ? Math.max(distance, exitDistance * 1.015) : distance + margin;
+    return {
+      x: info.cx + unitX * targetDistance,
+      y: info.cy + unitY * targetDistance,
+    };
+  }
+
+  function prepareIslandOutsidePathPoints(points, info, radius, minScale = 1.16) {
+    if (!points?.length) return points || [];
+    const shaped = points.map((point) => pushPointOutsideIsland(point, info, minScale));
+    shaped[0] = pushPointOffscreenFromIsland(shaped[0], info, radius);
+    shaped[shaped.length - 1] = pushPointOffscreenFromIsland(shaped[shaped.length - 1], info, radius);
+    return shaped;
+  }
+
+  function prepareIslandPathPointsForColor(points, info, radius, colorIndex, matchScale = 0.82) {
+    if (!points?.length) return points || [];
+    const islandColor = colorIndex === info.islandColorIndex;
+    const shaped = points.map((point, index) => {
+      const amount = points.length <= 1 ? 0 : index / (points.length - 1);
+      const centerWeight = smoothstep(0.08, 0.28, amount) * (1 - smoothstep(0.72, 0.92, amount));
+      if (index === 0 || index === points.length - 1) return point;
+      const fallbackAngle = -Math.PI * 0.5 + amount * Math.PI * 2.2;
+      const target = islandColor
+        ? pullPointInsideIsland(point, info, Math.min(matchScale, 0.54))
+        : pushPointOutsideIsland(point, info, Math.max(matchScale, 1.22));
+      const shapeWeight = islandColor ? centerWeight : centerWeight * 0.62;
+      const shapedTarget = mixPoint(point, target, shapeWeight);
+      const readable = clampToReadablePlayfield(shapedTarget, radius, 10);
+      const readableTarget = mixPoint(shapedTarget, readable, centerWeight * 0.58);
+      return centerWeight > 0.2
+        ? nudgeIslandPointToActualColor(readableTarget, info, radius, colorIndex, fallbackAngle)
+        : readableTarget;
+    });
+    shaped[0] = pushPointOffscreenFromIsland(shaped[0], info, radius);
+    shaped[shaped.length - 1] = pushPointOffscreenFromIsland(shaped[shaped.length - 1], info, radius);
+    if (shaped.length > 3) {
+      shaped[1] = clampToReadablePlayfield(shaped[1], radius, 18);
+      shaped[shaped.length - 2] = clampToReadablePlayfield(shaped[shaped.length - 2], radius, 18);
+    }
+    return shaped;
+  }
+
+  function ensureIslandPathFairWindow(path, colorIndex, minSeconds = fairMatchDwell + 0.45) {
+    if (!path?.points?.length || colorIndex < 0) return path;
+    const samples = 42;
+    let matching = 0;
+    const radius = path.radius ?? 24;
+    const sampleRadius = radius * 0.52;
+    for (let i = 1; i < samples; i += 1) {
+      const amount = i / samples;
+      const point = pointAtCustomPath(path, amount);
+      if (!point) continue;
+      const checks = [
+        point,
+        { x: point.x - sampleRadius, y: point.y },
+        { x: point.x + sampleRadius, y: point.y },
+      ];
+      const visible = checks.some((sample) => pathPointReadableInPlayfield(sample, radius));
+      const hasMatchingPatch = checks.some((sample) => {
+        if (sample.x < 0 || sample.x > state.width || sample.y < 0 || sample.y > state.height) return false;
+        return backgroundColorIndexAt(sample.x, sample.y) === colorIndex;
+      });
+      if (visible && hasMatchingPatch) {
+        matching += 1;
+      }
+    }
+    const ratio = matching / Math.max(1, samples - 1);
+    const safeRatio = ratio > 0.04 ? ratio : 0.08;
+    path.duration = Math.min(Math.max(path.duration, minSeconds / safeRatio), 15.6);
+    path.completeFairPass = false;
+    return path;
+  }
+
+  function pathOpportunityBaseTimeMs() {
+    return window.PaopaoBackgroundEngine && (state.running || state.elapsed > 0) ? state.elapsed : state.visualTime;
+  }
+
+  function pathPointReadableInPlayfield(point, radius) {
+    const inset = Math.max(18, radius * 0.72);
+    return point.x > inset && point.x < state.width - inset && point.y > inset && point.y < state.height - inset;
+  }
+
+  function pathReadableVisibleSeconds(path, samples = 42) {
+    if (!path?.points?.length) return 0;
+    let visible = 0;
+    for (let i = 1; i < samples; i += 1) {
+      const amount = i / samples;
+      const point = pointAtCustomPathWithOffset(path, amount);
+      if (point && pathPointReadableInPlayfield(point, path.radius ?? 24)) {
+        visible += 1;
+      }
+    }
+    return (visible / Math.max(1, samples - 1)) * Math.max(0.001, path.duration ?? 0);
+  }
+
+  function pathHasSingleReadablePass(path, samples = 42, entryDeadline = 0.34, exitStart = 0.9) {
+    if (!path?.points?.length) return false;
+    const radius = path.radius ?? 24;
+    let entered = false;
+    let firstReadable = Infinity;
+    for (let i = 1; i < samples; i += 1) {
+      const amount = i / samples;
+      const point = pointAtCustomPathWithOffset(path, amount);
+      const readable = Boolean(point && pathPointReadableInPlayfield(point, radius));
+      if (readable && !entered) {
+        entered = true;
+        firstReadable = amount;
+      }
+      if (entered && amount < exitStart && !readable) {
+        return false;
+      }
+    }
+    return entered && firstReadable <= entryDeadline;
+  }
+
+  function pathHasCleanOffscreenEndpoints(path) {
+    if (!path?.points?.length) return false;
+    const radius = path.radius ?? 24;
+    return pointOutsidePlayfield(path.points[0], radius, -18) && pointOutsidePlayfield(path.points[path.points.length - 1], radius, -18);
+  }
+
+  function pathColorOpportunitySeconds(path, colorIndex, samples = 36, delaySeconds = 0, targetSeconds = Infinity) {
+    if (!path?.points?.length || colorIndex < 0) return 0;
+    let matching = 0;
+    const baseTime = pathOpportunityBaseTimeMs() + Math.max(0, delaySeconds) * 1000;
+    const durationMs = Math.max(0.001, path.duration ?? 0) * 1000;
+    const radius = path.radius ?? 24;
+    const sampleRadius = radius * 0.5;
+    for (let i = 1; i < samples; i += 1) {
+      const amount = i / samples;
+      const point = pointAtCustomPathWithOffset(path, amount);
+      if (!point) continue;
+      const time = baseTime + amount * durationMs;
+      const checks = [
+        point,
+        { x: point.x - sampleRadius, y: point.y },
+        { x: point.x + sampleRadius, y: point.y },
+      ];
+      const visible = checks.some((sample) => pathPointReadableInPlayfield(sample, radius));
+      const hasMatchingPatch = checks.some((sample) => {
+        if (sample.x < 0 || sample.x > state.width || sample.y < 0 || sample.y > state.height) return false;
+        return projectedBackgroundColorIndexAt(sample.x, sample.y, time) === colorIndex;
+      });
+      if (visible && hasMatchingPatch) {
+        matching += 1;
+        const seconds = (matching / Math.max(1, samples - 1)) * Math.max(0.001, path.duration ?? 0);
+        if (seconds >= targetSeconds) return seconds;
+      }
+    }
+    return (matching / Math.max(1, samples - 1)) * Math.max(0.001, path.duration ?? 0);
+  }
+
+  function pathHasFairColorOpportunity(path, colorIndex, minSeconds = structuredPathMinMatch, delaySeconds = 0) {
+    return pathColorOpportunitySeconds(path, colorIndex, 30, delaySeconds, minSeconds) >= minSeconds;
+  }
+
+  function pathHasPlayableStructuredPath(path, colorIndex, minMatchSeconds = structuredPathMinMatch, delaySeconds = 0) {
+    if (!pathHasCleanOffscreenEndpoints(path)) return false;
+    if ((path.duration ?? 0) < Math.max(3.2, minMatchSeconds + 0.75)) return false;
+    if ((path.totalLength ?? 0) < Math.max(state.width, state.height) * 0.42) return false;
+    if (!pathHasSingleReadablePass(path, 42, 0.34, 0.88)) return false;
+    if (pathReadableVisibleSeconds(path, 32) < Math.max(2.9, minMatchSeconds + 0.35)) return false;
+    if (!pathHasFairColorOpportunity(path, colorIndex, minMatchSeconds, delaySeconds)) return false;
+    return true;
+  }
+
+  function pathHasPlayableIslandPath(path, colorIndex, delaySeconds = 0) {
+    if (!pathHasCleanOffscreenEndpoints(path)) return false;
+    if ((path.duration ?? 0) < 3.4) return false;
+    if ((path.totalLength ?? 0) < Math.max(state.width, state.height) * 0.36) return false;
+    if (!pathHasSingleReadablePass(path, 42, 0.34, 0.88)) return false;
+    if (pathReadableVisibleSeconds(path, 24) < 2.55) return false;
+    return pathColorOpportunitySeconds(path, colorIndex, 28, delaySeconds, fairMatchDwell) >= fairMatchDwell;
+  }
+
+  function islandMotionPathFromPoints(points, info, radius, speed, curve, minDuration, maxDuration, matchScale = 1.16, colorIndex = info.outsideColorIndex) {
+    const margin = Math.max(92, radius * 3.4);
+    const shapedControls = prepareIslandPathPointsForColor(points, info, radius, colorIndex, matchScale);
+    const sampled = sampleCurvedCustomPath(shapedControls, curve, {
+      minX: -margin,
+      maxX: state.width + margin,
+      minY: -margin,
+      maxY: state.height + margin,
+    });
+    const readableSampled = softKeepPathInteriorReadable(sampled, radius, 0.62, 1, 1);
+    return ensureIslandPathFairWindow(makeMotionPathFromSampledPoints("island-choreo", readableSampled, radius, speed, minDuration, maxDuration), colorIndex);
+  }
+
+  function buildIslandMirrorArcPath(info, radius, speed, laneIndex, runIndex, colorIndex = info.outsideColorIndex) {
+    const bases = [-Math.PI * 0.58, -Math.PI * 0.08, Math.PI * 0.18, Math.PI * 0.72];
+    const base = bases[runIndex % bases.length];
+    const startAngle = base + (laneIndex % 2) * Math.PI;
+    const direction = (runIndex + laneIndex) % 2 === 0 ? 1 : -1;
+    const laneBreathe = laneIndex % 2 === 0 ? 0.08 : -0.08;
+    const islandColor = colorIndex === info.islandColorIndex;
+    const points = [
+      islandOrbitPoint(info, startAngle, 1.92),
+      islandOrbitPoint(info, startAngle + direction * 0.54, islandColor ? 1.08 : 1.28, laneBreathe * 0.6),
+      islandOrbitPoint(info, startAngle + direction * 1.12, islandColor ? 0.76 : 1.2, -laneBreathe * 0.55),
+      islandOrbitPoint(info, startAngle + direction * 1.76, islandColor ? 0.74 : 1.18, laneBreathe * 0.8),
+      islandOrbitPoint(info, startAngle + direction * 2.42, islandColor ? 1.02 : 1.28, -laneBreathe * 0.65),
+      islandOrbitPoint(info, startAngle + direction * 3.12, 1.9),
+    ];
+    const path = islandMotionPathFromPoints(points, info, radius, speed * 0.78, 0.9, 8.8, 14.2, islandColor ? 0.72 : 1.12, colorIndex);
+    path.steerTarget = islandOrbitPoint(info, startAngle + direction * 1.45, 0.82);
+    return { customPath: path, colorIndex };
+  }
+
+  function buildIslandOrbitPath(info, radius, speed, runIndex, colorIndex = info.outsideColorIndex) {
+    const direction = runIndex % 2 === 0 ? 1 : -1;
+    const startAngle = [-Math.PI * 0.18, Math.PI * 0.38, Math.PI * 0.9, -Math.PI * 0.68][runIndex % 4];
+    const islandColor = colorIndex === info.islandColorIndex;
+    const points = [];
+    for (let i = 0; i <= 8; i += 1) {
+      const t = i / 8;
+      const scale = islandColor
+        ? 1.72 - Math.sin(t * Math.PI) * 1.22 + Math.sin(t * Math.PI * 2 + runIndex) * 0.03
+        : 1.82 - Math.sin(t * Math.PI) * 0.55 + Math.sin(t * Math.PI * 2 + runIndex) * 0.035;
+      points.push(islandOrbitPoint(info, startAngle + direction * t * Math.PI * 2.08, scale, Math.sin(t * Math.PI * 2) * 0.8));
+    }
+    const path = islandMotionPathFromPoints(points, info, radius, speed * 0.78, 0.88, 8.4, 13.8, islandColor ? 0.58 : 1.16, colorIndex);
+    path.steerTarget = islandOrbitPoint(info, startAngle + direction * Math.PI, 0.92);
+    return { customPath: path, colorIndex };
+  }
+
+  function buildIslandThreePath(info, radius, speed, runIndex, colorIndex = info.outsideColorIndex) {
+    const direction = runIndex % 2 === 0 ? 1 : -1;
+    const startAngle = [Math.PI * 0.72, -Math.PI * 0.28, Math.PI * 0.1, -Math.PI * 0.92][runIndex % 4];
+    const angleSteps = [0, 0.62, 1.26, 1.86, 2.48, 3.22, 4.0, 4.82];
+    const islandColor = colorIndex === info.islandColorIndex;
+    const scales = islandColor ? [1.9, 1.18, 0.78, 0.7, 0.78, 1.02, 1.34, 1.9] : [1.9, 1.36, 1.18, 1.16, 1.18, 1.32, 1.52, 1.9];
+    const points = angleSteps.map((step, index) =>
+      islandOrbitPoint(info, startAngle + direction * step, scales[index], Math.sin(index * 1.17 + runIndex) * 0.55)
+    );
+    const path = islandMotionPathFromPoints(points, info, radius, speed * 0.78, 0.92, 8.8, 14.4, islandColor ? 0.72 : 1.08, colorIndex);
+    path.steerTarget = islandOrbitPoint(info, startAngle + direction * 2.42, 0.78);
+    return { customPath: path, colorIndex };
+  }
+
+  function buildIslandSDriftPath(info, radius, speed, runIndex, colorIndex = info.outsideColorIndex) {
+    const axes = [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4, Math.PI * 0.18, -Math.PI * 0.32];
+    const axisAngle = axes[runIndex % axes.length];
+    const ax = Math.cos(axisAngle);
+    const ay = Math.sin(axisAngle);
+    const nx = -ay;
+    const ny = ax;
+    const longSpan = Math.max(state.width, state.height) * 0.9;
+    const islandColor = colorIndex === info.islandColorIndex;
+    const amp = Math.min(info.rx, info.ry) * (islandColor ? 0.54 : 0.76);
+    const direction = runIndex % 2 === 0 ? 1 : -1;
+    const points = [];
+    for (let i = 0; i <= 8; i += 1) {
+      const t = i / 8;
+      const along = (t - 0.5) * longSpan * direction;
+      const s = Math.sin((t * 1.68 - 0.08) * Math.PI + runIndex * 0.32);
+      const curl = Math.sin(t * Math.PI * 2.05 + runIndex * 0.48) * amp * 0.08;
+      points.push({
+        x: info.cx + ax * along + nx * (s * amp + curl),
+        y: info.cy + ay * along + ny * (s * amp * 0.82 + curl),
+      });
+    }
+    const mid = points[Math.floor(points.length / 2)];
+    const sampleX = clamp(mid.x, 4, state.width - 4);
+    const sampleY = clamp(mid.y, 4, state.height - 4);
+    const path = islandMotionPathFromPoints(points, info, radius, speed * 0.76, 0.9, 8.8, 14.6, islandColor ? 0.72 : 1.1, colorIndex);
+    path.steerTarget = { x: sampleX, y: sampleY };
+    return { customPath: path, colorIndex };
+  }
+
+  function buildIslandChoreoPath(routeType, info, radius, speed, laneIndex, runIndex, colorIndex = info.outsideColorIndex) {
+    if (routeType === "chainS") return buildIslandSDriftPath(info, radius, speed, runIndex, colorIndex);
+    if (routeType === "orbitSolo" || routeType === "orbitTrain") return buildIslandOrbitPath(info, radius, speed, runIndex, colorIndex);
+    if (routeType === "threeDuo") return buildIslandThreePath(info, radius, speed, runIndex, colorIndex);
+    if (routeType === "mirrorArc") return buildIslandMirrorArcPath(info, radius, speed, laneIndex, runIndex, colorIndex);
+    if (routeType === "orbit") return buildIslandOrbitPath(info, radius, speed, runIndex, colorIndex);
+    if (routeType === "three") return buildIslandThreePath(info, radius, speed, runIndex, colorIndex);
+    return buildIslandSDriftPath(info, radius, speed, runIndex, colorIndex);
+  }
+
+  function cloneMotionPath(path, swayPhaseOffset = 0) {
+    const clone = {
+      ...path,
+      points: path.points.map((point) => ({ x: point.x, y: point.y })),
+      segments: [...(path.segments ?? [])],
+      elapsed: 0,
+    };
+    if (path.steerTarget) {
+      clone.steerTarget = { x: path.steerTarget.x, y: path.steerTarget.y };
+    }
+    if (path.swayAmplitude > 0) {
+      clone.swayAmplitude = path.swayAmplitude;
+      clone.swayFrequency = path.swayFrequency;
+      clone.swayPhase = (path.swayPhase ?? 0) + swayPhaseOffset;
+    }
+    return clone;
+  }
+
+  function prepareIslandSwimPath(path, radius, routeType, runIndex, laneIndex) {
+    if (!path) return path;
+    const routeCalm = routeType === "orbitSolo" ? 0.18 : routeType === "orbitTrain" ? 0.22 : routeType === "threeDuo" ? 0.26 : routeType === "mirrorArc" ? 0.28 : 0.3;
+    path.swayAmplitude = clamp(radius * 0.018 * routeCalm, 0.08, 0.42);
+    path.swayFrequency = routeType === "orbitSolo" ? 0.72 : routeType === "orbitTrain" ? 0.82 : routeType === "threeDuo" ? 0.9 : 0.98;
+    path.swayPhase = runIndex * 0.73 + laneIndex * 1.17;
+    path.protectedPath = true;
+    path.completeFairPass = false;
+    return path;
+  }
+
+  function trainRadiusOffsetBase(radius, trainIndex) {
+    const weave = trainIndex % 3 === 0 ? 0.54 : trainIndex % 3 === 1 ? 0.92 : 1.22;
+    return radius * weave;
+  }
+
+  function islandRouteSizeKind(routeType, trainIndex = 0) {
+    if (routeType === "orbitSolo") return "large";
+    if (routeType === "orbitTrain") return trainIndex === 0 ? "normal" : "small";
+    if (routeType === "mirrorArc" || routeType === "threeDuo") return trainIndex % 3 === 2 ? "small" : "normal";
+    return "small";
+  }
+
+  function islandRouteRadiusKind(routeType, trainIndex = 0) {
+    if (routeType === "orbitSolo") return "large";
+    if (routeType === "chainS" || routeType === "sDrift") return trainIndex % 3 === 0 ? "tiny" : "small";
+    if (routeType === "orbitTrain") return trainIndex > 0 && trainIndex % 2 === 1 ? "tiny" : islandRouteSizeKind(routeType, trainIndex);
+    if (routeType === "mirrorArc" || routeType === "threeDuo") return trainIndex % 4 === 3 ? "tiny" : islandRouteSizeKind(routeType, trainIndex);
+    return islandRouteSizeKind(routeType, trainIndex);
+  }
+
+  function islandRouteColorIndex(info, routeType, runIndex, laneIndex = 0) {
+    if (routeType === "mirrorArc") {
+      return runIndex % 2 === 0 ? info.outsideColorIndex : info.islandColorIndex;
+    }
+    if (routeType === "chainS") {
+      return runIndex % 2 === 0 ? info.outsideColorIndex : info.islandColorIndex;
+    }
+    if (routeType === "sDrift" || routeType === "orbitTrain") {
+      return info.islandColorIndex;
+    }
+    if (routeType === "orbitSolo" || routeType === "threeDuo") {
+      return runIndex % 2 === 0 ? info.islandColorIndex : info.outsideColorIndex;
+    }
+    return info.outsideColorIndex;
+  }
+
+  function islandChoreoLoad() {
+    let active = 0;
+    let notReady = 0;
+    let entering = 0;
+    let visibleReady = 0;
+    let queued = 0;
+
+    for (const bubble of state.bubbles) {
+      if (!bubble?.islandChainId || !isStageTargetBubble(bubble)) continue;
+      if (bubble.pathComplete) continue;
+      if (bubble.age < -0.28) {
+        queued += 1;
+        continue;
+      }
+
+      active += 1;
+      if (bubble.age < 0.55 || !bubble.hasEntered) {
+        entering += 1;
+      }
+      if (bubble.wasReady || bubbleHasMatchingPatch(bubble)) {
+        visibleReady += 1;
+      } else if (bubble.age <= 8.8) {
+        notReady += 1;
+      }
+    }
+
+    const waitForEntry = active >= 5 && entering > Math.max(1, Math.floor(active * 0.34));
+    const waitForUsableWindow = active >= 5 && notReady >= Math.max(3, Math.ceil(active * 0.5)) && visibleReady < Math.ceil(active * 0.38);
+    const waitForPressure = active >= 8 && notReady >= 3;
+    return {
+      active,
+      queued,
+      notReady,
+      entering,
+      wait: waitForEntry || waitForUsableWindow || waitForPressure,
+      delay: clamp(360 + entering * 95 + notReady * 80 + queued * 22, 380, 940),
+    };
+  }
+
+  function islandTrainShape(routeType, available) {
+    if (routeType === "orbitSolo") {
+      if (available < 1) return null;
+      return { laneCount: 1, perLane: 1, total: 1, delaySpacing: 0, laneStagger: 0 };
+    }
+    if (routeType === "orbitTrain") {
+      const total = Math.min(available, 3);
+      if (total < 2) return null;
+      return { laneCount: 1, perLane: total, total, delaySpacing: 0.82, laneStagger: 0 };
+    }
+    if (routeType === "threeDuo") {
+      const total = Math.min(available, 4);
+      if (total < 2) return null;
+      return { laneCount: 1, perLane: total, total, delaySpacing: 0.76, laneStagger: 0 };
+    }
+    if (routeType === "mirrorArc") {
+      if (available >= 2) {
+        const perLane = Math.min(available >= 8 ? 4 : available >= 6 ? 3 : available >= 4 ? 2 : 1, Math.floor(available / 2));
+        return { laneCount: 2, perLane, total: perLane * 2, delaySpacing: 0.72, laneStagger: 0.28 };
+      }
+    }
+    const desired = routeType === "chainS" ? 7 : routeType === "sDrift" ? 6 : 5;
+    const total = Math.min(desired, available);
+    if (total < (routeType === "chainS" ? 5 : 3)) return null;
+    return {
+      laneCount: 1,
+      perLane: total,
+      total,
+      delaySpacing: routeType === "chainS" ? 0.88 : 0.72,
+      laneStagger: 0,
+    };
+  }
+
+  function islandOffscreenPoint(edge, radius, ratio = 0.5) {
+    const margin = Math.max(92, radius * 3.8);
+    const x = clamp(state.width * ratio, safePlayfieldMargin(radius, 8), state.width - safePlayfieldMargin(radius, 8));
+    const y = clamp(state.height * ratio, safePlayfieldMargin(radius, 8), state.height - safePlayfieldMargin(radius, 8));
+    if (edge === "left") return { x: -margin, y };
+    if (edge === "right") return { x: state.width + margin, y };
+    if (edge === "top") return { x, y: -margin };
+    return { x, y: state.height + margin };
+  }
+
+  function islandReadableEdgePoint(edge, radius, ratio = 0.5) {
+    const margin = safePlayfieldMargin(radius, 16);
+    const x = clamp(state.width * ratio, margin, state.width - margin);
+    const y = clamp(state.height * ratio, margin, state.height - margin);
+    if (edge === "left") return { x: margin, y };
+    if (edge === "right") return { x: state.width - margin, y };
+    if (edge === "top") return { x, y: margin };
+    return { x, y: state.height - margin };
+  }
+
+  function islandPathPointForColor(info, radius, colorIndex, angle, variant = 0) {
+    const islandColor = colorIndex === info.islandColorIndex;
+    const desiredScale = islandColor
+      ? 0.43 + 0.12 * Math.sin(angle * 1.7 + variant)
+      : 1.24 + 0.18 * Math.sin(angle * 1.3 + variant);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const margin = safePlayfieldMargin(radius, 12);
+    const scaleLimits = [];
+    if (Math.abs(cos) > 0.001) {
+      scaleLimits.push(
+        (cos > 0 ? state.width - margin - info.cx : info.cx - margin) /
+          Math.max(1, Math.abs(cos) * info.rx),
+      );
+    }
+    if (Math.abs(sin) > 0.001) {
+      scaleLimits.push(
+        (sin > 0 ? state.height - margin - info.cy : info.cy - margin) /
+          Math.max(1, Math.abs(sin) * info.ry),
+      );
+    }
+    const readableScale = Math.max(0.34, Math.min(...scaleLimits.filter((value) => value > 0), desiredScale) * 0.965);
+    const scale = islandColor ? desiredScale : Math.min(desiredScale, readableScale);
+    return islandOrbitPoint(info, angle, scale, Math.sin(angle + variant) * 0.16);
+  }
+
+  function islandTangentExit(info, radius, angle, orbitDirection, point) {
+    const direction = normalizeVector(
+      -Math.sin(angle) * info.rx * orbitDirection,
+      Math.cos(angle) * info.ry * orbitDirection,
+      { x: orbitDirection, y: 0 },
+    );
+    const leadDistance = Math.max(72, radius * 2.8);
+    const lead = {
+      x: point.x + direction.x * leadDistance,
+      y: point.y + direction.y * leadDistance,
+    };
+    return {
+      lead,
+      outside: projectPointOutside(lead, direction, radius),
+    };
+  }
+
+  function islandSafeRouteSpec(runIndex, info) {
+    const pairs = [
+      ["left", "right"],
+      ["right", "left"],
+      ["bottom", "top"],
+      ["top", "bottom"],
+      ["left", "bottom"],
+      ["right", "top"],
+      ["bottom", "right"],
+      ["top", "left"],
+    ];
+    const pair = pairs[runIndex % pairs.length];
+    const stable = info.hold >= 0.24;
+    const variant = runIndex % 6;
+    if (variant === 0) return { type: "outsideTrain", count: stable ? 5 : 3, colorIndex: info.outsideColorIndex, sizeKind: "small", pair };
+    if (variant === 1) return { type: "islandTrain", count: stable ? 4 : 3, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
+    if (variant === 2) return { type: "mirrorDuo", count: stable ? 2 : 1, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "normal", pair };
+    if (variant === 3) return { type: "orbitSolo", count: 1, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: stable ? "large" : "normal", pair };
+    if (variant === 4) return { type: "outsideDuo", count: 2, colorIndex: info.outsideColorIndex, sizeKind: "normal", pair };
+    return { type: "softTrain", count: stable ? 4 : 2, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
+  }
+
+  function buildIslandSafePath(info, colorIndex, radius, speed, runIndex, laneIndex, routeType, pair) {
+    const startEdge = pair[0];
+    const phase = runIndex * 0.63 + laneIndex * 0.31;
+    const startRatio = clamp(0.5 + Math.sin(phase) * 0.24, 0.22, 0.78);
+    const start = islandOffscreenPoint(startEdge, radius, startRatio);
+    const entry = islandReadableEdgePoint(startEdge, radius, startRatio);
+    const direction = runIndex % 2 === 0 ? 1 : -1;
+    const baseAngle = Math.atan2(
+      (entry.y - info.cy) / Math.max(1, info.ry),
+      (entry.x - info.cx) / Math.max(1, info.rx),
+    );
+    const sweep =
+      routeType === "orbitSolo"
+        ? Math.PI * 1.92
+        : routeType === "mirrorDuo"
+          ? Math.PI * 1.22
+          : routeType === "outsideDuo"
+            ? Math.PI * 0.96
+            : Math.PI * 1.38;
+    const middleCount = routeType === "orbitSolo" ? 10 : routeType === "outsideDuo" ? 7 : 9;
+    const orbitControls = [];
+    for (let i = 0; i <= middleCount; i += 1) {
+      const amount = i / middleCount;
+      const angle = baseAngle + direction * sweep * amount;
+      orbitControls.push(islandPathPointForColor(info, radius, colorIndex, angle, phase + amount * 0.42));
+    }
+    const firstOrbitPoint = orbitControls[0];
+    const secondOrbitPoint = orbitControls[1] ?? firstOrbitPoint;
+    const approachDistance = Math.max(1, Math.hypot(firstOrbitPoint.x - start.x, firstOrbitPoint.y - start.y));
+    const inward = edgeDirection(startEdge);
+    const tangent = normalizeVector(
+      secondOrbitPoint.x - firstOrbitPoint.x,
+      secondOrbitPoint.y - firstOrbitPoint.y,
+      inward,
+    );
+    const controlA = {
+      x: start.x + inward.x * Math.min(approachDistance * 0.46, Math.max(state.width, state.height) * 0.32),
+      y: start.y + inward.y * Math.min(approachDistance * 0.46, Math.max(state.width, state.height) * 0.32),
+    };
+    const controlB = {
+      x: firstOrbitPoint.x - tangent.x * Math.min(approachDistance * 0.34, Math.max(state.width, state.height) * 0.24),
+      y: firstOrbitPoint.y - tangent.y * Math.min(approachDistance * 0.34, Math.max(state.width, state.height) * 0.24),
+    };
+    const controls = [start];
+    for (let i = 1; i <= 6; i += 1) {
+      const amount = i / 6;
+      const inverse = 1 - amount;
+      controls.push({
+        x:
+          inverse * inverse * inverse * start.x +
+          3 * inverse * inverse * amount * controlA.x +
+          3 * inverse * amount * amount * controlB.x +
+          amount * amount * amount * firstOrbitPoint.x,
+        y:
+          inverse * inverse * inverse * start.y +
+          3 * inverse * inverse * amount * controlA.y +
+          3 * inverse * amount * amount * controlB.y +
+          amount * amount * amount * firstOrbitPoint.y,
+      });
+    }
+    controls.push(...orbitControls.slice(1));
+    const endAngle = baseAngle + direction * sweep;
+    const exit = islandTangentExit(info, radius, endAngle, direction, controls[controls.length - 1]);
+    controls.push(exit.lead, exit.outside);
+    const margin = Math.max(100, radius * 4);
+    const curveStrength =
+      routeType === "orbitSolo"
+        ? 0.86
+        : routeType.includes("Train") || routeType === "softTrain"
+          ? 0.8
+          : 0.76;
+    const sampled = sampleCurvedCustomPath(controls, curveStrength, {
+      minX: -margin,
+      maxX: state.width + margin,
+      minY: -margin,
+      maxY: state.height + margin,
+    });
+    const readable = smoothPathInterior(sampled, 5, 1, 1);
+    const path = makeMotionPathFromSampledPoints("island-safe", readable, radius, speed, 6.4, routeType === "orbitSolo" ? 12.2 : 11.0);
+    path.protectedPath = true;
+    path.completeFairPass = false;
+    path.trustedStructuredPath = true;
+    path.swayAmplitude = 0;
+    path.swayFrequency = 0;
+    path.laneOffset = 0;
+    return path;
+  }
+
+  function buildIslandTransitionPath(info, radius, speed, runIndex) {
+    const islandOnLeft = info.cx < state.width * 0.5;
+    const islandOnTop = info.cy < state.height * 0.5;
+    const laneShift = Math.sin(runIndex * 1.17) * 0.035;
+    const base = [
+      { x: 1.28, y: 0.72 },
+      { x: 0.84, y: 0.72 },
+      { x: 0.78, y: 0.66 },
+      { x: 0.7, y: 0.6 },
+      { x: 0.62, y: 0.6 },
+      { x: 0.56, y: 0.66 },
+      { x: 0.56, y: 0.74 },
+      { x: 0.6, y: 0.83 },
+      { x: 0.68, y: 0.92 },
+      { x: 0.68, y: 1.28 },
+    ];
+    const points = base.map((point, index) => {
+      const normalizedX = islandOnLeft ? point.x : 1 - point.x;
+      const normalizedY = islandOnTop ? point.y : 1 - point.y;
+      const shiftEnvelope = index === 0 || index === base.length - 1 ? 0 : Math.sin((index / (base.length - 1)) * Math.PI);
+      return {
+        x: (normalizedX + laneShift * shiftEnvelope) * state.width,
+        y: (normalizedY - laneShift * 0.7 * shiftEnvelope) * state.height,
+      };
+    });
+    const path = motionPathFromPoints(points, radius, speed, 0.82, 7.5, 12, "island-transition");
+    path.protectedPath = true;
+    path.completeFairPass = false;
+    path.trustedStructuredPath = true;
+    path.swayAmplitude = 0;
+    path.swayFrequency = 0;
+    path.laneOffset = 0;
+    return path;
+  }
+
+  function trySpawnIslandTransitionTrain(flow, remainingStage, info) {
+    const capacity = bubbleCapacityRemaining();
+    if (remainingStage <= 0 || capacity <= 0) return false;
+    const d = difficulty();
+    const runIndex = flow.islandChoreoIndex ?? 0;
+    flow.islandChoreoIndex = runIndex + 1;
+    const total = Math.min(3, remainingStage, capacity);
+    const bubbleSpecs = [];
+    for (let index = 0; index < total; index += 1) {
+      const radiusKind = index % 3 === 1 ? "tiny" : "small";
+      bubbleSpecs.push({
+        radius: clamp(radiusForDifficulty(d, radiusKind) * rand(0.86, 1.04), 17, 27),
+        delay: 0,
+      });
+    }
+    const baseRadius = Math.max(...bubbleSpecs.map((bubble) => bubble.radius));
+    const speed = rand(68 + d * 4, 80 + d * 6);
+    const basePath = buildIslandTransitionPath(info, baseRadius, speed, runIndex);
+    const pathSpeed = basePath.totalLength / Math.max(0.001, basePath.duration);
+    for (let index = 1; index < bubbleSpecs.length; index += 1) {
+      const previous = bubbleSpecs[index - 1];
+      const current = bubbleSpecs[index];
+      const spacingSeconds =
+        (previous.radius + current.radius + Math.max(11, Math.min(previous.radius, current.radius) * 0.28)) /
+        Math.max(48, pathSpeed);
+      current.delay = previous.delay + clamp(spacingSeconds, 0.5, 0.82);
+    }
+    const longestDelay = bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0;
+    if (!pathHasPlayableStructuredPath(basePath, info.outsideColorIndex, structuredPathMinMatch, longestDelay)) {
+      state.nextSpawnAt = state.elapsed + 220;
+      return true;
+    }
+
+    const chainId = `island-transition-${runIndex}-${Math.round(state.elapsed)}`;
+    let spawned = 0;
+    for (let index = 0; index < bubbleSpecs.length; index += 1) {
+      const spec = bubbleSpecs[index];
+      const path = cloneMotionPath(basePath);
+      path.radius = spec.radius;
+      const start = path.points[0];
+      const target = pointAtCustomPath(path, 0.08) ?? path.points[1];
+      const edge = pathEdgeFromPoint(start);
+      const didSpawn = spawnBubble(true, "normal", {
+        edge,
+        x: start.x,
+        y: start.y,
+        colorIndex: info.outsideColorIndex,
+        target,
+        velocity: aimedVelocity(start.x, start.y, target, speed, 0),
+        radius: spec.radius,
+        speed,
+        sizeKind: "small",
+        isStream: true,
+        streamPattern: "softS",
+        streamAmplitude: 0,
+        streamFrequency: 1,
+        customPath: path,
+        exitAfterPath: true,
+        pathLockedMotion: true,
+        islandChainId: chainId,
+        islandChainSize: total,
+        islandChainLane: 0,
+        delay: spec.delay,
+        quietHint: true,
+      });
+      if (didSpawn) spawned += 1;
+    }
+    if (spawned <= 0) return false;
+    state.nextSpawnAt = state.elapsed + longestDelay * 1000 + Math.min(1300, basePath.duration * 110) + rand(420, 620);
+    return true;
+  }
+
+  function trySpawnIslandChoreo(flow, remainingStage) {
+    const patternId = currentBackgroundPatternId();
+    if (!isIslandChoreoPattern(patternId)) return false;
+    const capacity = bubbleCapacityRemaining();
+    if (remainingStage <= 0) return false;
+    if (capacity <= 0) return false;
+
+    const info = islandChoreoInfo(patternId);
+    if (!info) return false;
+
+    const transitionInFlight = state.bubbles.some(
+      (bubble) =>
+        bubble.islandChainId?.startsWith("island-transition-") &&
+        !bubble.pathComplete &&
+        isStageTargetBubble(bubble),
+    );
+    if (transitionInFlight) {
+      state.nextSpawnAt = state.elapsed + 560;
+      return true;
+    }
+
+    const load = islandChoreoLoad();
+    const phraseStillEntering = load.queued > 0 || load.entering > 1;
+    const phraseStillUnplayable = load.active >= 4 && load.notReady >= Math.max(2, Math.ceil(load.active * 0.42));
+    if (load.active >= 5 || phraseStillEntering || phraseStillUnplayable) {
+      state.nextSpawnAt = state.elapsed + clamp(load.delay + load.queued * 90, 420, 1180);
+      return true;
+    }
+    if (info.hold < 0.2) {
+      return trySpawnIslandTransitionTrain(flow, remainingStage, info);
+    }
+
+    const d = difficulty();
+    const runIndex = flow.islandChoreoIndex ?? 0;
+    flow.islandChoreoIndex = runIndex + 1;
+    const spec = islandSafeRouteSpec(runIndex, info);
+    const total = Math.max(1, Math.min(spec.count, remainingStage, capacity));
+    const chainId = `island-safe-${runIndex}-${Math.round(state.elapsed)}`;
+    const isTrain = spec.type.includes("Train") || spec.type === "softTrain";
+    const bubbleSpecs = [];
+    for (let index = 0; index < total; index += 1) {
+      const sizeKind =
+        spec.sizeKind === "large"
+          ? "large"
+          : spec.sizeKind === "normal" && index % 3 !== 2
+            ? "normal"
+            : "small";
+      const radiusKind = sizeKind === "large" ? "large" : sizeKind === "normal" ? "normal" : index % 3 === 1 ? "tiny" : "small";
+      const radius = radiusForDifficulty(d, radiusKind) * rand(radiusKind === "large" ? 0.86 : 0.84, radiusKind === "large" ? 1.02 : 1.08);
+      const speed =
+        sizeKind === "large"
+          ? rand(36 + d * 3.5, 49 + d * 5)
+          : sizeKind === "normal"
+            ? rand(43 + d * 4.5, 59 + d * 6)
+            : rand(52 + d * 4.5, 69 + d * 7);
+      bubbleSpecs.push({ sizeKind, radius, speed, delay: 0 });
+    }
+
+    const baseRadius = Math.max(...bubbleSpecs.map((bubble) => bubble.radius));
+    const baseSpeed = bubbleSpecs.reduce((sum, bubble) => sum + bubble.speed, 0) / Math.max(1, bubbleSpecs.length);
+    let basePath = buildIslandSafePath(info, spec.colorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, spec.pair);
+    if (!basePath?.points?.length || !pathHasSingleReadablePass(basePath, 36, 0.34, 0.88)) {
+      state.nextSpawnAt = state.elapsed + 520;
+      return true;
+    }
+
+    const pathSpeed = basePath.totalLength / Math.max(0.001, basePath.duration);
+    for (let index = 1; index < bubbleSpecs.length; index += 1) {
+      const previous = bubbleSpecs[index - 1];
+      const current = bubbleSpecs[index];
+      const gap = Math.max(10, Math.min(previous.radius, current.radius) * 0.26);
+      const spacingSeconds = (previous.radius + current.radius + gap) / Math.max(42, pathSpeed);
+      current.delay = previous.delay + clamp(spacingSeconds, isTrain ? 0.52 : 0.3, isTrain ? 0.92 : 0.58);
+    }
+
+    const longestDelay = bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0;
+    let chainColorIndex = spec.colorIndex;
+    if (!pathHasPlayableIslandPath(basePath, chainColorIndex, longestDelay)) {
+      chainColorIndex = info.outsideColorIndex;
+      basePath = buildIslandSafePath(info, chainColorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, spec.pair);
+      if (!basePath?.points?.length || !pathHasPlayableIslandPath(basePath, chainColorIndex, longestDelay)) {
+        state.nextSpawnAt = state.elapsed + 620;
+        return true;
+      }
+    }
+
+    let spawned = 0;
+
+    for (let index = 0; index < total; index += 1) {
+      const { sizeKind, radius, speed, delay } = bubbleSpecs[index];
+      const path = isTrain || total === 1
+        ? cloneMotionPath(basePath)
+        : buildIslandSafePath(info, chainColorIndex, radius, speed, runIndex, index, spec.type, spec.pair);
+      if (!path?.points?.length || !pathHasSingleReadablePass(path, 30, 0.3, 0.9)) continue;
+      const colorIndex = chainColorIndex;
+      path.radius = radius;
+      path.completeFairPass = false;
+      path.trustedStructuredPath = true;
+      const start = path.points[0];
+      const target = pointAtCustomPath(path, 0.08) ?? path.points[Math.min(path.points.length - 1, 2)];
+      const edge = pathEdgeFromPoint(start);
+      const velocity = aimedVelocity(start.x, start.y, target, speed, 0);
+      const didSpawn = spawnBubble(sizeKind === "small", "normal", {
+        edge,
+        x: start.x,
+        y: start.y,
+        colorIndex,
+        target,
+        velocity,
+        radius,
+        speed,
+        sizeKind,
+        isStream: true,
+        streamPattern: "softS",
+        streamAmplitude: 0,
+        streamFrequency: 1,
+        arcBend: 0,
+        customPath: path,
+        exitAfterPath: true,
+        pathLockedMotion: true,
+        spawnRevealSeconds: 0,
+        islandChainId: chainId,
+        islandChainSize: total,
+        islandChainLane: 0,
+        delay,
+        quietHint: true,
+      });
+      if (didSpawn) {
+        spawned += 1;
+      }
+    }
+
+    if (spawned <= 0) return false;
+    const entryWindow = Math.min(1800, basePath.duration * 1000 * 0.13);
+    state.nextSpawnAt = state.elapsed + longestDelay * 1000 + entryWindow + rand(520, 820);
+    return true;
+  }
+
+  function waveBoundaryPointAtY(y, time = state.visualTime) {
+    let bestX = state.width * 0.5;
+    let bestDistance = Infinity;
+    let left = -state.width * 0.2;
+    let right = state.width * 1.2;
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      const samples = pass === 0 ? 46 : 18;
+      for (let i = 0; i <= samples; i += 1) {
+        const x = left + ((right - left) * i) / samples;
+        const distance = Math.abs(backgroundSignedAt(x, y, time));
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestX = x;
+        }
+      }
+      const span = (right - left) / samples;
+      left = bestX - span;
+      right = bestX + span;
+    }
+
+    return { x: bestX, y };
+  }
+
+  function waveBoundaryPointAtX(x, time = state.visualTime) {
+    let bestY = state.height * 0.5;
+    let bestDistance = Infinity;
+    let top = -state.height * 0.2;
+    let bottom = state.height * 1.2;
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      const samples = pass === 0 ? 46 : 18;
+      for (let i = 0; i <= samples; i += 1) {
+        const y = top + ((bottom - top) * i) / samples;
+        const distance = Math.abs(backgroundSignedAt(x, y, time));
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestY = y;
+        }
+      }
+      const span = (bottom - top) / samples;
+      top = bestY - span;
+      bottom = bestY + span;
+    }
+
+    return { x, y: bestY };
+  }
+
+  function waveBoundaryNormalAt(point, time = state.visualTime) {
+    const step = Math.max(2, Math.min(state.width, state.height) * 0.006);
+    const dx = backgroundSignedAt(point.x + step, point.y, time) - backgroundSignedAt(point.x - step, point.y, time);
+    const dy = backgroundSignedAt(point.x, point.y + step, time) - backgroundSignedAt(point.x, point.y - step, time);
+    const length = Math.max(0.0001, Math.hypot(dx, dy));
+    return { x: dx / length, y: dy / length };
+  }
+
+  function keepFlowPathMovingForward(points, edge) {
+    if (!points?.length) return points || [];
+    const inward = edgeDirection(edge);
+    const tangent = edge === "left" || edge === "right" ? { x: 0, y: 1 } : { x: 1, y: 0 };
+    const origin = points[0];
+    let previousAlong = 0;
+    let previousAcross = 0;
+    return points.map((point, index) => {
+      if (index === 0) return { x: point.x, y: point.y };
+      const dx = point.x - origin.x;
+      const dy = point.y - origin.y;
+      const rawAlong = dx * inward.x + dy * inward.y;
+      const across = dx * tangent.x + dy * tangent.y;
+      const minimumAdvance = Math.max(0.45, Math.abs(across - previousAcross) * 0.82);
+      const along = Math.max(rawAlong, previousAlong + minimumAdvance);
+      previousAlong = along;
+      previousAcross = across;
+      return {
+        x: origin.x + inward.x * along + tangent.x * across,
+        y: origin.y + inward.y * along + tangent.y * across,
+      };
+    });
+  }
+
+  function motionPathFromPoints(points, radius, speed, curve = 0.58, minDuration = 3.2, maxDuration = 8.8, mode = "wave-boundary") {
+    const margin = Math.max(80, radius * 3.2);
+    const minimumPointGap = Math.max(2, radius * 0.08);
+    const distinctPoints = [];
+    for (const point of points ?? []) {
+      const previous = distinctPoints[distinctPoints.length - 1];
+      if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) >= minimumPointGap) {
+        distinctPoints.push(point);
+      }
+    }
+    const motionPoints = sampleCurvedCustomPath(distinctPoints, curve, {
+      minX: -margin,
+      maxX: state.width + margin,
+      minY: -margin,
+      maxY: state.height + margin,
+    });
+    let readableMotionPoints = mode === "wave-boundary" ? softKeepPathInteriorReadable(motionPoints, radius, 0.56, 1, 1) : motionPoints;
+    if (mode.includes("flow")) {
+      readableMotionPoints = keepFlowPathMovingForward(readableMotionPoints, pathEdgeFromPoint(distinctPoints[0]));
+      readableMotionPoints = smoothPathInterior(readableMotionPoints, 16, 1, 1);
+    }
+    return makeMotionPathFromSampledPoints(mode, readableMotionPoints, radius, speed, minDuration, maxDuration);
+  }
+
+  function waveChoreoRouteType(runIndex) {
+    const routeTypes = ["borderS", "crossS", "sweepS"];
+    return routeTypes[runIndex % routeTypes.length];
+  }
+
+  function waveChoreoAxis(time = state.visualTime) {
+    const pointY = waveBoundaryPointAtY(state.height * 0.5, time);
+    const pointX = waveBoundaryPointAtX(state.width * 0.5, time);
+    const distanceY = Math.abs(backgroundSignedAt(pointY.x, pointY.y, time));
+    const distanceX = Math.abs(backgroundSignedAt(pointX.x, pointX.y, time));
+    const probe = distanceX < distanceY ? pointX : pointY;
+    const normal = waveBoundaryNormalAt(probe, time);
+    return Math.abs(normal.y) > Math.abs(normal.x) * 1.08 ? "x" : "y";
+  }
+
+  function waveChoreoAxisLength(axis) {
+    return axis === "x" ? state.width : state.height;
+  }
+
+  function waveChoreoNormalLength(axis) {
+    return axis === "x" ? state.height : state.width;
+  }
+
+  function waveChoreoFrameAt(axis, value, time) {
+    const length = waveChoreoAxisLength(axis);
+    const boundary =
+      axis === "x"
+        ? waveBoundaryPointAtX(clamp(value, -length * 0.08, length * 1.08), time)
+        : waveBoundaryPointAtY(clamp(value, -length * 0.08, length * 1.08), time);
+    const normal = waveBoundaryNormalAt(boundary, time);
+    return {
+      boundary,
+      normal,
+      tangent: { x: -normal.y, y: normal.x },
+    };
+  }
+
+  function waveChoreoPointAt(axis, value, normalOffset, tangentOffset, time) {
+    const frame = waveChoreoFrameAt(axis, value, time);
+    return {
+      x: frame.boundary.x + frame.normal.x * normalOffset + frame.tangent.x * tangentOffset,
+      y: frame.boundary.y + frame.normal.y * normalOffset + frame.tangent.y * tangentOffset,
+    };
+  }
+
+  function buildWaveBorderSPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId) {
+    const tide = isTideLikeChoreoPattern(patternId);
+    const desiredSide = colorIndex === 0 ? 1 : -1;
+    const time = state.visualTime + laneIndex * 160;
+    const axis = waveChoreoAxis(time);
+    const axisLength = waveChoreoAxisLength(axis);
+    const direction = (runIndex + laneIndex) % 2 === 0 ? 1 : -1;
+    const phase = runIndex * 0.77 + laneIndex * 1.19 + colorIndex * 0.58;
+    const laneGap = radius * (tide ? 2.25 : 1.95) + 18;
+    const laneOffset = (laneIndex - (laneCount - 1) / 2) * laneGap;
+    const margin = Math.max(radius * 2.4, 78);
+    const startValue = direction > 0 ? -margin : axisLength + margin;
+    const endValue = direction > 0 ? axisLength + margin : -margin;
+    const steps = tide ? 10 : 9;
+    const points = [];
+
+    for (let i = 0; i < steps; i += 1) {
+      const t = i / (steps - 1);
+      const value = startValue + (endValue - startValue) * t;
+      const core = Math.sin(t * Math.PI) * Math.sin(t * Math.PI);
+      const sideHold = desiredSide * (radius * (tide ? 1.18 : 1.05) + 12) * core;
+      const sSwing =
+        Math.sin(t * Math.PI * (tide ? 4.75 : 4.05) + phase) * (radius * (tide ? 1.32 : 1.08) + 7) +
+        Math.sin(t * Math.PI * 8.1 - phase * 0.64) * radius * 0.08;
+      const normalOffset = sideHold + sSwing;
+      const tangentOffset =
+        laneOffset +
+        Math.sin(t * Math.PI * 3.1 + phase * 0.5) * radius * 0.34 +
+        (t - 0.5) * radius * (laneIndex % 2 === 0 ? 0.7 : -0.7);
+      points.push(waveChoreoPointAt(axis, value, normalOffset, tangentOffset, time + t * 900));
+    }
+
+    return motionPathFromPoints(points, radius, speed * 0.92, tide ? 0.76 : 0.72, tide ? 8.8 : 8.0, tide ? 14.2 : 12.8);
+  }
+
+  function buildWaveCrossSPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId) {
+    const tide = isTideLikeChoreoPattern(patternId);
+    const desiredSide = colorIndex === 0 ? 1 : -1;
+    const startSide = (runIndex + laneIndex) % 2 === 0 ? desiredSide : -desiredSide;
+    const time = state.visualTime + laneIndex * 190;
+    const axis = waveChoreoAxis(time);
+    const axisLength = waveChoreoAxisLength(axis);
+    const normalLength = waveChoreoNormalLength(axis);
+    const phase = runIndex * 0.81 + laneIndex * 1.11 + colorIndex * 0.67;
+    const entrySpan = Math.max(normalLength * (tide ? 0.76 : 0.66), radius * 9.8);
+    const innerSpan = radius * (tide ? 3.4 : 2.75) + 18;
+    const laneGap = radius * (tide ? 2.05 : 1.82) + 16;
+    const laneOffset = (laneIndex - (laneCount - 1) / 2) * laneGap;
+    const anchorBase = 0.2 + (((runIndex * 0.27 + laneIndex * 0.17) % 0.58) + 0.58) % 0.58;
+    const axisDrift = axisLength * (tide ? 0.22 : 0.17) * ((runIndex + colorIndex) % 2 === 0 ? 1 : -1);
+    const endSide = -startSide;
+    const offsets = tide
+      ? [startSide * entrySpan, startSide * innerSpan * 0.84, desiredSide * (radius * 1.26 + 14), endSide * innerSpan * 0.92, endSide * entrySpan]
+      : [startSide * entrySpan, startSide * innerSpan * 0.78, desiredSide * (radius * 1.12 + 12), endSide * innerSpan * 0.84, endSide * entrySpan];
+    const points = [];
+
+    for (let i = 0; i < offsets.length; i += 1) {
+      const t = i / (offsets.length - 1);
+      const eased = smoothstep(0, 1, t);
+      const value =
+        axisLength * anchorBase +
+        (eased - 0.5) * axisDrift +
+        Math.sin(t * Math.PI * (tide ? 3.1 : 2.55) + phase) * radius * (tide ? 0.78 : 0.58);
+      const matchHold = desiredSide * Math.sin(t * Math.PI) * Math.sin(t * Math.PI) * (radius * 1.06 + 13);
+      const tangentOffset =
+        laneOffset +
+        Math.sin(t * Math.PI * 2.65 + phase) * radius * (tide ? 0.42 : 0.34) +
+        Math.sin(t * Math.PI * 5.2 - phase) * radius * 0.045;
+      points.push(waveChoreoPointAt(axis, value, offsets[i] + matchHold, tangentOffset, time + t * 760));
+    }
+
+    return motionPathFromPoints(points, radius, speed * 0.9, tide ? 0.74 : 0.7, tide ? 7.7 : 6.9, tide ? 13.0 : 11.6);
+  }
+
+  function buildWaveSweepSPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId) {
+    const tide = isTideLikeChoreoPattern(patternId);
+    const desiredSide = colorIndex === 0 ? 1 : -1;
+    const time = state.visualTime + laneIndex * 210;
+    const axis = waveChoreoAxis(time);
+    const axisLength = waveChoreoAxisLength(axis);
+    const normalLength = waveChoreoNormalLength(axis);
+    const startSide = (runIndex + colorIndex) % 2 === 0 ? desiredSide : -desiredSide;
+    const axisDirection = (runIndex + laneIndex) % 2 === 0 ? 1 : -1;
+    const phase = runIndex * 0.93 + colorIndex * 0.7 + laneIndex * 0.52;
+    const margin = Math.max(radius * 2.1, 70);
+    const startValue = axisDirection > 0 ? axisLength * 0.1 - margin : axisLength * 0.9 + margin;
+    const endValue = axisDirection > 0 ? axisLength * 0.92 + margin : axisLength * 0.08 - margin;
+    const entrySpan = Math.max(normalLength * (tide ? 0.86 : 0.78), radius * 11.6);
+    const innerSpan = radius * (tide ? 3.75 : 3.05) + 18;
+    const laneOffset = (laneIndex - (laneCount - 1) / 2) * (radius * 2 + 18);
+    const offsets = [
+      startSide * entrySpan,
+      startSide * innerSpan * 0.9,
+      desiredSide * (radius * (tide ? 1.55 : 1.35) + 16),
+      -startSide * innerSpan * 0.9,
+      -startSide * entrySpan,
+    ];
+    const points = [];
+
+    for (let i = 0; i < offsets.length; i += 1) {
+      const t = i / (offsets.length - 1);
+      const eased = smoothstep(0, 1, t);
+      const value =
+        startValue +
+        (endValue - startValue) * eased +
+        Math.sin(t * Math.PI * (tide ? 4.4 : 3.8) + phase) * radius * (tide ? 1.18 : 0.92);
+      const arcBias = Math.sin(t * Math.PI) * (radius * (tide ? 2.1 : 1.7) + 22);
+      const matchHold = desiredSide * arcBias * (0.58 + Math.sin(t * Math.PI * 2 + phase) * 0.16);
+      const tangentOffset =
+        laneOffset +
+        (t - 0.5) * axisLength * (tide ? 0.22 : 0.18) * (axisDirection > 0 ? 1 : -1) +
+        Math.sin(t * Math.PI * 1.85 - phase) * radius * 0.42;
+      points.push(waveChoreoPointAt(axis, value, offsets[i] + matchHold, tangentOffset, time + t * 980));
+    }
+
+    return motionPathFromPoints(points, radius, speed * 0.92, tide ? 0.76 : 0.72, tide ? 9.6 : 8.8, tide ? 14.8 : 13.6);
+  }
+
+  function buildWaveBoundaryChoreoPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId, routeType) {
+    if (routeType === "borderS") {
+      return buildWaveBorderSPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId);
+    }
+    if (routeType === "sweepS") {
+      return buildWaveSweepSPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId);
+    }
+    return buildWaveCrossSPath(colorIndex, radius, speed, laneIndex, laneCount, runIndex, patternId);
+  }
+
+  function trySpawnWaveBoundaryChoreo(flow, remainingStage) {
+    const patternId = currentWavePatternId();
+    if (!isWaveChoreoPattern(patternId)) return false;
+    const capacity = bubbleCapacityRemaining();
+    if (remainingStage <= 0 || capacity <= 0) return false;
+
+    const d = difficulty();
+    const tide = isTideLikeChoreoPattern(patternId);
+    const runIndex = flow.waveChoreoIndex ?? 0;
+    flow.waveChoreoIndex = runIndex + 1;
+    const routeType = waveChoreoRouteType(runIndex);
+    const desiredCount = routeType === "sweepS" ? 1 : 2;
+    const count = Math.min(desiredCount, remainingStage, capacity);
+    let spawned = 0;
+
+    for (let index = 0; index < count; index += 1) {
+      const colorIndex = (runIndex + index) % 2;
+      const sizeKind = routeType === "borderS" && index % 2 === 1 ? "small" : "normal";
+      const radius = radiusForDifficulty(d, sizeKind) * rand(tide ? 0.92 : 0.9, tide ? 1.08 : 1.02);
+      const speed =
+        routeType === "borderS"
+          ? rand(tide ? 38 + d * 4 : 34 + d * 4, tide ? 50 + d * 7 : 46 + d * 6)
+          : routeType === "sweepS"
+            ? rand(tide ? 44 + d * 6 : 40 + d * 5, tide ? 58 + d * 9 : 54 + d * 8)
+            : rand(tide ? 42 + d * 6 : 38 + d * 5, tide ? 56 + d * 9 : 52 + d * 8);
+      const customPath = buildWaveBoundaryChoreoPath(colorIndex, radius, speed, index, count, runIndex, patternId, routeType);
+      if (!customPath?.points?.length) continue;
+      const delay = index * rand(routeType === "borderS" ? 0.58 : 0.46, routeType === "borderS" ? 0.82 : 0.68);
+      customPath.completeFairPass = false;
+      if (!pathHasPlayableStructuredPath(customPath, colorIndex, structuredPathMinMatch, delay)) continue;
+      customPath.trustedStructuredPath = true;
+      const start = customPath.points[0];
+      const target = customPath.points[customPath.points.length - 1];
+      const edge = pathEdgeFromPoint(start);
+      const velocity = aimedVelocity(start.x, start.y, target, speed, 0);
+      const didSpawn = spawnBubble(sizeKind === "small", "normal", {
+        edge,
+        x: start.x,
+        y: start.y,
+        colorIndex,
+        target,
+        velocity,
+        radius,
+        speed,
+        sizeKind,
+        isStream: true,
+        streamPattern: "softS",
+        streamAmplitude: 0,
+        streamFrequency: 1.2,
+        arcBend: 0,
+        customPath,
+        exitAfterPath: true,
+        pathLockedMotion: true,
+        delay,
+        quietHint: true,
+      });
+      if (didSpawn) spawned += 1;
+    }
+
+    if (spawned <= 0) return false;
+    const nextMin = routeType === "sweepS" ? (tide ? 1780 : 1900) : routeType === "borderS" ? (tide ? 1420 : 1580) : tide ? 1320 : 1480;
+    const nextMax = routeType === "sweepS" ? (tide ? 2450 : 2600) : routeType === "borderS" ? (tide ? 2100 : 2300) : tide ? 1980 : 2180;
+    state.nextSpawnAt = state.elapsed + rand(nextMin, nextMax);
+    return true;
+  }
+
+  function spawnWave() {
+    const d = difficulty();
+    const level = displayDifficultyLevel();
+    if (!state.stagePlan || state.stagePlan.level !== level) {
+      resetStagePlan(level);
+    }
+    const flow = ensureSpawnFlow();
+    const remainingStage = stageRemainingBubbles();
+    const activeLimit = activeBubbleLimit(level);
+
+    if (remainingStage <= 0) {
+      state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 360);
+      return;
+    }
+
+    if (bubbleCapacityRemaining(level) <= 0) {
+      scheduleFlowSpawn(flow);
+      return;
+    }
+
+    const islandPatternActive = isIslandChoreoPattern(currentBackgroundPatternId());
+    if (islandPatternActive) {
+      if (trySpawnIslandChoreo(flow, remainingStage)) {
+        return;
+      }
+      state.nextSpawnAt = state.elapsed + 420;
+      return;
+    }
+
+    const wavePatternActive = isWaveChoreoPattern(currentBackgroundPatternId());
+    if (wavePatternActive) {
+      if (trySpawnWaveBoundaryChoreo(flow, remainingStage)) {
+        return;
+      }
+      state.nextSpawnAt = state.elapsed + 820;
+      return;
+    }
+
+    if (trySpawnCustomPackWave(remainingStage)) {
+      return;
+    }
+
+    if (state.elapsed >= state.nextPowerAt && state.bubbles.length >= 2 && state.bubbles.length <= activeLimit - 1) {
+      spawnBubble(false, "bleach");
+      state.nextPowerAt = state.elapsed + rand(28000 - d * 4200, 44000 - d * 6200);
+      scheduleFlowSpawn(flow);
+      return;
+    }
+
+    if (level >= 2 && flow.type === "crossArc" && !flow.usedBurst && state.bubbles.length <= 6) {
+      const count = spawnFlowCrossArc(flow, remainingStage);
+      scheduleFlowSpawn(flow, Math.max(1, count));
+      return;
+    }
+
+    if (level >= 3 && flow.type === "machine" && !flow.usedBurst && state.bubbles.length <= 7) {
+      const count = spawnFlowGun(flow, remainingStage);
+      scheduleFlowSpawn(flow, Math.max(1, count));
+      return;
+    }
+
+    if (level >= 2 && flow.type === "sGroup" && !flow.usedBurst && state.bubbles.length <= 8) {
+      const count = spawnFlowSGroup(flow, remainingStage);
+      scheduleFlowSpawn(flow, Math.max(1, count));
+      return;
+    }
+
+    const smallClusterChance = islandPatternActive
+      ? 0.76
+      : level <= 2
+        ? 0.48
+        : flow.type === "normal"
+          ? level >= 6 ? 0.38 : 0.56
+          : level >= 6 ? 0.24 + d * 0.03 : 0.32;
+    if (remainingStage >= 2 && state.bubbles.length <= activeLimit - 2 && Math.random() < smallClusterChance) {
+      const count = spawnFlowSmallCluster(flow, remainingStage);
+      if (count > 0) {
+        scheduleFlowSpawn(flow, count);
+        return;
+      }
+    }
+
+    let count = 1;
+    if (flow.type === "normal" && level >= 5 && spawnFlowRhythm(flow) > 1.32 && state.bubbles.length <= 6 && Math.random() < 0.24 + d * 0.1) count += 1;
+    if (level <= 2) count = 1;
+    count = Math.min(count, remainingStage, Math.max(0, activeLimit - state.bubbles.length));
+    if (count <= 0) return;
+
+    const pairColor = count > 1 ? pickBalancedColorIndex() : null;
+    for (let index = 0; index < count; index += 1) {
+      spawnFlowBubble(flow, {
+        colorIndex: pairColor ?? undefined,
+        delay: index * rand(0.68, 0.9),
+        quietHint: index > 0,
+      });
+    }
+    scheduleFlowSpawn(flow, count);
+  }
+
+  function activateOpenMode(x, y) {
+    state.openUntil = Math.max(state.openUntil, state.elapsed + 6200);
+    state.openPopCount = 0;
+    state.flash = Math.max(state.flash, 0.38);
+    state.bubbles.forEach((bubble) => {
+      bubble.isSuper = false;
+      bubble.openReady = true;
+    });
+    for (let index = 0; index < 16; index += 1) {
+      makeParticle(x, y, openTone.color, rand(80, 260), rand(0, Math.PI * 2), rand(0.45, 0.95), true);
+    }
+    state.ripples.push({ x, y, radius: 12, age: 0, life: 0.7, color: openTone.color, power: 1.25 });
+  }
+
+  function activateClearScreen(origin) {
+    const cleared = [];
+    const waiting = [];
+    state.bubbles.forEach((bubble) => {
+      if (bubble.isCat || bubble.isCharge) {
+        waiting.push(bubble);
+      } else if (bubble.age >= 0) {
+        cleared.push(bubble);
+      } else {
+        waiting.push(bubble);
+      }
+    });
+    state.bubbles = waiting;
+    for (let i = 0; i < cleared.length; i += 1) {
+      registerCombo({ chargeSkill: false });
+      recordStageCorrect(cleared[i]);
+    }
+    chargeClearSkillByBubbles(cleared);
+    state.poppedCount += cleared.length;
+    state.score += cleared.length;
+    addWater(Math.min(24, 8 + cleared.length * 1.55 + comboWaterBonus()));
+    state.nextSpawnAt = Math.min(state.nextSpawnAt, state.elapsed + rand(240, 520));
+    state.flash = Math.max(state.flash, 0.82);
+    state.blasts.push({
+      x: origin.x,
+      y: origin.y,
+      radius: 16,
+      maxRadius: Math.max(state.width, state.height) * 1.08,
+      speed: 920,
+      age: 0,
+      life: 0.96,
+      color: clearTone.light,
+      accentColor: palette[0].light,
+      fillAlpha: 0.26,
+      decorative: true,
+      rings: 3,
+    });
+    state.ripples.push({ x: origin.x, y: origin.y, radius: origin.radius * 1.15, age: 0, life: 0.82, color: clearTone.color, power: 1.55 });
+    state.ripples.push({ x: state.width * 0.5, y: state.height * 0.5, radius: Math.min(state.width, state.height) * 0.22, age: 0, life: 0.56, color: clearTone.light, power: 1.15 });
+
+    cleared.forEach((bubble, index) => {
+      const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
+      state.ripples.push({
+        x: bubble.x,
+        y: bubble.y,
+        radius: bubble.radius * 0.42,
+        age: 0,
+        life: 0.36,
+        color: color.color,
+      });
+
+      if (index < 8) {
+        for (let i = 0; i < 3; i += 1) {
+          makeParticle(
+            bubble.x,
+            bubble.y,
+            i % 2 === 0 ? clearTone.light : color.light,
+            rand(90, 240),
+            rand(0, Math.PI * 2),
+            rand(0.32, 0.7),
+            i === 0,
+          );
+        }
+      }
+    });
+
+    makeFloatText(origin.x + 18, origin.y - 42, `CLEAR x${Math.max(1, cleared.length)}`, clearTone.light, 1.34);
+    for (let i = 0; i < 30; i += 1) {
+      makeParticle(origin.x, origin.y, i % 2 === 0 ? clearTone.color : palette[i % 4 === 0 ? 0 : 1].light, rand(160, 420), rand(0, Math.PI * 2), rand(0.42, 0.98), i % 3 === 0);
+    }
+  }
+
+  function useClearSkill() {
+    if (!state.running || state.clearSkillUses >= clearSkillMaxUses || state.clearSkillCharge < 1 || state.bubbles.length <= 0) return;
+    noteUsefulAction();
+    state.clearSkillUses += 1;
+    state.clearSkillCharge = 0;
+    activateClearScreen({
+      x: 54,
+      y: Math.max(80, state.height - 70),
+      radius: 32,
+    });
+    if (navigator.vibrate) {
+      navigator.vibrate(28);
+    }
+    playPop("clear");
+    updateHud();
+  }
+
+  function decolorBubbles(origin) {
+    let changed = 0;
+    state.bubbles.forEach((bubble) => {
+      if (bubble.age < 0) {
+        return;
+      }
+      if (isSpecialBubble(bubble)) {
+        return;
+      }
+      if (!bubble.restoreState) {
+        bubble.restoreState = {
+          colorIndex: bubble.colorIndex,
+          isSuper: bubble.isSuper,
+          isBomb: bubble.isBomb,
+          isBleach: bubble.isBleach,
+          isClear: bubble.isClear,
+          openReady: bubble.openReady,
+          wasReady: bubble.wasReady,
+        };
+      }
+      bubble.isWhite = true;
+      bubble.isSuper = false;
+      bubble.isBomb = false;
+      bubble.isBleach = false;
+      bubble.isClear = false;
+      bubble.colorIndex = -1;
+      bubble.openReady = true;
+      bubble.whiteUntil = state.elapsed + decolorDuration;
+      changed += 1;
+      state.ripples.push({
+        x: bubble.x,
+        y: bubble.y,
+        radius: bubble.radius * 0.34,
+        age: 0,
+        life: 0.28,
+        color: whiteTone.color,
+        power: 0.72,
+      });
+    });
+
+    state.flash = Math.max(state.flash, 0.22);
+    makeFloatText(origin.x, origin.y - origin.radius, `去色 ${changed}`, whiteTone.light, 1.08);
+    for (let i = 0; i < 14; i += 1) {
+      makeParticle(origin.x, origin.y, whiteTone.light, rand(80, 210), rand(0, Math.PI * 2), rand(0.26, 0.58), i % 5 === 0);
+    }
+  }
+
+  function restoreDecoloredBubble(bubble) {
+    const restore = bubble.restoreState;
+    if (!restore) return;
+    bubble.isWhite = false;
+    bubble.colorIndex = restore.colorIndex;
+    bubble.isSuper = restore.isSuper;
+    bubble.isBomb = restore.isBomb;
+    bubble.isBleach = restore.isBleach;
+    bubble.isClear = restore.isClear;
+    bubble.openReady = restore.openReady;
+    bubble.wasReady = restore.wasReady;
+    bubble.whiteUntil = 0;
+    bubble.restoreState = null;
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.3,
+      age: 0,
+      life: 0.22,
+      color: bubble.colorIndex >= 0 ? palette[bubble.colorIndex].light : openTone.light,
+      power: 0.52,
+    });
+  }
+
+  function startBombBlast(origin) {
+    state.blasts.push({
+      x: origin.x,
+      y: origin.y,
+      radius: 14,
+      maxRadius: Math.max(state.width, state.height) * 0.86,
+      speed: 620,
+      age: 0,
+      life: 1.18,
+      color: bombTone.light,
+      accentColor: "#ffffff",
+      fillAlpha: 0.22,
+      rings: 3,
+    });
+    state.flash = Math.max(state.flash, 0.3);
+    state.ripples.push({ x: origin.x, y: origin.y, radius: 22, age: 0, life: 0.56, color: bombTone.light, power: 1.45 });
+    state.ripples.push({ x: origin.x, y: origin.y, radius: 38, age: 0, life: 0.42, color: "#ffffff", power: 0.85 });
+    for (let i = 0; i < 24; i += 1) {
+      makeParticle(origin.x, origin.y, i % 2 === 0 ? bombTone.light : whiteTone.light, rand(120, 340), rand(0, Math.PI * 2), rand(0.3, 0.72), i % 5 === 0);
+    }
+  }
+
+  function popChargeBubble(bubble, index, hitX = bubble.x, hitY = bubble.y) {
+    if (bubble.chargeResolved) return;
+    clearCustomHoldForBubble(bubble);
+    bubble.chargeResolved = true;
+    state.bubbles.splice(index, 1);
+    state.poppedCount += 1;
+    state.score += 2;
+    registerCombo();
+    makePunctureSplash(bubble, hitX, hitY, whiteTone, Math.round(14 + bubble.radius * 0.22), false, false);
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.8, `x${state.combo}`, "#f8fdff", 1.02, {
+      stroke: "rgba(19, 35, 55, 0.54)",
+      shadow: "rgba(255,255,255,0.2)",
+    });
+    vibratePop(18);
+    playPop("big");
+    updateHud();
+  }
+
+  function explodeChargeBubble(bubble, index) {
+    if (bubble.chargeResolved) return;
+    bubble.chargeResolved = true;
+    state.bubbles.splice(index, 1);
+    noteWrongAction();
+    resetCombo();
+    state.water = Math.max(0, state.water - chargeBubblePenalty);
+    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + chargeBubblePenalty * 0.55);
+    waterShockUntil = Math.max(waterShockUntil, state.elapsed + 520);
+    makePunctureSplash(bubble, bubble.x, bubble.y, whiteTone, Math.round(18 + bubble.radius * 0.32), false, false);
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, "-1心", "#f8fdff", 1.12, {
+      stroke: "rgba(50, 18, 38, 0.66)",
+      shadow: "rgba(255,255,255,0.24)",
+    });
+    if (navigator.vibrate) {
+      navigator.vibrate([18, 34, 18]);
+    }
+    playPop("big");
+    updateHud();
+    if (isWaterGameOver()) {
+      endGame();
+    }
+  }
+
+  function updateChargeBubble(bubble, index) {
+    const xRatio = bubble.chargeXRatio ?? (state.width > 0 ? clamp(bubble.x / state.width, 0.28, 0.72) : 0.5);
+    const yRatio = bubble.chargeYRatio ?? (state.height > 0 ? clamp(bubble.y / state.height, 0.3, 0.68) : 0.5);
+    bubble.x = state.width * xRatio;
+    bubble.y = state.height * yRatio;
+    bubble.vx = 0;
+    bubble.vy = 0;
+    const warningSeconds = bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds;
+    const fuseSeconds = bubble.chargeFuseSeconds ?? chargeBubbleFuseMaxSeconds;
+    const activeAge = Math.max(0, bubble.age - warningSeconds);
+    if (bubble.age >= warningSeconds && !bubble.chargeWasActive) {
+      bubble.chargeWasActive = true;
+    }
+    if (bubble.age < warningSeconds) {
+      const previewProgress = clamp(bubble.age / Math.max(0.001, warningSeconds), 0, 1);
+      const previewEase = smoothstep(0, 1, previewProgress);
+      bubble.chargePreviewProgress = previewProgress;
+      bubble.chargeGrowthProgress = 0;
+      bubble.radius = bubble.baseRadius * (0.07 + previewEase * 0.19);
+      return false;
+    }
+    const progress = clamp(activeAge / Math.max(0.001, fuseSeconds), 0, 1);
+    const eased = smoothstep(0, 1, progress);
+    const dangerPulse = smoothstep(0.72, 1, progress);
+    bubble.chargePreviewProgress = 1;
+    bubble.chargeGrowthProgress = progress;
+    const grow =
+      0.26 +
+      eased * 1.02 +
+      Math.sin(state.visualTime / 116 + bubble.skinPhase) * (0.005 + dangerPulse * 0.018);
+    bubble.radius = bubble.baseRadius * grow;
+    if (state.elapsed >= (bubble.chargeExplodeAt || 0)) {
+      explodeChargeBubble(bubble, index);
+      return true;
+    }
+    return false;
+  }
+
+  function popSoundKindForBubble(bubble) {
+    if (bubble.isBomb || bubble.isSuper || bubble.isBleach || bubble.isClear) return "big";
+    if (bubble.baseRadius <= 24) return "small";
+    if (bubble.baseRadius >= 42) return "big";
+    return "regular";
+  }
+
+  function burstBubbleByBlast(bubble, index) {
+    const color = bubble.isWhite
+      ? whiteTone
+      : bubble.isBleach
+        ? whiteTone
+        : bubble.isBomb
+          ? bombTone
+          : bubble.isSuper || bubble.colorIndex < 0
+            ? openTone
+            : palette[bubble.colorIndex];
+    state.bubbles.splice(index, 1);
+    state.poppedCount += 1;
+    chargeClearSkillByBubble(bubble);
+    registerCombo({ chargeSkill: false });
+    recordStageCorrect(bubble);
+    state.score += bubble.isWhite ? 1 : 1;
+    addWater(bubble.isWhite ? 1.1 : Math.min(2.4, (bubble.waterValue ?? 1.8) * 0.42));
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.4,
+      age: 0,
+      life: 0.24,
+      color: color.light,
+      power: 0.72,
+    });
+    for (let i = 0; i < 3; i += 1) {
+      makeParticle(bubble.x, bubble.y, color.light, rand(70, 190), rand(0, Math.PI * 2), rand(0.18, 0.38), i === 0);
+    }
+    playPop(popSoundKindForBubble(bubble), rand(0, 0.045));
+  }
+
+  function makeParticle(x, y, color, speed, angle, life, sparkle = false) {
+    const limit = effectLimit("particles");
+    if (limit <= 0 || !allowDecorativeEffect(sparkle ? 0.72 : 1)) return;
+    if (state.particles.length >= limit) {
+      state.particles.splice(0, state.particles.length - limit + 1);
+    }
+    state.particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - rand(18, 58),
+      radius: sparkle ? rand(2, 5) : rand(2.2, 6.2),
+      color,
+      age: 0,
+      life,
+      gravity: sparkle ? 96 : 180,
+      sparkle,
+    });
+  }
+
+  function makeFloatText(x, y, text, color, scale = 1, options = {}) {
+    const limit = effectLimit("floaters");
+    if (limit <= 0) return;
+    if (state.floaters.length >= limit) {
+      state.floaters.splice(0, state.floaters.length - limit + 1);
+    }
+    state.floaters.push({
+      x,
+      y,
+      text,
+      color,
+      scale,
+      fontFamily: options.fontFamily ?? null,
+      italic: Boolean(options.italic),
+      stroke: options.stroke ?? null,
+      shadow: options.shadow ?? null,
+      age: 0,
+      life: options.life ?? 0.78,
+      vy: options.vy ?? -34,
+    });
+  }
+
+  function makeComboFloatText(x, y, text, rank, scaleBoost = 1) {
+    const style = comboRankStyle(rank);
+    makeFloatText(x, y, text, style.color, style.scale * scaleBoost, {
+      fontFamily: '"Brush Script MT", "Segoe Script", "Comic Sans MS", "Arial Rounded MT Bold", cursive',
+      italic: true,
+      stroke: "rgba(15, 25, 37, 0.64)",
+      shadow: style.shadow,
+      life: 0.92,
+      vy: -38,
+    });
+  }
+
+  function comboFeedbackAt(x, y, color) {
+    if (state.combo < 3) return;
+    const milestone = state.combo >= 5 && state.combo % 5 === 0;
+    const mega = state.combo >= 10 && state.combo % 10 === 0;
+    const strong = state.combo >= 8;
+    if (!milestone && !mega && !allowDecorativeEffect(0.55)) return;
+    const power = mega ? 1.26 : milestone ? 0.98 : strong ? 0.72 : 0.5;
+    state.ripples.push({
+      x,
+      y,
+      radius: mega ? 30 : milestone ? 22 : 14,
+      age: 0,
+      life: mega ? 0.42 : milestone ? 0.34 : 0.24,
+      color: color.light,
+      power,
+    });
+    if (strong && allowDecorativeEffect(0.7)) {
+      state.ripples.push({
+        x,
+        y,
+        radius: mega ? 14 : 10,
+        age: 0,
+        life: 0.22,
+        color: "#ffffff",
+        power: mega ? 0.72 : 0.42,
+      });
+    }
+    if (milestone) {
+      const rank = comboRank() || "B";
+      const text = `${rank} x${state.combo}!`;
+      makeComboFloatText(x, y - 30, text, rank, mega ? 1.12 : 1);
+      state.flash = Math.max(state.flash, mega ? 0.2 : 0.14);
+    } else if (state.combo === 3) {
+      const rank = comboRank();
+      makeComboFloatText(x, y - 22, `${rank} x${state.combo}`, rank, 0.86);
+    } else if (state.combo >= 7 && state.combo % 3 === 1) {
+      const rank = comboRank();
+      if (rank) {
+        makeComboFloatText(x, y - 22, `${rank} x${state.combo}`, rank, 0.92);
+      } else {
+        makeFloatText(x, y - 22, `x${state.combo}`, color.light, Math.min(1.42, 1.08 + state.combo * 0.014));
+      }
+    }
+  }
+
+  function vibratePop(base = 12) {
+    if (!navigator.vibrate) return;
+    if (state.combo >= 10 && state.combo % 5 === 0) {
+      navigator.vibrate([10, 18, 12]);
+      return;
+    }
+    const duration = Math.round(base + Math.min(14, Math.max(0, state.combo - 2) * 1.35));
+    navigator.vibrate(duration);
+  }
+
+  function makePunctureSplash(bubble, hitX, hitY, color, amount, isSmall, isSuper) {
+    const dx = hitX - bubble.x;
+    const dy = hitY - bubble.y;
+    const distance = Math.max(0.001, Math.hypot(dx, dy));
+    const direction = distance > bubble.radius * 0.12 ? Math.atan2(dy, dx) : rand(-Math.PI, Math.PI);
+    const originX = bubble.x + Math.cos(direction) * Math.min(distance, bubble.radius * 0.72);
+    const originY = bubble.y + Math.sin(direction) * Math.min(distance, bubble.radius * 0.72);
+
+    state.ripples.push({
+      x: originX,
+      y: originY,
+      radius: bubble.radius * (isSmall ? 0.22 : 0.34),
+      age: 0,
+      life: isSuper ? 0.62 : isSmall ? 0.26 : 0.42,
+      color: color.color,
+      power: isSuper ? 1.25 : isSmall ? 0.66 : 0.86,
+      puncture: true,
+      angle: direction,
+    });
+
+    for (let i = 0; i < amount; i += 1) {
+      const spread = isSmall ? 1.35 : 1.65;
+      const angle = direction + rand(-spread, spread);
+      const speed = isSmall ? rand(80, 178) : rand(72, isSuper ? 290 : 238);
+      const life = isSmall ? rand(0.2, 0.44) : rand(0.34, 0.78);
+      const particleColor = i % 3 === 0 ? color.light : palette[0].light;
+      makeParticle(originX, originY, particleColor, speed, angle, life, isSuper && i % 4 === 0);
+    }
+  }
+
+  function finishCatBubble(bubble, reason = "tap") {
+    const index = state.bubbles.indexOf(bubble);
+    if (index < 0) return;
+    state.bubbles.splice(index, 1);
+    if (state.catHoldBubbleId === bubble.catId) {
+      state.catHoldPointerId = null;
+      state.catHoldBubbleId = null;
+    }
+    state.poppedCount += 1;
+    state.score += 1;
+    const beforeWater = state.water;
+    state.water = Math.min(100, state.water + catBubbleWaterGain);
+    const appliedWaterGain = state.water - beforeWater;
+    state.flash = Math.max(state.flash, 0.24);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.78,
+      age: 0,
+      life: 0.46,
+      color: "#fff6d6",
+      power: 0.92,
+    });
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, appliedWaterGain > 0 ? "+1" : "MAX", "#fff6d6", 1.08);
+    for (let i = 0; i < 14; i += 1) {
+      makeParticle(bubble.x, bubble.y, i % 2 === 0 ? "#fff6d6" : "#f4c1d6", rand(58, 172), rand(0, Math.PI * 2), rand(0.26, 0.56), i % 5 === 0);
+    }
+    vibratePop(reason === "hold" ? 22 : 14);
+    playCatMeow(reason === "hold" ? "hold" : "clear");
+    updateHud();
+  }
+
+  function hitCatBubble(bubble, pointerId, hitX, hitY) {
+    noteUsefulAction();
+    bubble.catHits = Math.min((bubble.catHits ?? 0) + 1, bubble.catTapRequired ?? catBubbleTapRequired);
+    bubble.catHoldMs = Math.max(0, bubble.catHoldMs ?? 0);
+    state.catHoldPointerId = pointerId ?? state.activePointerId;
+    state.catHoldBubbleId = bubble.catId;
+    state.catHoldX = hitX;
+    state.catHoldY = hitY;
+
+    const remaining = Math.max(0, (bubble.catTapRequired ?? catBubbleTapRequired) - bubble.catHits);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * (0.44 + bubble.catHits * 0.06),
+      age: 0,
+      life: 0.22,
+      color: "#fff6d6",
+      power: 0.58,
+    });
+    if (remaining > 0) {
+      makeFloatText(bubble.x, bubble.y - bubble.radius, `${bubble.catHits}/${bubble.catTapRequired ?? catBubbleTapRequired}`, "#fff6d6", 0.92);
+      vibratePop(7);
+      playCatMeow("tap");
+      return;
+    }
+
+    finishCatBubble(bubble, "tap");
+  }
+
+  function updateCatBubbleHold(dt) {
+    if (state.catHoldPointerId === null || state.catHoldBubbleId === null) return;
+    const bubble = catBubbleById(state.catHoldBubbleId);
+    if (!bubble || bubble.age < 0) {
+      state.catHoldPointerId = null;
+      state.catHoldBubbleId = null;
+      return;
+    }
+
+    const dx = state.catHoldX - bubble.x;
+    const dy = state.catHoldY - bubble.y;
+    const inside = dx * dx + dy * dy <= (bubble.radius * 1.08) * (bubble.radius * 1.08);
+    if (!inside) {
+      bubble.catHoldMs = Math.max(0, (bubble.catHoldMs ?? 0) - dt * 600);
+      return;
+    }
+
+    bubble.catHoldMs = Math.min((bubble.catHoldRequiredMs ?? catBubbleHoldMs), (bubble.catHoldMs ?? 0) + dt * 1000);
+    if (bubble.catHoldMs >= (bubble.catHoldRequiredMs ?? catBubbleHoldMs)) {
+      finishCatBubble(bubble, "hold");
+    }
+  }
+
+  function customBubbleNeedsClear(bubble) {
+    if (!bubble || bubble.isCat || bubble.isBleach || bubble.isBomb || bubble.isClear || bubble.isCharge) return false;
+    const tapRequired = bubble.customTapRequired ?? 1;
+    const holdRequired = bubble.customHoldRequiredMs ?? 0;
+    return tapRequired > 1 || tapRequired === 0 || holdRequired > 0;
+  }
+
+  function customBubbleByUid(uid) {
+    return state.bubbles.find((bubble) => bubble.uid === uid) ?? null;
+  }
+
+  function clearCustomHoldForBubble(bubble) {
+    if (!bubble || state.customHoldBubbleUid !== bubble.uid) return;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+  }
+
+  function finishCustomBubble(bubble, hitX, hitY, reason = "tap") {
+    const index = state.bubbles.indexOf(bubble);
+    if (index < 0) return;
+    clearCustomHoldForBubble(bubble);
+    popBubble(bubble, index, hitX, hitY);
+    if (reason === "hold") {
+      state.flash = Math.max(state.flash, 0.16);
+    }
+  }
+
+  function hitCustomBubble(bubble, pointerId, hitX, hitY) {
+    noteUsefulAction();
+    const tapRequired = bubble.customTapRequired ?? 1;
+    const holdRequired = bubble.customHoldRequiredMs ?? 0;
+    if (holdRequired > 0) {
+      state.customHoldPointerId = pointerId ?? state.activePointerId;
+      state.customHoldBubbleUid = bubble.uid;
+      state.customHoldX = hitX;
+      state.customHoldY = hitY;
+    }
+    if (tapRequired > 0) {
+      bubble.customHits = Math.min((bubble.customHits ?? 0) + 1, tapRequired);
+    }
+    const hits = bubble.customHits ?? 0;
+    const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * (0.38 + Math.min(0.32, hits * 0.08)),
+      age: 0,
+      life: 0.2,
+      color: color.light,
+      power: 0.48,
+    });
+    if (tapRequired > 0 && hits >= tapRequired) {
+      finishCustomBubble(bubble, hitX, hitY, "tap");
+      return;
+    }
+    const label = tapRequired > 0 ? `${hits}/${tapRequired}` : "HOLD";
+    makeFloatText(bubble.x, bubble.y - bubble.radius, label, color.light, 0.9);
+    vibratePop(6);
+    playPop("small");
+    updateHud();
+  }
+
+  function updateCustomBubbleHold(dt) {
+    if (state.customHoldPointerId === null || state.customHoldBubbleUid === null) return;
+    const bubble = customBubbleByUid(state.customHoldBubbleUid);
+    if (!bubble || bubble.age < 0 || !customBubbleNeedsClear(bubble)) {
+      state.customHoldPointerId = null;
+      state.customHoldBubbleUid = null;
+      return;
+    }
+    const required = bubble.customHoldRequiredMs ?? 0;
+    if (required <= 0) return;
+
+    const dx = state.customHoldX - bubble.x;
+    const dy = state.customHoldY - bubble.y;
+    const inside = dx * dx + dy * dy <= (bubble.radius * 1.08) * (bubble.radius * 1.08);
+    if (!inside || !canPopBubble(bubble, state.customHoldX, state.customHoldY)) {
+      bubble.customHoldMs = Math.max(0, (bubble.customHoldMs ?? 0) - dt * 700);
+      return;
+    }
+
+    bubble.customHoldMs = Math.min(required, (bubble.customHoldMs ?? 0) + dt * 1000);
+    if (bubble.customHoldMs >= required) {
+      finishCustomBubble(bubble, state.customHoldX, state.customHoldY, "hold");
+    }
+  }
+
+  function hitBleachBubble(bubble, index, hitX, hitY) {
+    if (state.elapsed < (bubble.bleachHitCooldownUntil ?? 0)) return;
+    bubble.bleachHitCooldownUntil = state.elapsed + 140;
+    bubble.bleachHits = Math.min((bubble.bleachHits ?? 0) + 1, bubble.bleachRequiredHits ?? bleachRequiredHits);
+    registerCombo();
+
+    const remaining = Math.max(0, (bubble.bleachRequiredHits ?? bleachRequiredHits) - bubble.bleachHits);
+    if (remaining > 0) {
+      bubble.baseRadius = Math.max(18, bubble.baseRadius * 0.76);
+      bubble.radius = bubble.baseRadius;
+    }
+
+    state.flash = Math.max(state.flash, remaining > 0 ? 0.12 : 0.24);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.46,
+      age: 0,
+      life: 0.22,
+      color: whiteTone.light,
+      power: remaining > 0 ? 0.62 : 0.86,
+    });
+    makePunctureSplash(bubble, hitX, hitY, whiteTone, remaining > 0 ? 9 : 18, bubble.baseRadius <= 27, false);
+
+    if (remaining > 0) {
+      setBleachDash(bubble, false);
+      makeFloatText(bubble.x, bubble.y - bubble.radius, `${bubble.bleachHits}/3`, whiteTone.light, 0.94);
+      comboFeedbackAt(bubble.x, bubble.y, whiteTone);
+      vibratePop(10);
+      playPop("small");
+      updateHud();
+      return;
+    }
+
+    state.bubbles.splice(index, 1);
+    state.poppedCount += 1;
+    chargeClearSkillByBubble(bubble);
+    state.score += 1;
+    addWater(3.6);
+    decolorBubbles(bubble);
+    comboFeedbackAt(bubble.x, bubble.y, whiteTone);
+    vibratePop(16);
+    playPop("clear");
+    updateHud();
+  }
+
+  function popBubble(bubble, index, hitX = bubble.x, hitY = bubble.y) {
+    const isOpen = state.openUntil > state.elapsed;
+    const isSmall = bubble.baseRadius <= 27 || bubble.isStream;
+    const color = bubble.isWhite
+      ? whiteTone
+      : bubble.isBomb
+        ? bombTone
+        : bubble.isBleach
+          ? whiteTone
+          : bubble.isClear
+      ? clearTone
+        : bubble.isSuper || bubble.colorIndex === -1
+        ? openTone
+        : palette[bubble.colorIndex];
+
+    noteUsefulAction();
+    if (bubble.isBleach) {
+      hitBleachBubble(bubble, index, hitX, hitY);
+      return;
+    }
+    if (bubble.isCharge) {
+      popChargeBubble(bubble, index, hitX, hitY);
+      return;
+    }
+
+    clearCustomHoldForBubble(bubble);
+    state.bubbles.splice(index, 1);
+    state.poppedCount += 1;
+    chargeClearSkillByBubble(bubble);
+    registerCombo();
+    recordStageCorrect(bubble);
+
+    if (bubble.isClear) {
+      makeFloatText(bubble.x, bubble.y - bubble.radius, `x${state.combo} 清屏`, clearTone.light, 1.08);
+      activateClearScreen(bubble);
+      comboFeedbackAt(bubble.x, bubble.y, clearTone);
+      vibratePop(24);
+      playPop("clear");
+      updateHud();
+      return;
+    }
+
+    if (bubble.isBomb) {
+      state.score += 1;
+      addWater(3.8);
+      makeFloatText(bubble.x, bubble.y - bubble.radius, "扩散", bombTone.light, 1.08);
+      startBombBlast(bubble);
+      comboFeedbackAt(bubble.x, bubble.y, bombTone);
+      vibratePop(20);
+      playPop("super");
+      updateHud();
+      return;
+    }
+
+    if (isOpen && !bubble.isSuper) {
+      state.openPopCount += 1;
+    }
+
+    const baseBudgetWater = bubble.waterValue ?? (isSmall ? 3 : 4.2);
+    const waterGain = bubble.isWhite
+      ? isSmall ? 1.5 : 2.5
+      : bubble.isSuper
+      ? 16
+      : isOpen
+        ? baseBudgetWater * 0.72 + comboWaterBoost(baseBudgetWater) * 0.7
+        : baseBudgetWater + comboWaterBoost(baseBudgetWater);
+    const scoreGain = bubble.isWhite
+      ? 1
+      : bubble.isSuper
+      ? 8
+      : isOpen
+        ? state.openPopCount % 3 === 0
+          ? 1
+          : 0
+        : 1 + comboScoreBonus();
+
+    state.score += scoreGain;
+    const appliedWaterGain = addWater(waterGain);
+    relieveWaterPressureOnCorrect(appliedWaterGain, bubble);
+    state.flash = Math.max(state.flash, bubble.isSuper ? 0.46 : isSmall ? 0.16 : 0.28);
+    makeFloatText(
+      bubble.x,
+      bubble.y - bubble.radius * 0.72,
+      bubble.isWhite ? "+1分" : state.combo > 1 ? `x${state.combo} +${formatWaterGain(appliedWaterGain)}` : `+${formatWaterGain(appliedWaterGain)}`,
+      isOpen ? openTone.light : color.light,
+      Math.min(1.34, 0.96 + state.combo * 0.012),
+    );
+
+    const amount = bubble.isSuper ? 46 : isSmall ? 9 + Math.round(bubble.radius * 0.16) : Math.round(16 + bubble.radius * 0.55);
+    makePunctureSplash(bubble, hitX, hitY, color, amount, isSmall, bubble.isSuper);
+    comboFeedbackAt(bubble.x, bubble.y, color);
+    if (bubble.isSuper) {
+      activateOpenMode(bubble.x, bubble.y);
+    }
+
+    vibratePop(bubble.isSuper ? 24 : isSmall ? 7 : 14);
+    playPop(popSoundKindForBubble(bubble));
+  }
+
+  function missBubble(bubble, index, isTap) {
+    noteWrongAction();
+    penalizeStageMistake(bubble, "wrong");
+    state.bubbles.splice(index, 1);
+    resetCombo();
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.32,
+      age: 0,
+      life: 0.26,
+      color: colorWithAlpha("#20384f", 0.48),
+      power: 0.5,
+    });
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.12,
+      age: 0,
+      life: 0.18,
+      color: colorWithAlpha("#f4fbff", 0.42),
+      power: 0.28,
+    });
+    state.mistakeFlash = Math.max(state.mistakeFlash, 0.22);
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.72, "偏了", "#eefbff", 0.72, {
+      life: 0.42,
+      vy: -18,
+      stroke: "rgba(15, 33, 43, 0.46)",
+      shadow: "rgba(15, 33, 43, 0.18)",
+    });
+
+    for (let i = 0; i < 5; i += 1) {
+      makeParticle(
+        bubble.x,
+        bubble.y,
+        i % 2 === 0 ? colorWithAlpha("#20384f", 0.5) : colorWithAlpha("#eefbff", 0.4),
+        rand(28, 78),
+        rand(0, Math.PI * 2),
+        rand(0.14, 0.24),
+      );
+    }
+
+    if (isTap && navigator.vibrate) {
+      navigator.vibrate(8);
+    }
+  }
+
+  function bubbleCheckPoint(bubble, hitX = bubble.x, hitY = bubble.y) {
+    const dx = hitX - bubble.x;
+    const dy = hitY - bubble.y;
+    const distance = Math.hypot(dx, dy);
+    const maxDistance = Math.max(1, bubble.radius * 0.96);
+    if (distance <= maxDistance) {
+      return { x: hitX, y: hitY };
+    }
+    if (distance <= 0.001) {
+      return { x: bubble.x, y: bubble.y };
+    }
+    const amount = maxDistance / distance;
+    return {
+      x: bubble.x + dx * amount,
+      y: bubble.y + dy * amount,
+    };
+  }
+
+  function canPopBubble(bubble, hitX = bubble.x, hitY = bubble.y) {
+    if (
+      state.openUntil > state.elapsed ||
+      bubble.isSuper ||
+      bubble.isClear ||
+      bubble.isBleach ||
+      bubble.isBomb ||
+      bubble.isCat ||
+      bubble.isCharge ||
+      bubble.isWhite ||
+      bubble.colorIndex === -1
+    ) {
+      return true;
+    }
+
+    if (isStageTargetBubble(bubble) && bubble.fairPassComplete && bubble.wasReady) {
+      return true;
+    }
+
+    const point = bubbleCheckPoint(bubble, hitX, hitY);
+    return bubble.colorIndex === backgroundColorIndexAt(point.x, point.y);
+  }
+
+  function bubbleHasMatchingPatch(bubble) {
+    if (!isStageTargetBubble(bubble)) return false;
+    const r = bubble.radius * 0.58;
+    const points = [
+      { x: bubble.x, y: bubble.y },
+      { x: bubble.x - r, y: bubble.y },
+      { x: bubble.x + r, y: bubble.y },
+      { x: bubble.x, y: bubble.y - r },
+      { x: bubble.x, y: bubble.y + r },
+    ];
+    return points.some((point) => {
+      if (point.x < 0 || point.x > state.width || point.y < 0 || point.y > state.height) return false;
+      return backgroundColorIndexAt(point.x, point.y) === bubble.colorIndex;
+    });
+  }
+
+  function cachedBubbleHasMatchingPatch(bubble) {
+    if (!bubble) return false;
+    if (bubble.matchPatchCheckedAt === state.elapsed) {
+      return Boolean(bubble.matchPatchCached);
+    }
+    const value = bubbleHasMatchingPatch(bubble);
+    bubble.matchPatchCheckedAt = state.elapsed;
+    bubble.matchPatchCached = value;
+    return value;
+  }
+
+  function updateBubbleMatchDwell(bubble, dt) {
+    if (!isStageTargetBubble(bubble)) return;
+    if (cachedBubbleHasMatchingPatch(bubble)) {
+      bubble.wasReady = true;
+      bubble.matchDwell = Math.min(fairMatchDwell, (bubble.matchDwell ?? 0) + dt);
+      if (bubble.matchDwell >= fairMatchDwell) {
+        bubble.fairPassComplete = true;
+      }
+    }
+  }
+
+  function needsFairColorPass(bubble) {
+    return isStageTargetBubble(bubble) && !bubble.fairPassComplete;
+  }
+
+  function isCalmSmallBubble(bubble) {
+    return Boolean(bubble && !isSpecialBubble(bubble) && (bubble.baseRadius <= 28 || (bubble.isStream && bubble.baseRadius <= 32)));
+  }
+
+  function steerBubbleTowardMatch(bubble, dt, d) {
+    if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isWhite || bubble.colorIndex < 0) return;
+    if (bubble.pathComplete && bubble.fairPassComplete && (bubble.exitAfterPath || bubble.pathLockedMotion || bubble.islandChainId)) return;
+    const calmSmall = isCalmSmallBubble(bubble);
+    const matchingNow = cachedBubbleHasMatchingPatch(bubble);
+    if (matchingNow && !needsFairColorPass(bubble)) {
+      return;
+    }
+
+    if (matchingNow) {
+      const speed = Math.hypot(bubble.vx, bubble.vy);
+      const maxComfortSpeed = calmSmall ? 64 + d * 12 : bubble.isStream ? 92 + d * 18 : 58 + d * 20;
+      if (speed > maxComfortSpeed) {
+        const damp = Math.max(0.82, 1 - dt * 0.72);
+        bubble.vx *= damp;
+        bubble.vy *= damp;
+      }
+      return;
+    }
+
+    const urgency = needsFairColorPass(bubble)
+      ? smoothstep(0.28, 1.7 - d * 0.35, bubble.age)
+      : smoothstep(1.15, 4.1 - d * 1.25, bubble.age);
+    if (urgency <= 0) return;
+
+    const targetExpired = !bubble.steerTarget || bubble.age >= bubble.retargetAt;
+    const targetInvalid = bubble.steerTarget && backgroundColorIndexAt(bubble.steerTarget.x, bubble.steerTarget.y) !== bubble.colorIndex;
+    if (targetExpired || targetInvalid) {
+      bubble.steerTarget = matchingPointForColorFromEdge(bubble.colorIndex, bubble.edge, bubble.y, bubble.x);
+      bubble.retargetAt = bubble.age + (needsFairColorPass(bubble) ? rand(calmSmall ? 0.85 : 0.55, calmSmall ? 1.45 : 1.05) : rand(calmSmall ? 1.75 : 1.1, calmSmall ? 2.75 : 2.0));
+    }
+
+    const target = bubble.steerTarget;
+    const speed = Math.max(28, Math.hypot(bubble.vx, bubble.vy));
+    const desired = aimedVelocity(bubble.x, bubble.y, target, speed, 0);
+    const correction = needsFairColorPass(bubble)
+      ? Math.min(calmSmall ? 0.052 : 0.078, dt * ((calmSmall ? 0.32 : 0.52) + urgency * (calmSmall ? 0.98 : 1.55)))
+      : Math.min(calmSmall ? 0.018 : 0.03, dt * ((calmSmall ? 0.1 : 0.16) + urgency * (calmSmall ? 0.36 : 0.64)));
+    easeVelocityToward(bubble, desired, dt, {
+      maxTurnRate: calmSmall ? 0.66 : bubble.isStream ? 0.82 : 0.94,
+      blend: correction,
+    });
+  }
+
+  function edgeDirection(edge) {
+    if (edge === "left") return { x: 1, y: 0 };
+    if (edge === "right") return { x: -1, y: 0 };
+    if (edge === "top") return { x: 0, y: 1 };
+    return { x: 0, y: -1 };
+  }
+
+  function keepBubbleMoving(bubble, d, dt = 1 / 60) {
+    const speed = Math.hypot(bubble.vx, bubble.vy);
+    const calmSmall = isCalmSmallBubble(bubble);
+    const minSpeed = bubble.isCat ? 18 + d * 8 : calmSmall ? 40 + d * 16 : bubble.isStream ? 64 + d * 28 : 30 + d * 42;
+    if (speed >= minSpeed) return;
+
+    const direction =
+      speed > 4
+        ? { x: bubble.vx / speed, y: bubble.vy / speed }
+        : edgeDirection(bubble.edge);
+    const side = Math.sin(bubble.age * 1.25 + bubble.streamPhase) * (calmSmall ? 2.4 : bubble.isStream ? 4 : 6);
+    const targetVx = direction.x * minSpeed - direction.y * side;
+    const targetVy = direction.y * minSpeed + direction.x * side;
+    easeVelocityToward(bubble, { vx: targetVx, vy: targetVy }, dt, {
+      maxTurnRate: calmSmall ? 0.7 : bubble.isStream ? 0.86 : 0.98,
+      blend: 0.055,
+    });
+  }
+
+  function pullBubbleBackForFairPass(bubble, d, dt) {
+    if (!needsFairColorPass(bubble)) return false;
+    if (bubble.pathComplete && bubble.fairPassComplete && (bubble.exitAfterPath || bubble.pathLockedMotion || bubble.islandChainId)) return false;
+    const margin = bubble.radius * 1.35;
+    const nearExit =
+      bubble.x < margin ||
+      bubble.x > state.width - margin ||
+      bubble.y < margin ||
+      bubble.y > state.height - margin;
+    if (!nearExit) return false;
+
+    const targetInvalid = !bubble.steerTarget || backgroundColorIndexAt(bubble.steerTarget.x, bubble.steerTarget.y) !== bubble.colorIndex;
+    if (targetInvalid) {
+      bubble.steerTarget = matchingPointForColorFromEdge(bubble.colorIndex, bubble.edge, bubble.y, bubble.x);
+      bubble.retargetAt = bubble.age + rand(0.45, 0.9);
+    }
+
+    const calmSmall = isCalmSmallBubble(bubble);
+    const speed = Math.max(calmSmall ? 56 + d * 14 : bubble.isStream ? 88 + d * 24 : 62 + d * 24, Math.hypot(bubble.vx, bubble.vy));
+    const desired = aimedVelocity(bubble.x, bubble.y, bubble.steerTarget, speed, 0);
+    const correction = Math.min(calmSmall ? 0.052 : 0.078, dt * (calmSmall ? 0.42 + d * 0.24 : 0.62 + d * 0.34));
+    easeVelocityToward(bubble, desired, dt, {
+      maxTurnRate: calmSmall ? 0.66 : bubble.isStream ? 0.82 : 0.94,
+      blend: correction,
+    });
+    return true;
+  }
+
+  function filteredBubbleSeparationDelta(bubble, dx, dy, maxStepScale = 0.035) {
+    if (!bubble || (dx === 0 && dy === 0)) return { dx: 0, dy: 0 };
+    const radius = Math.max(12, bubble.radius || bubble.baseRadius || 24);
+    let nextDx = dx;
+    let nextDy = dy;
+    const entering = !bubble.hasEntered && bubble.age < 1.35;
+
+    if (entering) {
+      const inward = edgeDirection(bubble.edge);
+      const outwardX = -inward.x;
+      const outwardY = -inward.y;
+      const outwardAmount = nextDx * outwardX + nextDy * outwardY;
+      if (outwardAmount > 0) {
+        nextDx -= outwardX * outwardAmount;
+        nextDy -= outwardY * outwardAmount;
+      }
+    }
+
+    const guard = radius * (entering ? 1.55 : 1.2);
+    const edgeDamp = entering ? 0 : 0.16;
+    if (bubble.x < guard && nextDx < 0) nextDx *= edgeDamp;
+    if (bubble.x > state.width - guard && nextDx > 0) nextDx *= edgeDamp;
+    if (bubble.y < guard && nextDy < 0) nextDy *= edgeDamp;
+    if (bubble.y > state.height - guard && nextDy > 0) nextDy *= edgeDamp;
+
+    const maxStep = Math.max(0.65, radius * (entering ? 0.022 : maxStepScale));
+    const length = Math.hypot(nextDx, nextDy);
+    if (length > maxStep) {
+      const scale = maxStep / length;
+      nextDx *= scale;
+      nextDy *= scale;
+    }
+    return { dx: nextDx, dy: nextDy };
+  }
+
+  function applyBubbleSeparationDelta(bubble, dx, dy, maxStepScale) {
+    const delta = filteredBubbleSeparationDelta(bubble, dx, dy, maxStepScale);
+    bubble.x += delta.dx;
+    bubble.y += delta.dy;
+  }
+
+  function separateBubbleFromNeighbors(bubble, index, d, dt) {
+    return;
+    let pushX = 0;
+    let pushY = 0;
+    for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
+      if (i === index) continue;
+      const other = state.bubbles[i];
+      if (other.age < 0) continue;
+      const dx = bubble.x - other.x;
+      const dy = bubble.y - other.y;
+      const softTrainContact = Boolean(other.islandChainId || bubble.islandChainId);
+      const customPathContact = Boolean(other.customPath || bubble.customPath);
+      const contactScale = softTrainContact ? 0.24 : customPathContact ? 0.38 : 0.56;
+      const minDistance = (bubble.radius + other.radius) * contactScale;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq >= minDistance * minDistance) continue;
+      const distance = Math.max(0.001, Math.sqrt(distanceSq));
+      const amount = ((minDistance - distance) / minDistance) * (softTrainContact ? 0.16 : customPathContact ? 0.38 : 1);
+      if (distance > 0.01) {
+        pushX += (dx / distance) * amount;
+        pushY += (dy / distance) * amount;
+      } else {
+        const angle = bubble.age * 2.3 + index;
+        pushX += Math.cos(angle) * amount;
+        pushY += Math.sin(angle) * amount;
+      }
+    }
+
+    if (pushX === 0 && pushY === 0) return;
+    const calmSmall = isCalmSmallBubble(bubble);
+    const entering = !bubble.hasEntered && bubble.age < 1.35;
+    const force = (entering ? 0.82 + d * 0.34 : calmSmall ? 1.28 + d * 0.62 : 1.56 + d * 0.82) * dt;
+    applyBubbleSeparationDelta(bubble, pushX * force, pushY * force, entering ? 0.014 : 0.022);
+  }
+
+  function spawnProtectionMassForRadius(radius) {
+    return Math.max(0.35, radius * radius * 0.00072);
+  }
+
+  function bubbleHasSpawnProtection(bubble) {
+    return bubble.age >= 0 && bubble.age <= spawnProtectionSeconds && !bubble.customPath;
+  }
+
+  function bubbleCanProtectSpawn(bubble) {
+    return bubble.age >= 0 && !bubble.customPath;
+  }
+
+  function resolveSpawnProtectionPair(a, b, dt) {
+    const aActive = bubbleHasSpawnProtection(a);
+    const bActive = bubbleHasSpawnProtection(b);
+    if ((!aActive && !bActive) || !bubbleCanProtectSpawn(a) || !bubbleCanProtectSpawn(b)) return;
+
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let distance = Math.hypot(dx, dy);
+    let nx = 1;
+    let ny = 0;
+    if (distance > 0.001) {
+      nx = dx / distance;
+      ny = dy / distance;
+    } else {
+      const angle = (a.uid - b.uid) * 1.37;
+      nx = Math.cos(angle);
+      ny = Math.sin(angle);
+      distance = 0.01;
+      dx = nx * distance;
+      dy = ny * distance;
+    }
+
+    const radiusSum = a.baseRadius + b.baseRadius;
+    const streamPair = a.isStream || b.isStream;
+    const largePair = a.baseRadius >= 42 || b.baseRadius >= 42;
+    const restScale = streamPair ? 0.72 : largePair ? 0.86 : 0.82;
+    const minDistance = radiusSum * restScale;
+    if (distance >= minDistance) return;
+
+    const aInvMass = aActive ? a.spawnProtectInvMass : 0;
+    const bInvMass = bActive ? b.spawnProtectInvMass : 0;
+    const totalInvMass = aInvMass + bInvMass;
+    if (totalInvMass <= 0) return;
+
+    const overlap = minDistance - distance;
+    const pressure = overlap / Math.max(minDistance, 1);
+    const stiffness = clamp(0.06 + pressure * 0.22, 0.06, spawnProtectionStiffness * 0.48);
+    const correction = (overlap * stiffness) / totalInvMass;
+    applyBubbleSeparationDelta(a, -nx * correction * aInvMass, -ny * correction * aInvMass, 0.016);
+    applyBubbleSeparationDelta(b, nx * correction * bInvMass, ny * correction * bInvMass, 0.016);
+  }
+
+  function solveSpawnProtection(dt) {
+    return;
+    const activeCount = state.bubbles.reduce((count, bubble) => count + (bubbleHasSpawnProtection(bubble) ? 1 : 0), 0);
+    if (activeCount <= 0) return;
+
+    for (let iteration = 0; iteration < spawnProtectionIterations; iteration += 1) {
+      for (let i = 0; i < state.bubbles.length; i += 1) {
+        const a = state.bubbles[i];
+        if (!bubbleCanProtectSpawn(a)) continue;
+        for (let j = i + 1; j < state.bubbles.length; j += 1) {
+          resolveSpawnProtectionPair(a, state.bubbles[j], dt);
+        }
+      }
+    }
+  }
+
+  function decayWallSquash(bubble, dt) {
+    bubble.wallSquash = Math.max(0, (bubble.wallSquash ?? 0) - dt * 4.9);
+    if (bubble.wallSquash <= 0.001) {
+      bubble.wallSquash = 0;
+    }
+  }
+
+  function resolveBubbleWallContact(bubble, nx, ny, penetration, d) {
+    if (penetration <= 0) return;
+    const radius = Math.max(12, bubble.radius || bubble.baseRadius || 24);
+    const calmSmall = isCalmSmallBubble(bubble);
+    const normalSpeed = bubble.vx * nx + bubble.vy * ny;
+    const movingIntoWall = normalSpeed < -16;
+    const deepOverlap = penetration > radius * 0.18;
+    const restitution = bubble.isStream ? 0.28 : calmSmall ? 0.34 : 0.4;
+    const tangentFriction = bubble.isStream ? 0.88 : 0.84;
+    const correction = Math.min(penetration, radius * 0.34) * (movingIntoWall ? 0.46 : deepOverlap ? 0.18 : 0);
+
+    bubble.x += nx * correction;
+    bubble.y += ny * correction;
+
+    if (movingIntoWall) {
+      const impulse = -(1 + restitution) * normalSpeed;
+      bubble.vx += nx * impulse;
+      bubble.vy += ny * impulse;
+
+      const tx = -ny;
+      const ty = nx;
+      const tangentSpeed = bubble.vx * tx + bubble.vy * ty;
+      bubble.vx += tx * tangentSpeed * (tangentFriction - 1);
+      bubble.vy += ty * tangentSpeed * (tangentFriction - 1);
+
+      const maxBounceSpeed = bubble.isStream ? 104 : calmSmall ? 88 : 118;
+      const speed = Math.hypot(bubble.vx, bubble.vy);
+      if (speed > maxBounceSpeed) {
+        const scale = maxBounceSpeed / speed;
+        bubble.vx *= scale;
+        bubble.vy *= scale;
+      }
+    }
+
+    const impact = Math.max(0, -normalSpeed);
+    if (!movingIntoWall && !deepOverlap) return;
+    const squash = clamp((penetration / radius) * 0.3 + impact / (260 + d * 90) * 0.14, 0.055, calmSmall ? 0.22 : 0.28);
+    if (squash >= (bubble.wallSquash ?? 0)) {
+      bubble.wallSquash = squash;
+      bubble.wallSquashNx = nx;
+      bubble.wallSquashNy = ny;
+    }
+  }
+
+  function applySoftWallBounce(bubble, dt, d) {
+    decayWallSquash(bubble, dt);
+    if (!bubble.hasEntered || bubble.customPath) return;
+    if (bubble.isBleach && bubble.bleachEscaping) return;
+
+    const radius = Math.max(12, bubble.radius || bubble.baseRadius || 24);
+    const contact = radius * (bubble.isStream ? 0.46 : 0.54);
+    resolveBubbleWallContact(bubble, 1, 0, contact - bubble.x, d);
+    resolveBubbleWallContact(bubble, -1, 0, bubble.x - (state.width - contact), d);
+    resolveBubbleWallContact(bubble, 0, 1, contact - bubble.y, d);
+    resolveBubbleWallContact(bubble, 0, -1, bubble.y - (state.height - contact), d);
+  }
+
+  function tryPopAt(x, y, isTap, pointerId = null) {
+    for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
+      const bubble = state.bubbles[i];
+      if (bubble.age < 0) {
+        continue;
+      }
+      const dx = x - bubble.x;
+      const dy = y - bubble.y;
+      const latePrecision = smoothstep(0.48, 1, difficulty());
+      const hitPadding = isTap ? 9 - latePrecision * 2.2 : 15 - latePrecision * 3.4;
+      const stageTarget = isStageTargetBubble(bubble);
+      const minTargetHitRadius = stageTarget ? (isCalmSmallBubble(bubble) ? 28 : 32) : 0;
+      const hitRadius = Math.max(bubble.radius + hitPadding, minTargetHitRadius + (isTap ? 0 : 4));
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        if (bubble.isCharge) {
+          if (bubble.age < (bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds)) {
+            return true;
+          }
+          if (!isTap) {
+            return true;
+          }
+        }
+        if (bubble.isCat) {
+          if (isTap) {
+            hitCatBubble(bubble, pointerId, x, y);
+          }
+          return true;
+        }
+        if (canPopBubble(bubble, x, y)) {
+          if (customBubbleNeedsClear(bubble)) {
+            if (isTap) {
+              hitCustomBubble(bubble, pointerId, x, y);
+            }
+          } else {
+            popBubble(bubble, i, x, y);
+          }
+        } else {
+          missBubble(bubble, i, isTap);
+        }
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function handlePointerDown(event) {
+    event.preventDefault();
+    if (!state.running) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    state.activePointerId = event.pointerId;
+    state.lastSwipeX = x;
+    state.lastSwipeY = y;
+    canvas.setPointerCapture?.(event.pointerId);
+    tryPopAt(x, y, true, event.pointerId);
+  }
+
+  function handlePointerMove(event) {
+    event.preventDefault();
+    if (!state.running || state.activePointerId !== event.pointerId) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (state.catHoldPointerId === event.pointerId) {
+      state.catHoldX = x;
+      state.catHoldY = y;
+    }
+    if (state.customHoldPointerId === event.pointerId) {
+      state.customHoldX = x;
+      state.customHoldY = y;
+    }
+    const dx = x - state.lastSwipeX;
+    const dy = y - state.lastSwipeY;
+    const distance = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(distance / 18));
+
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+      tryPopAt(state.lastSwipeX + dx * t, state.lastSwipeY + dy * t, false);
+    }
+
+    state.lastSwipeX = x;
+    state.lastSwipeY = y;
+  }
+
+  function handlePointerEnd(event) {
+    if (state.activePointerId === event.pointerId) {
+      state.activePointerId = null;
+      canvas.releasePointerCapture?.(event.pointerId);
+    }
+    if (state.catHoldPointerId === event.pointerId) {
+      state.catHoldPointerId = null;
+      state.catHoldBubbleId = null;
+    }
+    if (state.customHoldPointerId === event.pointerId) {
+      state.customHoldPointerId = null;
+      state.customHoldBubbleUid = null;
+    }
+  }
+
+  function update(dt) {
+    if (!state.running) return;
+
+    state.elapsed += dt * 1000;
+    updateBackgroundFlow(dt);
+    maybeAdvanceStage();
+    maybeActivateCatBubbleSystem();
+    maybeSpawnChargeBubble();
+    const d = difficulty();
+    const tier = difficultyTier(d);
+    if (tier > state.difficultyTier) {
+      triggerDifficultyUp(tier);
+    }
+    updateHiddenLeak(dt);
+    drainWater(dt);
+    state.flash = Math.max(0, state.flash - dt * 1.9);
+    state.mistakeFlash = Math.max(0, state.mistakeFlash - dt * 4.2);
+    state.difficultyFlash = Math.max(0, state.difficultyFlash - dt * 0.9);
+    for (let i = state.difficultyBanners.length - 1; i >= 0; i -= 1) {
+      const banner = state.difficultyBanners[i];
+      if (state.elapsed - banner.startAt >= banner.life) {
+        state.difficultyBanners.splice(i, 1);
+      }
+    }
+    state.comboPulse = Math.max(0, state.comboPulse - dt * 2.6);
+    if (state.combo > 1) {
+      comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
+      comboChip.classList.remove("expiring");
+    }
+
+    let spawnStepsThisFrame = 0;
+    while (state.elapsed >= state.nextSpawnAt && spawnStepsThisFrame < 1) {
+      spawnWave();
+      spawnStepsThisFrame += 1;
+    }
+    if (state.elapsed >= state.nextSpawnAt) {
+      state.nextSpawnAt = state.elapsed + 90;
+    }
+    maybeAdvanceStage();
+    maybeActivateCatBubbleSystem();
+    updateCatBubbleHold(dt);
+    updateCustomBubbleHold(dt);
+
+    for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
+      const bubble = state.bubbles[i];
+      bubble.age += dt;
+      if (bubble.age < 0) {
+        continue;
+      }
+      if (bubble.isBleach) {
+        const expireAt = bubble.bleachExpireAt || state.elapsed + bleachLifetimeMs;
+        if (!bubble.bleachEscaping && state.elapsed >= expireAt - 950) {
+          setBleachDash(bubble, true);
+        }
+        if (state.elapsed >= expireAt) {
+          state.ripples.push({
+            x: bubble.x,
+            y: bubble.y,
+            radius: bubble.radius * 0.48,
+            age: 0,
+            life: 0.24,
+            color: whiteTone.light,
+            power: 0.5,
+          });
+          state.bubbles.splice(i, 1);
+          continue;
+        }
+      }
+      if (bubble.isWhite && bubble.whiteUntil > 0 && state.elapsed >= bubble.whiteUntil) {
+        restoreDecoloredBubble(bubble);
+      }
+      if (bubble.isCharge) {
+        if (updateChargeBubble(bubble, i)) {
+          continue;
+        }
+        bubble.wobble += bubble.wobbleSpeed * dt;
+        continue;
+      }
+      bubble.wobble += bubble.wobbleSpeed * dt;
+      updateBubbleMatchDwell(bubble, dt);
+      const pathExitOnly = bubble.exitAfterPath && bubble.pathComplete;
+      if (!bubble.customPath && !pathExitOnly && !bubble.pathLockedMotion) {
+        steerBubbleTowardMatch(bubble, dt, d);
+        keepBubbleMoving(bubble, d, dt);
+      }
+      const speed = Math.max(1, Math.hypot(bubble.vx, bubble.vy));
+      const streamWave = bubble.isStream
+        ? Math.sin(bubble.age * bubble.streamFrequency + bubble.streamPhase) *
+          bubble.streamAmplitude *
+          (bubble.streamPattern === "spray" ? 0.32 : 0.68)
+        : 0;
+      const perpX = -bubble.vy / speed;
+      const perpY = bubble.vx / speed;
+      const calmSmall = isCalmSmallBubble(bubble);
+      const swayRange = calmSmall ? (bubble.isStream ? 2.2 + d * 2.4 : 5 + d * 5) : bubble.isStream ? 4 + d * 5 : 12 + d * 16;
+      const sway = Math.sin(bubble.wobble) * swayRange;
+      const arcPush = bubble.arcBend
+        ? Math.sin(clamp(bubble.age / Math.max(0.4, bubble.arcLife), 0, 1) * Math.PI) * bubble.arcBend
+        : 0;
+      const curvePush = streamWave + arcPush;
+      if (!advanceCustomPathBubble(bubble, dt)) {
+        bubble.x += (bubble.vx + sway * bubble.drift + perpX * curvePush) * dt;
+        bubble.y += (bubble.vy + (bubble.isStream ? 0 : Math.cos(bubble.wobble * 0.7) * 10) + perpY * curvePush) * dt;
+      }
+      bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 4.2) * 0.028);
+
+      const entered =
+        bubble.x > bubble.radius * 0.25 &&
+        bubble.x < state.width - bubble.radius * 0.25 &&
+        bubble.y > bubble.radius * 0.25 &&
+        bubble.y < state.height - bubble.radius * 0.25;
+      if (entered) {
+        bubble.hasEntered = true;
+      } else if (!bubble.hasEntered && bubble.age > 0.18) {
+        const inward = edgeDirection(bubble.edge);
+        const currentSpeed = Math.max(40, Math.hypot(bubble.vx, bubble.vy));
+        bubble.vx += (inward.x * currentSpeed - bubble.vx) * 0.12;
+        bubble.vy += (inward.y * currentSpeed - bubble.vy) * 0.12;
+      }
+
+      const outside =
+        bubble.x < -bubble.radius * 2 ||
+        bubble.x > state.width + bubble.radius * 2 ||
+        bubble.y < -bubble.radius * 2 ||
+        bubble.y > state.height + bubble.radius * 2;
+
+      if (outside && needsFairColorPass(bubble) && bubble.pathComplete) {
+        penalizeStageMistake(bubble, "miss");
+        state.bubbles.splice(i, 1);
+        continue;
+      }
+
+      const exitProtected = bubble.exitAfterPath && bubble.pathComplete;
+      if (!exitProtected) {
+        applySoftWallBounce(bubble, dt, d);
+      }
+
+      if (!exitProtected && !bubble.pathLockedMotion) {
+        pullBubbleBackForFairPass(bubble, d, dt);
+      }
+      if (outside && needsFairColorPass(bubble) && !exitProtected) {
+        if (bubble.pathComplete || bubble.age > 10.5) {
+          penalizeStageMistake(bubble, "miss");
+          state.bubbles.splice(i, 1);
+        }
+        continue;
+      }
+
+      if (outside && (bubble.hasEntered || bubble.age > 4.5)) {
+        penalizeStageMistake(bubble, "miss");
+        state.bubbles.splice(i, 1);
+      }
+    }
+
+    for (let i = state.blasts.length - 1; i >= 0; i -= 1) {
+      const blast = state.blasts[i];
+      blast.age += dt;
+      blast.radius += blast.speed * dt;
+
+      if (!blast.decorative) {
+        for (let j = state.bubbles.length - 1; j >= 0; j -= 1) {
+          const bubble = state.bubbles[j];
+          if (bubble.age < 0 || isSpecialBubble(bubble)) {
+            continue;
+          }
+          const dx = bubble.x - blast.x;
+          const dy = bubble.y - blast.y;
+          const hitRadius = blast.radius + bubble.radius * 0.45;
+          if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+            burstBubbleByBlast(bubble, j);
+          }
+        }
+      }
+
+      if (blast.radius >= blast.maxRadius || blast.age >= blast.life) {
+        state.blasts.splice(i, 1);
+      }
+    }
+
+    for (let i = state.particles.length - 1; i >= 0; i -= 1) {
+      const particle = state.particles[i];
+      particle.age += dt;
+      particle.vy += particle.gravity * dt;
+      particle.vx *= 0.988;
+      particle.x += particle.vx * dt;
+      particle.y += particle.vy * dt;
+      if (particle.age >= particle.life) {
+        state.particles.splice(i, 1);
+      }
+    }
+
+    for (let i = state.floaters.length - 1; i >= 0; i -= 1) {
+      const floater = state.floaters[i];
+      floater.age += dt;
+      floater.y += floater.vy * dt;
+      floater.vy *= 0.985;
+      if (floater.age >= floater.life) {
+        state.floaters.splice(i, 1);
+      }
+    }
+
+    for (let i = state.ripples.length - 1; i >= 0; i -= 1) {
+      const ripple = state.ripples[i];
+      ripple.age += dt;
+      ripple.radius += dt * 220;
+      if (ripple.age >= ripple.life) {
+        state.ripples.splice(i, 1);
+      }
+    }
+
+    for (let i = state.hints.length - 1; i >= 0; i -= 1) {
+      const hint = state.hints[i];
+      hint.age += dt;
+      hint.alpha -= dt * 0.48;
+      if (hint.alpha <= 0) {
+        state.hints.splice(i, 1);
+      }
+    }
+
+    if (isWaterGameOver()) {
+      endGame();
+    }
+
+    updateHud();
+  }
+
+  function backgroundBoundaryGuideX(y, time) {
+    if (!state.width) return 0;
+    let bestX = state.width * 0.5;
+    let bestDistance = Infinity;
+    const samples = 34;
+    const left = -state.width * 0.18;
+    const right = state.width * 1.18;
+    for (let i = 0; i <= samples; i += 1) {
+      const x = left + ((right - left) * i) / samples;
+      const distance = Math.abs(backgroundSignedAt(x, y, time));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestX = x;
+      }
+    }
+    return bestX;
+  }
+
+  function backgroundBoundaryXAtY(y, time, preferredX = null) {
+    return backgroundBoundaryGuideX(y, time);
+  }
+
+  function backgroundBoundaryPoints(time) {
+    const layout = backgroundLayoutAt();
+    const axes = backgroundAxes(layout);
+    const steps = 72;
+    const span = 1.12;
+    const points = [];
+    for (let i = 0; i <= steps; i += 1) {
+      const tangent = -span + (span * 2 * i) / steps;
+      const normal = backgroundBoundaryOffsetAt(tangent, layout, time);
+      const px = axes.tx * tangent + axes.nx * normal;
+      const py = axes.ty * tangent + axes.ny * normal;
+      points.push({
+        x: (px + 0.5) * state.width,
+        y: (py + 0.5) * state.height,
+      });
+    }
+    return points;
+  }
+
+  function traceBackgroundBoundary(points) {
+    if (!points.length) return;
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length - 1; i += 1) {
+      const current = points[i];
+      const next = points[i + 1];
+      ctx.quadraticCurveTo(current.x, current.y, (current.x + next.x) * 0.5, (current.y + next.y) * 0.5);
+    }
+    const last = points[points.length - 1];
+    ctx.lineTo(last.x, last.y);
+  }
+
+  function drawBackgroundBoundary(time, d, points = null) {
+    const boundaryPoints = points ?? backgroundBoundaryPoints(time);
+    const levelAmount = clamp((displayDifficultyLevel() - 1) / 9, 0, 1);
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    traceBackgroundBoundary(boundaryPoints);
+    ctx.shadowColor = colorWithAlpha("#ffffff", 0.11);
+    ctx.shadowBlur = 3 + levelAmount * 2;
+    ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.12 + levelAmount * 0.035);
+    ctx.lineWidth = 2.2 + levelAmount * 0.9;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.08 + levelAmount * 0.02);
+    ctx.lineWidth = 0.65;
+    ctx.stroke();
+    const cornerPower = levelThreeCornerPower();
+    if (cornerPower > 0) {
+      ctx.setLineDash([24, 28]);
+      ctx.lineDashOffset = -time * 0.018;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha("#eafcff", 0.095 * cornerPower);
+      ctx.lineWidth = 4.4;
+      ctx.stroke();
+      ctx.setLineDash([10, 34]);
+      ctx.lineDashOffset = time * 0.012;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha(boundaryTone, 0.055 * cornerPower);
+      ctx.lineWidth = 2.1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const tidePower = levelFiveTidePower();
+    if (tidePower > 0) {
+      ctx.setLineDash([18, 24]);
+      ctx.lineDashOffset = -time * 0.028;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha("#eafcff", 0.13 * tidePower);
+      ctx.lineWidth = 5.2;
+      ctx.stroke();
+      ctx.setLineDash([8, 28]);
+      ctx.lineDashOffset = time * 0.018;
+      ctx.beginPath();
+      traceBackgroundBoundary(boundaryPoints);
+      ctx.strokeStyle = colorWithAlpha("#20384f", 0.06 * tidePower);
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
+  function drawBackground() {
+    if (window.PaopaoBackgroundEngine) {
+      const profile = currentPerformanceProfile();
+      window.PaopaoBackgroundEngine.render(ctx, backgroundEngineTimeSeconds(), state.width, state.height, {
+        scale: profile.backgroundScale,
+        fps: profile.backgroundFps,
+        frameSkip: profile.backgroundFrameSkip,
+        contours: profile.contours,
+      });
+      return;
+    }
+    const time = state.visualTime;
+    const d = difficulty();
+    const openAmount = state.openUntil > state.elapsed ? 0.16 : 0;
+    const points = backgroundBoundaryPoints(time);
+    const axes = backgroundAxes();
+    const blue = mixHex(backgroundPalette[0].color, openTone.light, openAmount * 0.08);
+    const pink = mixHex(backgroundPalette[1].color, openTone.light, openAmount * 0.08);
+    const far = 2.2;
+
+    ctx.fillStyle = pink;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    ctx.save();
+    ctx.beginPath();
+    traceBackgroundBoundary(points);
+    const last = points[points.length - 1];
+    const first = points[0];
+    ctx.lineTo(last.x - axes.nx * state.width * far, last.y - axes.ny * state.height * far);
+    ctx.lineTo(first.x - axes.nx * state.width * far, first.y - axes.ny * state.height * far);
+    ctx.closePath();
+    ctx.fillStyle = blue;
+    ctx.fill();
+    ctx.restore();
+
+    drawBackgroundBoundary(time, d, points);
+  }
+
+  function drawHints() {
+    state.hints.forEach((hint) => {
+      const alpha = Math.max(0, hint.alpha);
+      const size = hint.size ?? Math.min(state.width, state.height) * 0.14;
+      const depth = hint.depth ?? Math.max(18, size * 0.42);
+      const x = hint.x ?? (hint.edge === "right" ? state.width : hint.edge === "left" ? 0 : state.width * 0.5);
+      const y = hint.y ?? (hint.edge === "bottom" ? state.height : hint.edge === "top" ? 0 : state.height * 0.5);
+      const pulse = 0.86 + Math.sin(hint.age * 8.5) * 0.08;
+      const glow = ctx.createRadialGradient(x, y, 1, x, y, size * pulse);
+      glow.addColorStop(0, colorWithAlpha(hint.color, alpha * 0.68));
+      glow.addColorStop(0.38, colorWithAlpha(hint.color, alpha * 0.26));
+      glow.addColorStop(1, colorWithAlpha(hint.color, 0));
+
+      ctx.save();
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      if (hint.edge === "left" || hint.edge === "right") {
+        ctx.ellipse(x, y, depth, size, 0, 0, Math.PI * 2);
+      } else {
+        ctx.ellipse(x, y, size, depth, 0, 0, Math.PI * 2);
+      }
+      ctx.fill();
+
+      ctx.lineCap = "round";
+      ctx.strokeStyle = colorWithAlpha(hint.color, alpha * 0.52);
+      ctx.lineWidth = Math.max(2.5, Math.min(7, depth * 0.2));
+      ctx.beginPath();
+      if (hint.edge === "left") {
+        ctx.moveTo(1, y - size * 0.36);
+        ctx.lineTo(1, y + size * 0.36);
+      } else if (hint.edge === "right") {
+        ctx.moveTo(state.width - 1, y - size * 0.36);
+        ctx.lineTo(state.width - 1, y + size * 0.36);
+      } else if (hint.edge === "top") {
+        ctx.moveTo(x - size * 0.36, 1);
+        ctx.lineTo(x + size * 0.36, 1);
+      } else {
+        ctx.moveTo(x - size * 0.36, state.height - 1);
+        ctx.lineTo(x + size * 0.36, state.height - 1);
+      }
+      ctx.stroke();
+
+      const beadRadius = clamp(depth * 0.22, 5, 11);
+      ctx.beginPath();
+      ctx.arc(x, y, beadRadius, 0, Math.PI * 2);
+      ctx.fillStyle = colorWithAlpha(hint.color, alpha * 0.46);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, beadRadius * 0.48, 0, Math.PI * 2);
+      ctx.fillStyle = colorWithAlpha("#ffffff", alpha * 0.36);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function drawProceduralBubbleBody(body, color, x, y, r) {
+    ctx.shadowColor = colorWithAlpha(color.deep, 0.2);
+    ctx.shadowBlur = r * 0.34;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = body;
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = Math.max(1.5, r * 0.065);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.46)";
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.ellipse(x - r * 0.28, y - r * 0.34, r * 0.22, r * 0.13, -0.55, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(x + r * 0.26, y + r * 0.25, r * 0.58, Math.PI * 0.05, Math.PI * 0.55);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+    ctx.lineWidth = Math.max(1, r * 0.045);
+    ctx.stroke();
+  }
+
+  function drawBubbleSpriteBody(bubble, color, x, y, r, alpha) {
+    const profile = currentPerformanceProfile();
+    const detail = profile.bubbleDetail;
+    const spriteIndex = bubble.spriteIndex ?? 0;
+    const variant = spriteIndex % bubbleSpriteCols;
+    const aspect =
+      variant === 1
+        ? { x: 0.92, y: 1.1 }
+        : variant === 3
+          ? { x: 1.06, y: 0.95 }
+          : variant === 4
+            ? { x: 0.96, y: 1.08 }
+            : { x: 1, y: 1 };
+    const squash = Math.sin(bubble.age * 1.32 + bubble.skinPhase) * (bubble.isStream ? 0.038 : 0.06) * detail;
+    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018 * detail;
+    const driftRotation =
+      bubble.skinRotation +
+      Math.sin(bubble.wobble * 0.54 + bubble.skinPhase) * 0.16 * detail +
+      bubble.age * bubble.skinSpin * 0.07;
+    const points = bubble.isStream ? (detail < 0.65 ? 7 : detail < 0.9 ? 8 : 10) : detail < 0.65 ? 9 : detail < 0.9 ? 11 : 14;
+    const wobbleAmount = (bubble.isStream ? 0.04 : 0.068) * detail;
+
+    const traceShape = (scale = 1) => {
+      ctx.beginPath();
+      for (let i = 0; i <= points; i += 1) {
+        const angle = (i / points) * Math.PI * 2;
+        const wobble =
+          Math.sin(angle * 2 + bubble.age * 1.35 + bubble.skinPhase) * wobbleAmount +
+          Math.sin(angle * 3.2 - bubble.age * 0.92 + bubble.skinPhase * 0.7) * wobbleAmount * 0.52;
+        const bias = variant === 4 ? Math.sin(angle - 0.8) * 0.045 : variant === 3 ? Math.sin(angle * 4 + 0.3) * 0.025 : 0;
+        const rr = r * scale * (1 + wobble + bias + pulse);
+        const px = Math.cos(angle) * rr;
+        const py = Math.sin(angle) * rr;
+        if (i === 0) {
+          ctx.moveTo(px, py);
+        } else {
+          const prevAngle = ((i - 0.5) / points) * Math.PI * 2;
+          const prevWobble =
+            Math.sin(prevAngle * 2 + bubble.age * 1.35 + bubble.skinPhase) * wobbleAmount +
+            Math.sin(prevAngle * 3.2 - bubble.age * 0.92 + bubble.skinPhase * 0.7) * wobbleAmount * 0.52;
+          const prevBias = variant === 4 ? Math.sin(prevAngle - 0.8) * 0.045 : variant === 3 ? Math.sin(prevAngle * 4 + 0.3) * 0.025 : 0;
+          const cr = r * scale * (1 + prevWobble + prevBias + pulse);
+          ctx.quadraticCurveTo(Math.cos(prevAngle) * cr, Math.sin(prevAngle) * cr, px, py);
+        }
+      }
+      ctx.closePath();
+    };
+
+    const drawColorMask = () => {
+      if (bubble.isWhite || bubble.colorIndex < 0) return;
+
+      ctx.save();
+      traceShape(1.02);
+      ctx.clip();
+      const tint = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.1, 0, 0, r * 1.08);
+      tint.addColorStop(0, colorWithAlpha(color.light, 0.16));
+      tint.addColorStop(0.42, colorWithAlpha(color.color, 0.34));
+      tint.addColorStop(1, colorWithAlpha(color.deep, 0.48));
+      ctx.fillStyle = tint;
+      ctx.fillRect(-r * 1.25, -r * 1.25, r * 2.5, r * 2.5);
+      ctx.restore();
+
+      traceShape(1.04);
+      ctx.strokeStyle = colorWithAlpha(color.deep, 0.56);
+      ctx.lineWidth = Math.max(1.4, r * 0.045);
+      ctx.stroke();
+      traceShape(0.82);
+      ctx.strokeStyle = colorWithAlpha(color.light, 0.34);
+      ctx.lineWidth = Math.max(1, r * 0.025);
+      ctx.stroke();
+    };
+
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.translate(x, y);
+    ctx.rotate(driftRotation);
+    ctx.scale(aspect.x * (1 + squash), aspect.y * (1 - squash * 0.48));
+
+    const frameSetIndex = variant % bubbleSpriteFramePages.length;
+    const frameColorRow = clamp(Math.floor(spriteIndex / bubbleSpriteCols), 0, bubbleSpriteFramePages[frameSetIndex].length - 1);
+    const animationProgress = ((bubble.age % bubbleSpriteAnimationSeconds) + bubbleSpriteAnimationSeconds) % bubbleSpriteAnimationSeconds;
+    const animationFrame = Math.floor((animationProgress / bubbleSpriteAnimationSeconds) * bubbleSpriteAnimationFrames) % bubbleSpriteAnimationFrames;
+    const animationPage = Math.floor(animationFrame / bubbleSpriteAnimationCols);
+    const animationCol = animationFrame % bubbleSpriteAnimationCols;
+    const bubbleFramePage = bubbleSpriteFramePages[frameSetIndex]?.[frameColorRow]?.[animationPage];
+    if (bubbleFramePage?.complete && bubbleFramePage.naturalWidth > 0) {
+      const sx = animationCol * bubbleSpriteCell;
+      const imageRadius = r * 1.11;
+
+      ctx.shadowColor = "rgba(4, 35, 64, 0.16)";
+      ctx.shadowBlur = r * (detail < 0.65 ? 0.08 : 0.14);
+      ctx.drawImage(
+        bubbleFramePage,
+        sx,
+        0,
+        bubbleSpriteCell,
+        bubbleSpriteCell,
+        -imageRadius,
+        -imageRadius,
+        imageRadius * 2,
+        imageRadius * 2,
+      );
+      ctx.shadowBlur = 0;
+      drawColorMask();
+
+      if (bubble.isWhite) {
+        traceShape(1.03);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.56)";
+        ctx.fill();
+      } else if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb) {
+        traceShape(1.03);
+        ctx.fillStyle = colorWithAlpha(color.light, 0.08);
+        ctx.fill();
+      }
+
+      ctx.restore();
+      return true;
+    }
+
+    if (bubbleAtlas.complete && bubbleAtlas.naturalWidth > 0) {
+      const fullGifAtlasWidth = bubbleSpriteCell * bubbleSpriteAnimationCols;
+      const fullGifAtlasHeight = bubbleSpriteCell * bubbleSpriteAnimationRows * 2;
+      const usesFullGifAtlas = bubbleAtlas.naturalWidth >= fullGifAtlasWidth && bubbleAtlas.naturalHeight >= fullGifAtlasHeight;
+      const fallbackAnimationFrame = usesFullGifAtlas ? animationFrame : 0;
+      const colorRow = Math.max(0, Math.floor(spriteIndex / bubbleSpriteCols));
+      const sx = (usesFullGifAtlas ? fallbackAnimationFrame % bubbleSpriteAnimationCols : variant) * bubbleSpriteCell;
+      const sy =
+        (usesFullGifAtlas
+          ? colorRow * bubbleSpriteAnimationRows + Math.floor(fallbackAnimationFrame / bubbleSpriteAnimationCols)
+          : colorRow) * bubbleSpriteCell;
+      const imageRadius = r * 1.11;
+
+      ctx.shadowColor = "rgba(4, 35, 64, 0.18)";
+      ctx.shadowBlur = r * (detail < 0.65 ? 0.1 : 0.18);
+      ctx.drawImage(
+        bubbleAtlas,
+        sx,
+        sy,
+        bubbleSpriteCell,
+        bubbleSpriteCell,
+        -imageRadius,
+        -imageRadius,
+        imageRadius * 2,
+        imageRadius * 2,
+      );
+      ctx.shadowBlur = 0;
+
+      if (bubble.isWhite) {
+        traceShape(1.03);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.56)";
+        ctx.fill();
+      } else if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb) {
+        traceShape(1.03);
+        ctx.fillStyle = colorWithAlpha(color.light, 0.08);
+        ctx.fill();
+      }
+
+      ctx.restore();
+      return true;
+    }
+
+    ctx.shadowColor = colorWithAlpha(color.deep, 0.26);
+    ctx.shadowBlur = r * (detail < 0.65 ? 0.2 : 0.44);
+    traceShape(1.02);
+    const body = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, 0, 0, r * 1.12);
+    body.addColorStop(0, "rgba(255, 255, 255, 0.94)");
+    body.addColorStop(0.22, colorWithAlpha(color.light, 0.76));
+    body.addColorStop(0.62, colorWithAlpha(color.color, bubble.isWhite ? 0.25 : 0.42));
+    body.addColorStop(1, colorWithAlpha(color.deep, 0.58));
+    ctx.fillStyle = body;
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.save();
+    traceShape(1.03);
+    ctx.clip();
+    if (profile.textureOverlay && bubbleAtlas.complete && bubbleAtlas.naturalWidth > 0) {
+      const sx = (spriteIndex % bubbleSpriteCols) * bubbleSpriteCell;
+      const sy = Math.floor(spriteIndex / bubbleSpriteCols) * bubbleSpriteCell;
+      const imageRadius = r * 1.55;
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha *= 0.28;
+      ctx.drawImage(
+        bubbleAtlas,
+        sx,
+        sy,
+        bubbleSpriteCell,
+        bubbleSpriteCell,
+        -imageRadius,
+        -imageRadius,
+        imageRadius * 2,
+        imageRadius * 2,
+      );
+    }
+    if (detail >= 0.65) {
+      const sheen = ctx.createLinearGradient(-r, -r, r, r);
+      sheen.addColorStop(0, "rgba(255,255,255,0.34)");
+      sheen.addColorStop(0.28, "rgba(255,255,255,0)");
+      sheen.addColorStop(0.72, "rgba(255,255,255,0.12)");
+      sheen.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha *= 0.7;
+      ctx.fillStyle = sheen;
+      ctx.fillRect(-r * 1.4, -r * 1.4, r * 2.8, r * 2.8);
+    }
+    ctx.restore();
+
+    if (bubble.isWhite) {
+      ctx.save();
+      traceShape(1.02);
+      ctx.clip();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+      ctx.fillRect(-r * 1.5, -r * 1.5, r * 3, r * 3);
+      ctx.restore();
+    } else if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb) {
+      ctx.save();
+      traceShape(1.02);
+      ctx.clip();
+      ctx.fillStyle = colorWithAlpha(color.light, 0.14);
+      ctx.fillRect(-r * 1.5, -r * 1.5, r * 3, r * 3);
+      ctx.restore();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    traceShape(1.06);
+    ctx.strokeStyle = colorWithAlpha(color.deep, bubble.isWhite ? 0.16 : 0.22);
+    ctx.lineWidth = Math.max(1.4, r * 0.07);
+    ctx.stroke();
+    traceShape(1.01);
+    ctx.strokeStyle = colorWithAlpha(color.light, 0.68);
+    ctx.lineWidth = Math.max(1.4, r * 0.062);
+    ctx.stroke();
+    if (detail >= 0.78) {
+      traceShape(0.92);
+      ctx.strokeStyle = "rgba(255,255,255,0.28)";
+      ctx.lineWidth = Math.max(1, r * 0.032);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha *= 0.72;
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.35, -r * 0.38, r * 0.25, r * 0.08, -0.62, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    if (detail >= 0.6) {
+      ctx.beginPath();
+      ctx.arc(r * 0.36, r * 0.22, r * 0.14, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.fill();
+    }
+    ctx.restore();
+
+    return true;
+  }
+
+  function drawBombTexture(bubble, x, y, r, alpha = 1) {
+    if (!bombBubbleImage.complete || bombBubbleImage.naturalWidth <= 0) return false;
+    const aspect = bombBubbleImage.naturalHeight / bombBubbleImage.naturalWidth;
+    const drawWidth = r * 2.62;
+    const drawHeight = drawWidth * aspect;
+    const bodyCenterY = drawHeight * 0.64;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(bubble.wobble * 0.8) * 0.06 + bubble.spin * 0.035);
+    ctx.globalAlpha *= alpha;
+    ctx.shadowColor = colorWithAlpha(bombTone.light, 0.38);
+    ctx.shadowBlur = r * 0.55;
+    ctx.drawImage(bombBubbleImage, -drawWidth * 0.5, -bodyCenterY, drawWidth, drawHeight);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    return true;
+  }
+
+  function drawBleachTexture(bubble, x, y, r, alpha = 1) {
+    if (!bleachBubbleImage.complete || bleachBubbleImage.naturalWidth <= 0) return false;
+    const drawSize = r * 2.38;
+    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(bubble.wobble * 0.7 + bubble.skinPhase) * 0.045 + bubble.spin * 0.018);
+    ctx.scale(1 + pulse, 1 - pulse * 0.6);
+    ctx.globalAlpha *= alpha;
+    ctx.drawImage(bleachBubbleImage, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
+    ctx.restore();
+    return true;
+  }
+
+  function drawChargeBubbleTexture(bubble, x, y, r, alpha = 1) {
+    const warningSeconds = bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds;
+    const fuseSeconds = bubble.chargeFuseSeconds ?? chargeBubbleFuseMaxSeconds;
+    const warning = bubble.age < warningSeconds;
+    const activeAge = Math.max(0, bubble.age - warningSeconds);
+    const progress = warning ? 0 : clamp(activeAge / Math.max(0.001, fuseSeconds), 0, 1);
+    const pulse = 0.5 + Math.sin(state.visualTime / (warning ? 86 : 120)) * 0.5;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalAlpha *= alpha;
+
+    if (warning) {
+      const p = smoothstep(0, warningSeconds, bubble.age);
+      const shellRadius = Math.max(2.4, r);
+      const halo = shellRadius * (1.48 + p * 0.18);
+      const glow = ctx.createRadialGradient(0, 0, shellRadius * 0.18, 0, 0, halo);
+      glow.addColorStop(0, `rgba(203, 240, 246, ${0.1 + pulse * 0.025})`);
+      glow.addColorStop(0.58, `rgba(128, 208, 224, ${0.045 + p * 0.02})`);
+      glow.addColorStop(1, "rgba(203, 240, 246, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(0, 0, halo, 0, Math.PI * 2);
+      ctx.fill();
+
+      const shell = ctx.createRadialGradient(-shellRadius * 0.3, -shellRadius * 0.36, shellRadius * 0.08, 0, 0, shellRadius);
+      shell.addColorStop(0, `rgba(244, 253, 255, ${0.42 + p * 0.12})`);
+      shell.addColorStop(0.34, `rgba(188, 235, 244, ${0.14 + p * 0.08})`);
+      shell.addColorStop(0.78, `rgba(122, 205, 224, ${0.08 + p * 0.06})`);
+      shell.addColorStop(1, `rgba(235, 251, 255, ${0.2 + p * 0.08})`);
+      ctx.fillStyle = shell;
+      ctx.beginPath();
+      ctx.arc(0, 0, shellRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.lineWidth = Math.max(0.7, shellRadius * 0.09);
+      ctx.strokeStyle = `rgba(226, 249, 252, ${0.34 + p * 0.1})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, shellRadius * 0.94, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = `rgba(241, 252, 255, ${0.34 + p * 0.08})`;
+      ctx.beginPath();
+      ctx.arc(-shellRadius * 0.28, -shellRadius * 0.34, Math.max(0.7, shellRadius * 0.13), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return true;
+    }
+
+    const danger = smoothstep(0.68, 1, progress);
+    const bodyReveal = smoothstep(0, 0.16, progress);
+    ctx.globalAlpha *= 0.58 + bodyReveal * 0.42;
+    const wobble = Math.sin(state.visualTime / 150 + bubble.skinPhase) * (0.018 + danger * 0.014);
+    const breath = Math.sin(state.visualTime / 104 + bubble.skinPhase * 0.7) * (0.012 + danger * 0.012);
+
+    ctx.rotate(Math.sin(state.visualTime / 430 + bubble.skinPhase) * 0.045);
+    ctx.scale(1 + wobble + breath, 1 - wobble * 0.5 + breath * 0.32);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const aura = ctx.createRadialGradient(0, 0, r * 0.35, 0, 0, r * 1.34);
+    aura.addColorStop(0, `rgba(255, 255, 255, ${0.14 + progress * 0.08})`);
+    aura.addColorStop(0.58, `rgba(142, 224, 255, ${0.08 + danger * 0.1})`);
+    aura.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.shadowColor = `rgba(225, 248, 255, ${0.34 + danger * 0.18})`;
+    ctx.shadowBlur = r * (0.36 + danger * 0.24);
+    const body = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, r * 0.08, r * 0.14, r * 1.05);
+    body.addColorStop(0, "rgba(255, 255, 255, 0.96)");
+    body.addColorStop(0.22, `rgba(232, 250, 255, ${0.48 + progress * 0.08})`);
+    body.addColorStop(0.52, `rgba(132, 218, 255, ${0.18 + progress * 0.1})`);
+    body.addColorStop(0.76, `rgba(255, 176, 223, ${0.08 + danger * 0.2})`);
+    body.addColorStop(1, `rgba(255, 255, 255, ${0.12 + danger * 0.08})`);
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.lineCap = "round";
+    ctx.lineWidth = Math.max(1, r * 0.045);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.34 + progress * 0.12})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.98, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const inner = ctx.createRadialGradient(r * 0.12, r * 0.08, r * 0.08, r * 0.08, r * 0.12, r * 0.84);
+    inner.addColorStop(0, `rgba(255, 255, 255, ${0.12 + danger * 0.1})`);
+    inner.addColorStop(0.48, `rgba(97, 204, 255, ${0.12 + progress * 0.1})`);
+    inner.addColorStop(0.75, `rgba(255, 128, 209, ${0.04 + danger * 0.22})`);
+    inner.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = inner;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.84, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.lineWidth = Math.max(1.2, r * 0.04);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.26 + pulse * 0.12})`;
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.14, -r * 0.16, r * 0.68, r * 0.44, -0.46, Math.PI * 1.04, Math.PI * 1.88);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(150, 226, 255, ${0.16 + danger * 0.12})`;
+    ctx.beginPath();
+    ctx.ellipse(r * 0.16, r * 0.22, r * 0.52, r * 0.22, -0.28, Math.PI * 0.08, Math.PI * 0.82);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.78 - danger * 0.14})`;
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.34, -r * 0.44, r * 0.25, r * 0.1, -0.46, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.5 - danger * 0.08})`;
+    ctx.beginPath();
+    ctx.ellipse(r * 0.34, -r * 0.28, r * 0.13, r * 0.065, -0.34, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+    return true;
+  }
+
+  function drawCatBubbleTexture(bubble, x, y, r, alpha = 1) {
+    const holdProgress = clamp((bubble.catHoldMs ?? 0) / (bubble.catHoldRequiredMs ?? catBubbleHoldMs), 0, 1);
+    const tapProgress = clamp((bubble.catHits ?? 0) / (bubble.catTapRequired ?? catBubbleTapRequired), 0, 1);
+    const progress = Math.max(holdProgress, tapProgress);
+    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018;
+    const drawSize = r * 2.48;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(bubble.wobble * 0.62 + bubble.skinPhase) * 0.04 + bubble.spin * 0.012);
+    ctx.scale(1 + pulse, 1 - pulse * 0.55);
+    ctx.globalAlpha *= alpha;
+    ctx.shadowColor = "rgba(255, 246, 214, 0.34)";
+    ctx.shadowBlur = r * 0.55;
+    if (catBubbleImage.complete && catBubbleImage.naturalWidth > 0) {
+      ctx.drawImage(catBubbleImage, -drawSize * 0.5, -drawSize * 0.5, drawSize, drawSize);
+    } else {
+      const fallback = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, 0, 0, r);
+      fallback.addColorStop(0, "rgba(255, 255, 255, 0.96)");
+      fallback.addColorStop(0.48, "rgba(255, 232, 196, 0.55)");
+      fallback.addColorStop(1, "rgba(116, 77, 48, 0.42)");
+      ctx.fillStyle = fallback;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    if (progress > 0) {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(x, y, r + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.strokeStyle = "rgba(255, 246, 214, 0.82)";
+      ctx.lineWidth = Math.max(3, r * 0.085);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, r + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+      ctx.lineWidth = Math.max(1.4, r * 0.035);
+      ctx.stroke();
+      ctx.restore();
+    }
+    return true;
+  }
+
+  function drawWhiteBubbleSignal(x, y, r, whiteProgress = 1, whiteWarning = 0) {
+    const pulse = 0.5 + Math.sin(state.visualTime / 150) * 0.5;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const milk = ctx.createRadialGradient(x - r * 0.24, y - r * 0.32, r * 0.06, x, y, r * 1.08);
+    milk.addColorStop(0, "rgba(255, 255, 255, 0.98)");
+    milk.addColorStop(0.38, "rgba(255, 255, 255, 0.68)");
+    milk.addColorStop(0.72, "rgba(223, 246, 255, 0.42)");
+    milk.addColorStop(1, "rgba(255, 255, 255, 0.12)");
+    ctx.fillStyle = milk;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.05, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.shadowColor = "rgba(255, 255, 255, 0.78)";
+    ctx.shadowBlur = r * (0.24 + whiteWarning * 0.1);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.8 + whiteWarning * 0.14})`;
+    ctx.lineWidth = Math.max(3, r * 0.092);
+    ctx.beginPath();
+    ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = `rgba(151, 226, 255, ${0.46 + whiteWarning * 0.22})`;
+    ctx.lineWidth = Math.max(1.4, r * 0.042);
+    ctx.beginPath();
+    ctx.arc(x, y, r - 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.58 + pulse * 0.18})`;
+    ctx.lineWidth = Math.max(2.2, r * 0.058);
+    ctx.beginPath();
+    ctx.arc(x, y, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * whiteProgress);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+    ctx.beginPath();
+    ctx.ellipse(x - r * 0.34, y - r * 0.42, r * 0.28, r * 0.095, -0.58, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.54)";
+    ctx.beginPath();
+    ctx.arc(x + r * 0.34, y + r * 0.22, r * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawCustomBubbleProgress(bubble, x, y, r, color) {
+    if (!customBubbleNeedsClear(bubble)) return;
+    const tapRequired = bubble.customTapRequired ?? 1;
+    const holdRequired = bubble.customHoldRequiredMs ?? 0;
+    const tapProgress = tapRequired > 0 ? clamp((bubble.customHits ?? 0) / tapRequired, 0, 1) : 0;
+    const holdProgress = holdRequired > 0 ? clamp((bubble.customHoldMs ?? 0) / holdRequired, 0, 1) : 0;
+    const progress = Math.max(tapProgress, holdProgress);
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(x, y, r + 8, 0, Math.PI * 2);
+    ctx.strokeStyle = colorWithAlpha(color.light, 0.18);
+    ctx.lineWidth = Math.max(1.6, r * 0.04);
+    ctx.stroke();
+    if (progress > 0) {
+      ctx.beginPath();
+      ctx.arc(x, y, r + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+      ctx.strokeStyle = colorWithAlpha("#ffffff", 0.76);
+      ctx.lineWidth = Math.max(2.2, r * 0.065);
+      ctx.stroke();
+    }
+    if (tapRequired > 1 || tapRequired === 0) {
+      ctx.font = `800 ${Math.max(10, Math.round(r * 0.34))}px "Arial Rounded MT Bold", sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = Math.max(2.4, r * 0.1);
+      ctx.strokeStyle = "rgba(18, 37, 48, 0.56)";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+      const text = tapRequired > 0 ? `${bubble.customHits ?? 0}/${tapRequired}` : "H";
+      ctx.strokeText(text, x, y);
+      ctx.fillText(text, x, y);
+    }
+    ctx.restore();
+  }
+
+  function drawWallSquashContact(bubble, x, y, r, alpha = 1) {
+    const squash = bubble.wallSquash ?? 0;
+    if (squash <= 0.012) return;
+    const nx = bubble.wallSquashNx || 0;
+    const ny = bubble.wallSquashNy || 0;
+    if (Math.hypot(nx, ny) < 0.1) return;
+
+    const contactX = x - nx * r * (0.82 - squash * 0.35);
+    const contactY = y - ny * r * (0.82 - squash * 0.35);
+    const angle = Math.atan2(ny, nx);
+    ctx.save();
+    ctx.translate(contactX, contactY);
+    ctx.rotate(angle);
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = alpha * clamp(squash * 2.2, 0, 0.42);
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.72);
+    glow.addColorStop(0, "rgba(255,255,255,0.72)");
+    glow.addColorStop(0.38, "rgba(225,247,255,0.26)");
+    glow.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * (0.07 + squash * 0.12), r * (0.43 + squash * 0.32), 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha *= 0.7;
+    ctx.strokeStyle = "rgba(255,255,255,0.72)";
+    ctx.lineWidth = Math.max(1.1, r * 0.028);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * (0.035 + squash * 0.08), r * (0.34 + squash * 0.22), 0, -Math.PI * 0.5, Math.PI * 0.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBubble(bubble) {
+    if (bubble.age < 0) {
+      return;
+    }
+    const openActive = state.openUntil > state.elapsed;
+    const color = bubble.isWhite
+      ? whiteTone
+      : bubble.isBomb
+        ? bombTone
+        : bubble.isBleach
+          ? whiteTone
+          : bubble.isClear
+            ? clearTone
+            : bubble.isSuper || bubble.colorIndex === -1
+              ? openTone
+              : palette[bubble.colorIndex];
+    const x = bubble.x;
+    const y = bubble.y;
+    const revealDuration = bubble.spawnRevealSeconds ?? 0;
+    const revealAmount = revealDuration > 0 ? smoothstep(0, revealDuration, bubble.age) : 1;
+    if (revealAmount <= 0.01) return;
+    const revealScale = revealDuration > 0 ? 0.34 + revealAmount * 0.66 : 1;
+    const revealAlpha = revealDuration > 0 ? clamp(revealAmount, 0, 1) : 1;
+    const r = bubble.radius * revealScale;
+    const whiteLeft = bubble.isWhite && bubble.whiteUntil > 0 ? Math.max(0, bubble.whiteUntil - state.elapsed) : 0;
+    const whiteProgress = bubble.isWhite && bubble.whiteUntil > 0 ? clamp(whiteLeft / decolorDuration, 0, 1) : 1;
+    const whiteWarning = bubble.isWhite && bubble.whiteUntil > 0 ? 1 - smoothstep(0, decolorWarningMs, whiteLeft) : 0;
+    const whiteBlink = whiteWarning * (0.5 + Math.sin(state.visualTime / 82) * 0.5);
+    const whiteAlpha = bubble.isWhite ? clamp(0.94 + whiteProgress * 0.05 - whiteBlink * 0.16, 0.76, 1) : 1;
+    const drawAlpha = whiteAlpha * revealAlpha;
+
+    if (bubble.isStream) {
+      const speed = Math.max(1, Math.hypot(bubble.vx, bubble.vy));
+      const tailX = -bubble.vx / speed;
+      const tailY = -bubble.vy / speed;
+      ctx.save();
+      ctx.translate(x + tailX * r * 1.18, y + tailY * r * 1.18);
+      ctx.rotate(Math.atan2(tailY, tailX));
+      ctx.globalAlpha = 0.07 * drawAlpha;
+      ctx.fillStyle = color.light;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.48, r * 0.18, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.13 * drawAlpha;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(r * 0.18, -r * 0.04, Math.max(1.1, r * 0.055), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.globalAlpha *= revealAlpha;
+    ctx.translate(x, y);
+    const squash = bubble.wallSquash ?? 0;
+    const squashLength = Math.hypot(bubble.wallSquashNx || 0, bubble.wallSquashNy || 0);
+    if (squash > 0.01 && squashLength > 0.1) {
+      const nx = bubble.wallSquashNx / squashLength;
+      const ny = bubble.wallSquashNy / squashLength;
+      const squashAngle = Math.atan2(ny, nx);
+      const normalScale = 1 - squash * 0.82;
+      const tangentScale = 1 + squash * 0.38;
+      ctx.rotate(squashAngle);
+      ctx.scale(normalScale, tangentScale);
+      ctx.rotate(-squashAngle);
+    }
+    ctx.rotate(Math.sin(bubble.wobble) * 0.08 + bubble.spin * 0.05);
+    ctx.translate(-x, -y);
+
+    if (bubble.isWhite && bubble.whiteUntil > 0) {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(x, y, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * whiteProgress);
+      ctx.strokeStyle = colorWithAlpha(whiteTone.light, 0.58 + whiteWarning * 0.22);
+      ctx.lineWidth = Math.max(3, r * 0.078);
+      ctx.stroke();
+      ctx.restore();
+      ctx.globalAlpha = whiteAlpha;
+    }
+
+    if (openActive && !bubble.isSuper && !bubble.isClear && !bubble.isBleach && !bubble.isBomb && !bubble.isCat && !bubble.isCharge && !bubble.isWhite) {
+      ctx.save();
+      ctx.setLineDash([Math.max(5, r * 0.18), Math.max(4, r * 0.14)]);
+      ctx.lineDashOffset = -state.visualTime * 0.018;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 9, 0, Math.PI * 2);
+      ctx.strokeStyle = colorWithAlpha(openTone.light, 0.4);
+      ctx.lineWidth = Math.max(2, r * 0.045);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const chargeTextured = bubble.isCharge && drawChargeBubbleTexture(bubble, x, y, r, whiteAlpha);
+    const catTextured = !chargeTextured && bubble.isCat && drawCatBubbleTexture(bubble, x, y, r, whiteAlpha);
+    const bombTextured = !catTextured && bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
+    const bleachTextured = !catTextured && !bombTextured && bubble.isBleach && drawBleachTexture(bubble, x, y, r, whiteAlpha);
+    if (!chargeTextured && !catTextured && !bombTextured && !bleachTextured) {
+      if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
+        const body = ctx.createRadialGradient(x - r * 0.36, y - r * 0.42, r * 0.08, x, y, r);
+        body.addColorStop(0, "#ffffff");
+        body.addColorStop(0.18, color.light);
+        body.addColorStop(0.58, colorWithAlpha(color.color, 0.88));
+        body.addColorStop(1, colorWithAlpha(color.deep, 0.72));
+        drawProceduralBubbleBody(body, color, x, y, r);
+      }
+    }
+
+    if (bubble.isWhite) {
+      drawWhiteBubbleSignal(x, y, r, whiteProgress, whiteWarning);
+    }
+
+    if (bubble.isBomb && !bombTextured) {
+      drawBombMark(x, y, r);
+    } else if (bubble.isBleach && !bleachTextured) {
+      drawBleachMark(x, y, r);
+    } else if (bubble.isClear) {
+      drawClearMark(x, y, r);
+    }
+
+    drawCustomBubbleProgress(bubble, x, y, r, color);
+
+    ctx.restore();
+    drawWallSquashContact(bubble, x, y, r, drawAlpha);
+  }
+
+  function drawStar(x, y, outer, fill, stroke) {
+    const inner = outer * 0.46;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i += 1) {
+      const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+      const radius = i % 2 === 0 ? outer : inner;
+      const px = x + Math.cos(angle) * radius;
+      const py = y + Math.sin(angle) * radius;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = Math.max(1.4, outer * 0.12);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function drawClearMark(x, y, r) {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.shadowColor = colorWithAlpha(clearTone.light, 0.52);
+    ctx.shadowBlur = r * 0.18;
+    ctx.strokeStyle = "rgba(255,255,255,0.94)";
+    ctx.lineWidth = Math.max(3, r * 0.11);
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.28, y);
+    ctx.lineTo(x + r * 0.28, y);
+    ctx.moveTo(x, y - r * 0.28);
+    ctx.lineTo(x, y + r * 0.28);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = colorWithAlpha(palette[1].light, 0.52);
+    ctx.lineWidth = Math.max(1.5, r * 0.045);
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.46, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBleachMark(x, y, r) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.92)";
+    ctx.lineWidth = Math.max(2, r * 0.08);
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.42, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x - r * 0.16, y - r * 0.1, r * 0.08, 0, Math.PI * 2);
+    ctx.arc(x + r * 0.12, y + r * 0.12, r * 0.06, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.82)";
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBombMark(x, y, r) {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.shadowColor = colorWithAlpha(bombTone.light, 0.54);
+    ctx.shadowBlur = r * 0.2;
+    ctx.strokeStyle = "rgba(255,255,255,0.94)";
+    ctx.fillStyle = colorWithAlpha(bombTone.deep, 0.84);
+    ctx.lineWidth = Math.max(2.4, r * 0.095);
+    ctx.beginPath();
+    ctx.arc(x, y + r * 0.08, r * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.18, y - r * 0.16);
+    ctx.quadraticCurveTo(x + r * 0.32, y - r * 0.44, x + r * 0.06, y - r * 0.48);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBlasts() {
+    state.blasts.forEach((blast) => {
+      const t = blast.age / blast.life;
+      const fade = Math.max(0, 1 - t);
+      const color = blast.color ?? bombTone.light;
+      const accent = blast.accentColor ?? "#ffffff";
+      const rings = blast.rings ?? 1;
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = fade * (blast.decorative ? 0.72 : 0.82);
+      ctx.strokeStyle = color;
+      ctx.shadowColor = colorWithAlpha(color, 0.44);
+      ctx.shadowBlur = 14 + 12 * fade;
+      ctx.lineWidth = (blast.decorative ? 12 : 10) * fade + 2.4;
+      ctx.beginPath();
+      ctx.arc(blast.x, blast.y, blast.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      for (let i = 1; i < rings; i += 1) {
+        const innerRadius = Math.max(4, blast.radius - i * (blast.decorative ? 34 : 26));
+        ctx.globalAlpha = fade * (blast.decorative ? 0.26 : 0.34) * (1 - i * 0.18);
+        ctx.strokeStyle = i % 2 === 0 ? color : accent;
+        ctx.lineWidth = Math.max(1.4, (blast.decorative ? 5.2 : 4.2) * fade);
+        ctx.beginPath();
+        ctx.arc(blast.x, blast.y, innerRadius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = fade * (blast.fillAlpha ?? 0.16);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(blast.x, blast.y, blast.radius * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function drawParticles() {
+    state.particles.forEach((particle) => {
+      const t = 1 - particle.age / particle.life;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, t);
+      ctx.fillStyle = particle.color;
+      if (particle.sparkle) {
+        drawStar(particle.x, particle.y, particle.radius * 1.9, particle.color, "rgba(255,255,255,0.7)");
+      } else {
+        ctx.beginPath();
+        ctx.ellipse(particle.x, particle.y, particle.radius * 0.78, particle.radius * 1.3, particle.vx * 0.006, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    });
+  }
+
+  function drawRipples() {
+    state.ripples.forEach((ripple) => {
+      const t = ripple.age / ripple.life;
+      const power = ripple.power ?? 1;
+      ctx.save();
+      ctx.globalAlpha = (1 - t) * 0.52 * power;
+      ctx.strokeStyle = ripple.color;
+      ctx.lineWidth = (5 * (1 - t) + 1) * power;
+      ctx.beginPath();
+      if (ripple.puncture) {
+        const angle = ripple.angle ?? 0;
+        ctx.arc(ripple.x, ripple.y, ripple.radius, angle - 2.35, angle + 2.35);
+        ctx.moveTo(ripple.x, ripple.y);
+        ctx.lineTo(
+          ripple.x + Math.cos(angle) * ripple.radius * (1.1 + t * 0.8),
+          ripple.y + Math.sin(angle) * ripple.radius * (1.1 + t * 0.8),
+        );
+      } else {
+        ctx.arc(ripple.x, ripple.y, ripple.radius, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  function drawFloaters() {
+    state.floaters.forEach((floater) => {
+      const t = floater.age / floater.life;
+      const alpha = Math.max(0, 1 - t);
+      const pop = 1 + Math.sin(Math.min(1, t * 2.2) * Math.PI) * 0.14;
+      const size = 18 * floater.scale * pop;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      const fontFamily = floater.fontFamily ?? '"Arial Rounded MT Bold", "PingFang SC", "Microsoft YaHei UI", ui-rounded, sans-serif';
+      ctx.font = `${floater.italic ? "italic " : ""}1000 ${size}px ${fontFamily}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = Math.max(3.2, size * (floater.fontFamily ? 0.16 : 0.2));
+      ctx.strokeStyle = floater.stroke ?? "rgba(20, 48, 66, 0.26)";
+      ctx.shadowColor = colorWithAlpha(floater.shadow ?? "#ffffff", (floater.shadow ? 0.46 : 0.16) * alpha);
+      ctx.shadowBlur = floater.shadow ? 14 : 10;
+      ctx.fillStyle = floater.color;
+      ctx.strokeText(floater.text, floater.x, floater.y);
+      ctx.fillText(floater.text, floater.x, floater.y);
+      ctx.restore();
+    });
+  }
+
+  function drawWaterSurface() {
+    const h = state.height;
+    const level = clamp(state.water / 100, 0, 1);
+    const fillHeight = Math.max(10, h * (0.018 + level * 0.022));
+    const y = h - fillHeight;
+    const gradient = ctx.createLinearGradient(0, y, 0, h);
+    gradient.addColorStop(0, "rgba(213, 233, 238, 0)");
+    gradient.addColorStop(0.55, "rgba(213, 233, 238, 0.12)");
+    gradient.addColorStop(1, "rgba(142, 191, 203, 0.18)");
+
+    ctx.save();
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, y, state.width, fillHeight);
+
+    ctx.globalAlpha = 0.1 + level * 0.12;
+    ctx.fillStyle = "#f7fbfa";
+    ctx.fillRect(0, h - 2, state.width, 2);
+    ctx.restore();
+  }
+
+  function drawWaterStressOverlay() {
+    const water = clamp(state.water, 0, 100);
+    const mood = smoothstep(86, 14, water);
+    const warn = smoothstep(52, 18, water);
+    const danger = smoothstep(24, 0, water);
+    const feedbackLive = state.running || water <= 0;
+    const shock = feedbackLive && state.elapsed < waterShockUntil ? clamp((waterShockUntil - state.elapsed) / 560, 0, 1) : 0;
+    const alert = feedbackLive && state.elapsed < waterCriticalUntil ? clamp((waterCriticalUntil - state.elapsed) / 980, 0, 1) : 0;
+    const strength = clamp(mood * 0.34 + warn * 0.46 + danger * 0.54 + shock * 0.32 + alert * 0.34, 0, 1);
+    if (strength <= 0.01) return;
+    if (!currentPerformanceProfile().fullScreenOverlays && strength < 0.62) return;
+
+    const minSide = Math.min(state.width, state.height);
+    const maxSide = Math.max(state.width, state.height);
+    const pulse = 0.5 + Math.sin(state.visualTime / (danger > 0.28 ? 132 : 220)) * 0.5;
+    const alpha = clamp((0.025 + mood * 0.055 + warn * 0.075 + danger * 0.1) * (0.78 + pulse * 0.22) + shock * 0.08 + alert * 0.1, 0, 0.28);
+    const edge = Math.max(18, minSide * (0.055 + danger * 0.035 + shock * 0.025));
+
+    ctx.save();
+    const shadeAlpha = clamp((0.014 + mood * 0.092 + danger * 0.055 + shock * 0.035) * (0.94 + pulse * 0.06), 0, 0.18);
+    const shade = ctx.createLinearGradient(0, 0, 0, state.height);
+    shade.addColorStop(0, colorWithAlpha("#18364b", shadeAlpha * 0.76));
+    shade.addColorStop(0.38, colorWithAlpha("#25455b", shadeAlpha * 0.28));
+    shade.addColorStop(0.66, colorWithAlpha("#17364a", shadeAlpha * 0.34));
+    shade.addColorStop(1, colorWithAlpha("#0f2839", shadeAlpha * 0.82));
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const centerLift = ctx.createRadialGradient(
+      state.width * 0.5,
+      state.height * 0.42,
+      minSide * 0.1,
+      state.width * 0.5,
+      state.height * 0.46,
+      maxSide * 0.54,
+    );
+    centerLift.addColorStop(0, colorWithAlpha("#ffffff", clamp(0.012 + mood * 0.026, 0, 0.045)));
+    centerLift.addColorStop(0.72, "rgba(255, 255, 255, 0)");
+    centerLift.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = centerLift;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const vignette = ctx.createRadialGradient(
+      state.width * 0.5,
+      state.height * 0.48,
+      minSide * 0.24,
+      state.width * 0.5,
+      state.height * 0.52,
+      maxSide * 0.74,
+    );
+    vignette.addColorStop(0, "rgba(255, 255, 255, 0)");
+    vignette.addColorStop(0.62, colorWithAlpha("#e5f6fb", alpha * 0.2));
+    vignette.addColorStop(1, colorWithAlpha("#243d55", alpha));
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, state.width, state.height);
+
+    const edgeAlpha = clamp(0.035 + warn * 0.045 + danger * 0.055 + shock * 0.06 + alert * 0.06, 0, 0.2);
+    const edgeColor = danger > 0.18 ? "#20384f" : "#dff6fb";
+    let gradient = ctx.createLinearGradient(0, 0, edge, 0);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, edge, state.height);
+
+    gradient = ctx.createLinearGradient(state.width, 0, state.width - edge, 0);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(state.width - edge, 0, edge, state.height);
+
+    gradient = ctx.createLinearGradient(0, 0, 0, edge);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha * 0.78));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, state.width, edge);
+
+    gradient = ctx.createLinearGradient(0, state.height, 0, state.height - edge);
+    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha * 0.9));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, state.height - edge, state.width, edge);
+
+    if (water <= 8 || alert > 0.35) {
+      ctx.globalAlpha = clamp((danger * 0.06 + alert * 0.08) * (0.65 + pulse * 0.35), 0, 0.14);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, state.width, state.height);
+    }
+    ctx.restore();
+  }
+
+  function drawFlash() {
+    if (state.flash <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = state.flash * 0.18;
+    ctx.fillStyle = state.openUntil > state.elapsed ? openTone.light : "#ffffff";
+    ctx.fillRect(0, 0, state.width, state.height);
+    ctx.restore();
+  }
+
+  function drawMistakeFlash() {
+    if (state.mistakeFlash <= 0) return;
+    const alpha = state.mistakeFlash * 0.16;
+    ctx.save();
+    const edge = Math.max(18, Math.min(state.width, state.height) * 0.075);
+    let gradient = ctx.createLinearGradient(0, 0, edge, 0);
+    gradient.addColorStop(0, colorWithAlpha("#20384f", alpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, edge, state.height);
+
+    gradient = ctx.createLinearGradient(state.width, 0, state.width - edge, 0);
+    gradient.addColorStop(0, colorWithAlpha("#20384f", alpha));
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(state.width - edge, 0, edge, state.height);
+
+    ctx.globalAlpha = state.mistakeFlash * 0.035;
+    ctx.fillStyle = "#eefbff";
+    ctx.fillRect(0, 0, state.width, state.height);
+    ctx.restore();
+  }
+
+  function drawBuildVersion() {
+    ctx.save();
+    ctx.font = "800 9px \"Arial Rounded MT Bold\", \"PingFang SC\", \"Microsoft YaHei UI\", ui-rounded, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = "rgba(20, 48, 66, 0.34)";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
+    ctx.strokeText(buildVersion, state.width * 0.5, state.height - 8);
+    ctx.fillText(buildVersion, state.width * 0.5, state.height - 8);
+    ctx.restore();
+  }
+
+  function drawDifficultyBanners() {
+    if (!state.difficultyBanners?.length) return;
+    const fontFamily = '"Arial Rounded MT Bold", "PingFang SC", "Microsoft YaHei UI", ui-rounded, sans-serif';
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+
+    state.difficultyBanners.forEach((banner) => {
+      const t = clamp((state.elapsed - banner.startAt) / Math.max(1, banner.life), 0, 1);
+      const intro = smoothstep(0.02, 0.18, t);
+      const outro = 1 - smoothstep(0.46, 1, t);
+      const alpha = intro * outro * 0.58;
+      if (alpha <= 0.001) return;
+
+      const rise = smoothstep(0, 1, t);
+      const wave = Math.sin(t * Math.PI * 2.2 + banner.phase);
+      const cx = state.width * (0.5 + banner.offsetX + banner.drift * rise + wave * 0.006);
+      const cy = state.height * (0.84 - rise * 0.5);
+      const levelText = String(banner.level);
+      const digitCount = levelText.length;
+      const labelSize = clamp(state.width * 0.105, 30, 54);
+      const numberSize = clamp(state.width * (digitCount >= 2 ? 0.25 : 0.33), 82, Math.min(state.height * 0.18, 156));
+      const scale = 0.92 + intro * 0.1 - rise * 0.025;
+      const tilt = Math.sin(t * Math.PI * 1.7 + banner.phase) * 0.018;
+      const sweep = smoothstep(0.14, 0.58, t);
+      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, Math.max(state.width, state.height) * (0.22 + rise * 0.12));
+      glow.addColorStop(0, colorWithAlpha("#ffffff", alpha * 0.08));
+      glow.addColorStop(0.42, colorWithAlpha(palette[0].light, alpha * 0.055));
+      glow.addColorStop(1, colorWithAlpha(palette[1].light, 0));
+
+      ctx.save();
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, state.width, state.height);
+      ctx.translate(cx, cy);
+      ctx.rotate(tilt);
+      ctx.scale(scale, scale);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = colorWithAlpha("#ffffff", alpha * 0.28);
+      ctx.shadowBlur = 12 + intro * 10;
+
+      ctx.font = `1000 ${labelSize}px ${fontFamily}`;
+      ctx.lineWidth = Math.max(2.6, labelSize * 0.09);
+      ctx.strokeStyle = colorWithAlpha("#ffffff", alpha * 0.1);
+      ctx.fillStyle = colorWithAlpha("#ffffff", alpha * 0.24);
+      ctx.strokeText("LEVEL", 0, -numberSize * 0.5);
+      ctx.fillText("LEVEL", 0, -numberSize * 0.5);
+
+      ctx.font = `1000 ${numberSize}px ${fontFamily}`;
+      const gradient = ctx.createLinearGradient(-state.width * 0.2, 0, state.width * 0.2, 0);
+      gradient.addColorStop(0, colorWithAlpha(palette[0].light, alpha * 0.14));
+      gradient.addColorStop(Math.max(0.02, sweep - 0.12), colorWithAlpha("#ffffff", alpha * 0.22));
+      gradient.addColorStop(Math.min(0.98, sweep + 0.12), colorWithAlpha("#ffffff", alpha * 0.36));
+      gradient.addColorStop(1, colorWithAlpha(palette[1].light, alpha * 0.15));
+
+      ctx.lineWidth = Math.max(8, numberSize * 0.12);
+      ctx.strokeStyle = colorWithAlpha("#ffffff", alpha * 0.065);
+      ctx.strokeText(levelText, 0, numberSize * 0.22);
+      ctx.lineWidth = Math.max(2.4, numberSize * 0.026);
+      ctx.strokeStyle = colorWithAlpha(palette[0].light, alpha * 0.13);
+      ctx.strokeText(levelText, -numberSize * 0.018, numberSize * 0.22);
+      ctx.strokeStyle = colorWithAlpha(palette[1].light, alpha * 0.12);
+      ctx.strokeText(levelText, numberSize * 0.018, numberSize * 0.22);
+      ctx.fillStyle = gradient;
+      ctx.fillText(levelText, 0, numberSize * 0.22);
+
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = alpha * 0.16;
+      ctx.lineWidth = Math.max(1.2, labelSize * 0.035);
+      ctx.strokeStyle = "#ffffff";
+      ctx.beginPath();
+      const underlineY = numberSize * 0.62;
+      const underlineW = Math.min(state.width * 0.42, numberSize * 2.6);
+      for (let i = 0; i <= 28; i += 1) {
+        const p = i / 28;
+        const x = (p - 0.5) * underlineW;
+        const y = underlineY + Math.sin(p * Math.PI * 2 + t * Math.PI * 2 + banner.phase) * labelSize * 0.055;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    ctx.restore();
+  }
+
+  function draw() {
+    drawBackground();
+    drawDifficultyBanners();
+    drawWaterStressOverlay();
+    state.bubbles.forEach(drawBubble);
+    drawRipples();
+    drawBlasts();
+    drawParticles();
+    drawFloaters();
+    drawBuildVersion();
+    drawMistakeFlash();
+    drawFlash();
+  }
+
+  function loop(now) {
+    frameRequest = 0;
+    if (document.hidden || !state.running) {
+      updatePerfDebug(now, true);
+      return;
+    }
+
+    if (lastFrameTime && now - lastFrameTime < currentTargetFrameMs() - 1) {
+      scheduleLoop();
+      return;
+    }
+
+    const targetStep = currentTargetFrameMs();
+    const elapsed = lastFrameTime ? now - lastFrameTime : targetStep;
+    const dt = Math.min(0.05, Math.max(0, elapsed / 1000 || targetStep / 1000));
+    lastFrameTime = now;
+    state.lastTime = now;
+    state.visualTime += dt * 1000;
+    const workStart = performance.now();
+    update(dt);
+    trimRuntimeEffects();
+    if (state.running) {
+      draw();
+    }
+    const workMs = performance.now() - workStart;
+    if (workMs > currentTargetFrameMs() * 2.15 && performanceTier < performanceProfiles.length - 1 && now - performanceLastChangeAt > 2800) {
+      setPerformanceTier(performanceTier + 1, now);
+      state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 180);
+    }
+    recordFrameStats(elapsed, workMs);
+
+    perfFrames += 1;
+    if (!perfLastTime) perfLastTime = now;
+    if (now - perfLastTime >= 1000) {
+      perfFps = (perfFrames * 1000) / (now - perfLastTime);
+      perfFrames = 0;
+      perfLastTime = now;
+    }
+    updateAdaptivePerformance(now, elapsed, workMs);
+    updatePerfDebug(now);
+    scheduleLoop();
+  }
+
+  function ensureAudioContext() {
+    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    audioContext.resume?.();
+    return audioContext;
+  }
+
+  function soundUrl(fileName) {
+    return `./assets/sfx/${fileName}`;
+  }
+
+  function soundGroupForKind(kind) {
+    if (kind === "start") return "start";
+    if (kind === "small") return "small";
+    if (kind === "big" || kind === "super" || kind === "clear") return "big";
+    return "regular";
+  }
+
+  function shuffledSoundDeck(files, lastFile = "") {
+    const deck = [...files];
+    for (let i = deck.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rand(0, i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    if (deck.length > 1 && deck[0] === lastFile) {
+      const swapIndex = Math.floor(rand(1, deck.length));
+      [deck[0], deck[swapIndex]] = [deck[swapIndex], deck[0]];
+    }
+    return deck;
+  }
+
+  function chooseSoundFile(group) {
+    const files = soundFiles[group] ?? soundFiles.regular;
+    if (files.length <= 1) {
+      const onlyFile = files[0] ?? soundFiles.regular[0];
+      lastSoundByGroup.set(group, onlyFile);
+      return onlyFile;
+    }
+    let deck = soundDecks.get(group);
+    if (!deck?.length) {
+      deck = shuffledSoundDeck(files, lastSoundByGroup.get(group));
+    }
+    let fileName = deck.shift();
+    if (fileName === lastSoundByGroup.get(group) && deck.length > 0) {
+      deck.push(fileName);
+      fileName = deck.shift();
+    }
+    lastSoundByGroup.set(group, fileName);
+    soundDecks.set(group, deck);
+    return fileName;
+  }
+
+  function loadSoundBuffer(fileName) {
+    if (soundBuffers.has(fileName)) {
+      return Promise.resolve(soundBuffers.get(fileName));
+    }
+    if (soundLoaders.has(fileName)) {
+      return soundLoaders.get(fileName);
+    }
+    const loader = fetch(soundUrl(fileName))
+      .then((response) => {
+        if (!response.ok) throw new Error(`Sound load failed: ${fileName}`);
+        return response.arrayBuffer();
+      })
+      .then((data) => ensureAudioContext().decodeAudioData(data))
+      .then((buffer) => {
+        soundBuffers.set(fileName, buffer);
+        soundLoaders.delete(fileName);
+        return buffer;
+      })
+      .catch((error) => {
+        soundLoaders.delete(fileName);
+        throw error;
+      });
+    soundLoaders.set(fileName, loader);
+    return loader;
+  }
+
+  function preloadGameSounds() {
+    Object.values(soundFiles)
+      .flat()
+      .forEach((fileName) => {
+        loadSoundBuffer(fileName).catch(() => {});
+      });
+  }
+
+  function warmGameSoundFiles() {
+    Object.values(soundFiles)
+      .flat()
+      .forEach((fileName) => {
+        const audio = new Audio(soundUrl(fileName));
+        audio.preload = "auto";
+        audio.load();
+        warmAudioElements.push(audio);
+      });
+  }
+
+  function playSoundBuffer(fileName, { playbackRate = 1, volume = 0.82, delayOffset = 0 } = {}) {
+    try {
+      const context = ensureAudioContext();
+      const startSource = (buffer) => {
+        const now = context.currentTime;
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        source.buffer = buffer;
+        source.playbackRate.setValueAtTime(clamp(playbackRate, 0.78, 1.12), now);
+        gain.gain.setValueAtTime(clamp(volume, 0, 1), now);
+        source.connect(gain);
+        gain.connect(context.destination);
+        source.start(Math.max(now, now + delayOffset));
+      };
+      const buffer = soundBuffers.get(fileName);
+      if (buffer) {
+        startSource(buffer);
+      } else {
+        loadSoundBuffer(fileName)
+          .then(startSource)
+          .catch(() => {});
+      }
+    } catch {
+      audioContext = null;
+    }
+  }
+
+  function resetPopPitchChain() {
+    popPitchStreak = 0;
+    lastPopSoundAt = Number.NEGATIVE_INFINITY;
+  }
+
+  function nextPopPlaybackRate(delayOffset = 0) {
+    const context = ensureAudioContext();
+    const scheduledTime = context.currentTime + delayOffset;
+    if (scheduledTime - lastPopSoundAt > comboPitchWindowSeconds) {
+      popPitchStreak = 0;
+    }
+    popPitchStreak += 1;
+    lastPopSoundAt = scheduledTime;
+    return 1 + Math.min(0.095, Math.max(0, popPitchStreak - 1) * 0.012);
+  }
+
+  function playPop(kind = "regular", delayOffset = 0) {
+    try {
+      const group = soundGroupForKind(kind);
+      const fileName = chooseSoundFile(group);
+      const playbackRate = nextPopPlaybackRate(delayOffset);
+      const volume = group === "small" ? 0.78 : group === "big" ? 0.88 : 0.82;
+      playSoundBuffer(fileName, { playbackRate, volume, delayOffset });
+    } catch {
+      audioContext = null;
+    }
+  }
+
+  function playCatMeow(kind = "tap", delayOffset = 0) {
+    playPop(kind === "tap" ? "regular" : "big", delayOffset);
+  }
+
+  function playIntroSound() {
+    resetPopPitchChain();
+    const fileName = soundFiles.start[0];
+    playSoundBuffer(fileName, { playbackRate: 1, volume: 0.9 });
+  }
+
+  function buildStartTransition() {
+    startTransition.replaceChildren();
+    const ring = document.createElement("span");
+    ring.className = "splash-ring";
+    startTransition.append(ring);
+
+    const spread = Math.max(state.width || window.innerWidth, state.height || window.innerHeight);
+    const count = Math.round(clamp(spread / 20, 28, 42) * clamp(currentPerformanceProfile().effectChance, 0.48, 1));
+    for (let i = 0; i < count; i += 1) {
+      const bubble = document.createElement("span");
+      const angle = (i / count) * Math.PI * 2 + rand(-0.2, 0.2);
+      const distance = rand(spread * 0.24, spread * 0.82);
+      const x = Math.cos(angle) * distance;
+      const y = Math.sin(angle) * distance;
+      const size = rand(16, 54) * (i % 9 === 0 ? 1.45 : 1);
+      bubble.className = `start-bubble tone-${i % 3}`;
+      bubble.style.setProperty("--x", `${x}px`);
+      bubble.style.setProperty("--y", `${y}px`);
+      bubble.style.setProperty("--x-mid", `${x * 0.7}px`);
+      bubble.style.setProperty("--y-mid", `${y * 0.7}px`);
+      bubble.style.setProperty("--drift", `${rand(-42, 42)}px`);
+      bubble.style.setProperty("--size", `${size}px`);
+      bubble.style.setProperty("--delay", `${rand(0, 260)}ms`);
+      bubble.style.setProperty("--duration", `${rand(860, 1360)}ms`);
+      bubble.style.setProperty("--end-scale", rand(0.86, 1.24).toFixed(2));
+      startTransition.append(bubble);
+    }
+  }
+
+  function playStartTransition() {
+    if (introRunning) return;
+    introRunning = true;
+    startButton.disabled = true;
+    endStats.textContent = "";
+    curtain.classList.add("starting");
+    buildStartTransition();
+    startTransition.classList.remove("active");
+    startTransition.getBoundingClientRect();
+    startTransition.classList.add("active");
+    preloadGameSounds();
+    playIntroSound();
+
+    window.setTimeout(resetGame, 620);
+    window.setTimeout(() => {
+      curtain.classList.remove("starting");
+      startTransition.classList.remove("active");
+      startTransition.replaceChildren();
+      startButton.disabled = false;
+      introRunning = false;
+    }, 1540);
+  }
+
+  function setBackgroundToLevel(level) {
+    const flow = state.backgroundFlow;
+    const layout = makeBackgroundLayout(level, Math.max(0, level * 2));
+    flow.phase = "hold";
+    flow.elapsed = 0;
+    flow.step = Math.max(flow.step, level * 2);
+    flow.current = layout;
+    flow.from = layout;
+    flow.target = layout;
+    Object.assign(flow, backgroundTimingForLevel(level));
+  }
+
+  function backgroundEngineTimeSeconds(time = state.visualTime) {
+    if (state.running || state.elapsed > 0) {
+      return Math.max(0, state.elapsed / 1000);
+    }
+    return Math.max(0, time / 1000);
+  }
+
+  function updateDebugPanel() {
+    if (!debugStageInfo) return;
+    const plan = state.stagePlan;
+    if (debugLevelSelect && document.activeElement !== debugLevelSelect) {
+      debugLevelSelect.value = String(displayDifficultyLevel());
+    }
+    debugStageInfo.textContent = plan
+      ? `hit ${state.stageCorrectPops}/${plan.targetBubbles} miss ${state.stageMissedTargets} wrong ${state.stageWrongPops} spawn ${state.stageSpawned}/${plan.totalBubbles} avg +${plan.baseCorrectWater.toFixed(2)} -${plan.baseMissPenalty.toFixed(2)}`
+      : "-";
+  }
+
+  function jumpToDebugLevel(level) {
+    const targetLevel = Math.max(1, Math.round(level));
+    if (!state.running) {
+      resetGame();
+    }
+    clearRuntimeEffects();
+    resetCombo({ recovery: false });
+    state.comboRecoveryUntil = 0;
+    state.comboRecoveryPower = 0;
+    state.elapsed = Math.max(0, (targetLevel - 1) * stageDurationMs);
+    state.water = 100;
+    state.waterPressure = 0;
+    state.hiddenLeak = 0;
+    state.hiddenLeakActive = false;
+    state.wrongStreak = 0;
+    state.lastUsefulActionAt = state.elapsed;
+    lastHudWater = null;
+    waterGainUntil = 0;
+    waterDrainUntil = 0;
+    waterShockUntil = 0;
+    waterCriticalUntil = 0;
+    lastWaterBand = "safe";
+    waterLowVibrationArmed = true;
+    state.difficultyTier = Math.max(0, targetLevel - 1);
+    state.nextPowerAt = state.elapsed + 26000;
+    state.nextBombAt = state.elapsed;
+    state.nextChargeAt = targetLevel <= 1 ? stageDurationMs + rand(3600, 6800) : state.elapsed + rand(2600, 4800);
+    state.chargeWave = null;
+    state.nextSpawnAt = state.elapsed + 120;
+    state.openUntil = 0;
+    resetBombComboTimer();
+    resetStagePlan(targetLevel);
+    setBackgroundToLevel(targetLevel);
+    curtain.classList.add("hidden");
+    updateHud();
+    draw();
+    scheduleLoop();
+  }
+
+  function initDebugControls() {
+    if (!debugLevelSelect || !debugJumpButton) return;
+    if (debugLevelSelect.options.length === 0) {
+      for (let level = 1; level <= 12; level += 1) {
+        const option = document.createElement("option");
+        option.value = String(level);
+        option.textContent = `Lv ${level}`;
+        debugLevelSelect.append(option);
+      }
+    }
+    debugJumpButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      jumpToDebugLevel(Number(debugLevelSelect.value || 1));
+    });
+    updateDebugPanel();
+  }
+
+  function updateCustomPackDevStatus(statusEl) {
+    if (!statusEl) return;
+    const pack = state.customBubblePack;
+    statusEl.textContent = pack ? `${pack.name} · ${pack.bubbles.length} templates` : "No custom pack";
+  }
+
+  function initCustomPackDevPanel() {
+    state.customBubblePack = loadCustomBubblePack();
+    const params = new URLSearchParams(window.location.search);
+    const shouldShow = params.has("dev") || Boolean(state.customBubblePack);
+    if (!shouldShow) return;
+
+    const panel = document.createElement("section");
+    panel.className = "dev-pack-panel";
+    const status = document.createElement("span");
+    status.className = "dev-pack-status";
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.textContent = "导入";
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.textContent = "清空";
+    const editorButton = document.createElement("button");
+    editorButton.type = "button";
+    editorButton.textContent = "编辑器";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json,.json";
+    input.hidden = true;
+    panel.append(status, importButton, clearButton, editorButton, input);
+    document.body.append(panel);
+    updateCustomPackDevStatus(status);
+
+    importButton.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.addEventListener("load", () => {
+        const normalized = saveCustomBubblePack(String(reader.result || ""));
+        state.customBubblePack = normalized;
+        state.customPackStatus = normalized ? `PACK ${normalized.name}` : "Pack import failed";
+        state.nextSpawnAt = Math.min(state.nextSpawnAt || state.elapsed + 120, state.elapsed + 120);
+        updateCustomPackDevStatus(status);
+      });
+      reader.readAsText(file);
+      input.value = "";
+    });
+    clearButton.addEventListener("click", () => {
+      state.customBubblePack = saveCustomBubblePack(null);
+      state.customPackStatus = "";
+      updateCustomPackDevStatus(status);
+    });
+    editorButton.addEventListener("click", () => {
+      window.location.href = "./editor.html";
+    });
+  }
+
+  initCustomPackDevPanel();
+  warmGameSoundFiles();
+  startButton.addEventListener("click", playStartTransition);
+  clearSkillButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    useClearSkill();
+  });
+  canvas.addEventListener("pointerdown", handlePointerDown, { passive: false });
+  canvas.addEventListener("pointermove", handlePointerMove, { passive: false });
+  canvas.addEventListener("pointerup", handlePointerEnd);
+  canvas.addEventListener("pointercancel", handlePointerEnd);
+  window.addEventListener("resize", () => {
+    resize();
+    if (!state.running) {
+      draw();
+      updatePerfDebug(performance.now(), true);
+    }
+  });
+  window.addEventListener("orientationchange", () => {
+    resize();
+    if (!state.running) {
+      draw();
+      updatePerfDebug(performance.now(), true);
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (frameRequest) {
+        cancelAnimationFrame(frameRequest);
+        frameRequest = 0;
+      }
+      return;
+    }
+    lastFrameTime = performance.now();
+    if (state.running) {
+      scheduleLoop();
+    } else {
+      draw();
+      updatePerfDebug(lastFrameTime, true);
+    }
+  });
+
+  resize();
+  initDebugControls();
+  updateHud();
+  draw();
+  updatePerfDebug(performance.now(), true);
+})();
