@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  const buildVersion = "1.1.92";
+  const buildVersion = "1.1.96";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -43,7 +43,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.1.92`;
+      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.1.96`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -173,13 +173,19 @@
   const catBubbleRollIntervalMs = 10000;
   const catBubbleTapRequired = 4;
   const catBubbleHoldMs = 760;
-  const catBubbleWaterGain = 25;
+  const heartCount = 3;
+  const heartWater = 100 / heartCount;
+  const regularCorrectWaterGain = 0.5;
+  const catBubbleWaterGain = heartWater;
   const chargeBubbleWarningSeconds = 0.72;
   const chargeBubbleFuseMinSeconds = 3.2;
   const chargeBubbleFuseMaxSeconds = 4.45;
-  const chargeBubblePenalty = 25;
-  const correctWaterGain = 0.1;
-  const gameOverWaterThreshold = 25;
+  const chargeBubblePenalty = heartWater;
+  const dragBubbleMinLevel = 3;
+  const dragBubbleFadeSeconds = 0.78;
+  const dragBubbleSuccessWater = regularCorrectWaterGain;
+  const correctWaterGain = regularCorrectWaterGain;
+  const gameOverWaterThreshold = 0;
   const customPackStorageKey = "paopao.customBubblePack.v1";
   const localLeaderboardStorageKey = "paopao.localLeaderboard.v1";
   const localLeaderboardLimit = 80;
@@ -242,6 +248,10 @@
     chargeWave: null,
     chargeWaveCounter: 0,
     chargeLastPattern: "",
+    nextDragAt: 0,
+    dragBubbleCounter: 0,
+    dragPointerId: null,
+    dragBubbleUid: null,
     bombSpawnCursor: 0,
     difficultyTier: 0,
     difficultyFlash: 0,
@@ -840,7 +850,7 @@
   }
 
   function activeBubbleLimit(level = displayDifficultyLevel()) {
-    const base = level <= 1 ? 10 : level <= 3 ? 12 : level <= 6 ? 14 : level <= 10 ? 16 : level <= 16 ? 18 : 20;
+    const base = level <= 1 ? 10 : level <= 3 ? 12 : level <= 6 ? 15 : level <= 10 ? 18 : level <= 16 ? 21 : 24;
     try {
       if (isIslandChoreoPattern(currentBackgroundPatternId())) {
         return Math.max(base, 12);
@@ -854,6 +864,7 @@
   function bubbleCapacityWeight(bubble) {
     if (!bubble) return 0;
     if (bubble.isCharge) return bubble.age < 0 ? 0.2 : 0.55;
+    if (bubble.isDrag) return 0.7;
     if ((bubble.islandChainId || bubble.pathLockedMotion) && bubble.age < 0) return 1;
     if (bubble.age < -1.15) return 0.18;
     if (bubble.age < -0.28) return 0.35;
@@ -1694,11 +1705,12 @@
     }
     lastWaterBand = waterBand;
     lastHudWater = exactWater;
+    const filledHearts = exactWater <= 0 ? 0 : Math.min(heartCount, Math.ceil(exactWater / heartWater - 0.000001));
     heartBubbles.forEach((heart, index) => {
-      heart.src = redDotHeartSrc(exactWater >= (index + 1) * 25);
+      heart.src = redDotHeartSrc(index < filledHearts);
     });
-    waterFill.style.width = `${water}%`;
-    waterValue.textContent = `${water}%`;
+    waterFill.style.width = `${exactWater}%`;
+    waterValue.textContent = `${Math.abs(exactWater - Math.round(exactWater)) < 0.05 ? Math.round(exactWater) : exactWater.toFixed(1)}%`;
     waterBlock.classList.toggle("warn", water <= 48);
     waterBlock.classList.toggle("low", water <= 32);
     waterBlock.classList.toggle("danger", water <= 18);
@@ -1780,6 +1792,10 @@
     state.chargeWave = null;
     state.chargeWaveCounter = 0;
     state.chargeLastPattern = "";
+    state.nextDragAt = stageDurationMs * 2 + rand(4800, 9800);
+    state.dragBubbleCounter = 0;
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
     state.bombSpawnCursor = 0;
     state.difficultyTier = 0;
     state.difficultyFlash = 0;
@@ -1974,6 +1990,8 @@
       navigator.vibrate([22, 38, 22]);
     }
     state.running = false;
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
     curtain.classList.add("result-mode");
     curtain.classList.remove("hidden");
     if (titleMark) {
@@ -1989,7 +2007,7 @@
   }
 
   function isWaterGameOver() {
-    return state.water < gameOverWaterThreshold;
+    return state.water <= gameOverWaterThreshold;
   }
 
   function difficulty() {
@@ -2035,8 +2053,13 @@
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
     const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.08 + p * 0.2);
+    const tempoPressure =
+      smoothstep(5, 9, level) * 0.26 +
+      smoothstep(9, 14, level) * 0.62 +
+      smoothstep(14, 21, level) * 0.42 +
+      smoothstep(21, 28, level) * 0.5;
     const overtime = smoothstep(24, 31, level) * 0.75 + smoothstep(31, 38, level) * 1.05;
-    return clamp(levelWaterDrainRate(level) + stageTension + overtime, 0.34, 4.2);
+    return clamp(levelWaterDrainRate(level) + stageTension + tempoPressure + overtime, 0.34, 5.8);
   }
 
   function waterPressureHorizon() {
@@ -2110,8 +2133,9 @@
 
   function addWater(amount, options = {}) {
     const applied = Math.max(0, Number.isFinite(amount) ? amount : correctWaterGain);
+    const before = state.water;
     state.water = Math.min(100, state.water + applied);
-    return applied;
+    return state.water - before;
   }
 
   function relieveWaterPressureOnCorrect(appliedWaterGain, bubble) {
@@ -2131,7 +2155,7 @@
   }
 
   function isSpecialBubble(bubble) {
-    return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isCat || bubble.isCharge));
+    return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isCat || bubble.isCharge || bubble.isDrag));
   }
 
   function noteWaterOpportunity(bubble) {
@@ -2151,16 +2175,7 @@
   }
 
   function stageMistakePenalty(type, bubble) {
-    if (bubble) {
-      const value = type === "wrong" ? bubble.wrongPenalty : bubble.missPenalty;
-      if (Number.isFinite(value) && value > 0) return value;
-    }
-    const level = displayDifficultyLevel();
-    const p = clamp((level - 1) / 18, 0, 1);
-    const late = smoothstep(10, 26, level);
-    const sizeFactor = bubble ? clamp(bubble.baseRadius / 42, 0.62, 1.25) : 1;
-    if (type === "wrong") return (4.4 + p * 5.8 + late * 2.6) * sizeFactor;
-    return (1.35 + p * 3.15 + late * 1.65) * sizeFactor;
+    return heartWater;
   }
 
   function penalizeStageMistake(bubble, type) {
@@ -2178,8 +2193,8 @@
       }
       state.catMistakeCount += 1;
     }
-    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + penalty * 0.85);
     state.water = Math.max(0, state.water - penalty);
+    updateHud();
     if (isWaterGameOver()) {
       endGame();
     }
@@ -2251,6 +2266,7 @@
     const isBomb = kind === "bomb";
     const isCat = kind === "cat";
     const isCharge = kind === "charge";
+    const isDrag = kind === "drag";
     const forcedSize = options.sizeKind ?? null;
     const smallWave =
       options.isStream ||
@@ -2380,6 +2396,7 @@
       isBomb,
       isCat,
       isCharge,
+      isDrag,
       chargeWarningSeconds: options.chargeWarningSeconds ?? chargeBubbleWarningSeconds,
       chargeFuseSeconds: options.chargeFuseSeconds ?? rand(chargeBubbleFuseMinSeconds, chargeBubbleFuseMaxSeconds),
       chargeExplodeAt: options.chargeExplodeAt ?? 0,
@@ -2390,6 +2407,26 @@
       chargeBeat: options.chargeBeat ?? 0,
       chargeWasActive: false,
       chargeResolved: false,
+      dragId: isDrag ? ++state.dragBubbleCounter : 0,
+      dragSourceColorIndex: options.dragSourceColorIndex ?? -1,
+      dragTargetColorIndex: options.dragTargetColorIndex ?? -1,
+      dragLifeSeconds: options.dragLifeSeconds ?? 0,
+      dragFade: 0,
+      dragResolved: false,
+      dragActive: false,
+      dragPointerX: x,
+      dragPointerY: y,
+      dragLastPointerX: x,
+      dragLastPointerY: y,
+      dragGrabX: x,
+      dragGrabY: y,
+      dragTravel: 0,
+      dragIntentAt: 0,
+      dragAnchorX: x,
+      dragAnchorY: y,
+      dragHintX: options.dragHintX ?? 1,
+      dragHintY: options.dragHintY ?? 0,
+      dragStretch: 0,
       customLabel: options.customLabel ?? "",
       customHits: 0,
       customTapRequired: customTapRequired <= 0 && customHoldRequiredMs <= 0 ? 1 : customTapRequired,
@@ -2454,6 +2491,8 @@
           ? "#fff6d6"
           : isCharge
             ? "#f7fbff"
+          : isDrag
+            ? "#e8fbff"
           : isClear
             ? clearTone.color
             : isSuper
@@ -2924,6 +2963,366 @@
     wave.nextBeatAt = state.elapsed + wave.beatMs * rand(0.92, 1.08);
   }
 
+  function activeDragBubbleCount() {
+    return state.bubbles.reduce((count, bubble) => count + (bubble.isDrag && !bubble.dragResolved ? 1 : 0), 0);
+  }
+
+  function dragBubbleByUid(uid = state.dragBubbleUid) {
+    if (!uid) return null;
+    return state.bubbles.find((bubble) => bubble.uid === uid && bubble.isDrag && !bubble.dragResolved) ?? null;
+  }
+
+  function nextDragBubbleDelay(level = displayDifficultyLevel()) {
+    if (level <= 4) return rand(13500, 18500);
+    if (level <= 8) return rand(11000, 15500);
+    if (level <= 14) return rand(9000, 13200);
+    return rand(7600, 11200);
+  }
+
+  function dragBubbleLifeForLevel(level = displayDifficultyLevel()) {
+    if (level <= 4) return 6.6;
+    if (level <= 8) return 6;
+    if (level <= 14) return 5.4;
+    return 4.9;
+  }
+
+  function dragBubblePenaltyForLevel(level = displayDifficultyLevel()) {
+    return heartWater;
+  }
+
+  function dragPointStableForColor(x, y, colorIndex, lifeSeconds) {
+    const finalProbe = Math.min(4200, Math.max(2400, lifeSeconds * 1000 - 420));
+    return [0, 900, 2200, finalProbe].every(
+      (offset) => projectedBackgroundColorIndexAt(x, y, state.elapsed + offset) === colorIndex,
+    );
+  }
+
+  function dragBoundaryDepth(point, radius, colorIndex) {
+    const distances = [1.65, 2.45, 3.35, 4.45, 5.75].map((scale) => radius * scale);
+    let depth = Math.max(state.width, state.height) * 0.42;
+    for (let directionIndex = 0; directionIndex < 8; directionIndex += 1) {
+      const angle = (directionIndex / 8) * Math.PI * 2;
+      for (const distance of distances) {
+        const x = point.x + Math.cos(angle) * distance;
+        const y = point.y + Math.sin(angle) * distance;
+        if (x < radius || x > state.width - radius || y < radius || y > state.height - radius) continue;
+        const current = projectedBackgroundColorIndexAt(x, y, state.elapsed + 900);
+        const later = projectedBackgroundColorIndexAt(x, y, state.elapsed + 2200);
+        if (current !== colorIndex || later !== colorIndex) {
+          depth = Math.min(depth, distance);
+          break;
+        }
+      }
+    }
+    return depth;
+  }
+
+  function dragBubbleSpawnCandidate(radius, lifeSeconds) {
+    const xRatios = [0.17, 0.28, 0.39, 0.5, 0.61, 0.72, 0.83];
+    const yRatios = [0.2, 0.32, 0.44, 0.56, 0.68, 0.8];
+    const candidates = [];
+    for (const xRatio of xRatios) {
+      for (const yRatio of yRatios) {
+        const point = {
+          x: clamp(state.width * xRatio, radius + 22, state.width - radius - 22),
+          y: clamp(state.height * yRatio, radius + 54, state.height - radius - 70),
+        };
+        const colorIndex = backgroundColorIndexAt(point.x, point.y);
+        if (!dragPointStableForColor(point.x, point.y, colorIndex, lifeSeconds)) continue;
+
+        let nearestBubble = Math.max(state.width, state.height);
+        let crowded = false;
+        for (const bubble of state.bubbles) {
+          if (bubble.age < -0.65 || bubble.dragResolved) continue;
+          const gap = radius + (bubble.baseRadius ?? bubble.radius ?? 24) + (bubble.isCharge ? 28 : 18);
+          const distance = Math.hypot(point.x - bubble.x, point.y - bubble.y);
+          nearestBubble = Math.min(nearestBubble, distance);
+          if (distance < gap) {
+            crowded = true;
+            break;
+          }
+        }
+        if (crowded) continue;
+
+        const boundaryDepth = dragBoundaryDepth(point, radius, colorIndex);
+        const edgeClearance = Math.min(point.x, state.width - point.x, point.y, state.height - point.y);
+        candidates.push({
+          ...point,
+          colorIndex,
+          boundaryDepth,
+          score: boundaryDepth * 1.8 + edgeClearance * 0.28 + Math.min(nearestBubble, 220) * 0.18 + rand(-8, 8),
+        });
+      }
+    }
+    candidates.sort((left, right) => right.score - left.score);
+    if (!candidates.length) return null;
+    return candidates[Math.floor(rand(0, Math.min(3, candidates.length)))];
+  }
+
+  function dragBubbleTargetPoint(origin, targetColorIndex, radius) {
+    const xRatios = [0.18, 0.3, 0.42, 0.58, 0.7, 0.82];
+    const yRatios = [0.22, 0.34, 0.46, 0.58, 0.7, 0.78];
+    let best = null;
+    for (const xRatio of xRatios) {
+      for (const yRatio of yRatios) {
+        const point = {
+          x: clamp(state.width * xRatio, radius + 18, state.width - radius - 18),
+          y: clamp(state.height * yRatio, radius + 52, state.height - radius - 66),
+        };
+        if (projectedBackgroundColorIndexAt(point.x, point.y, state.elapsed + 900) !== targetColorIndex) continue;
+        if (projectedBackgroundColorIndexAt(point.x, point.y, state.elapsed + 2100) !== targetColorIndex) continue;
+        const distance = Math.hypot(point.x - origin.x, point.y - origin.y);
+        if (distance < radius * 2.6) continue;
+        if (!best || distance < best.distance) best = { ...point, distance };
+      }
+    }
+    return best ?? matchingPointForColor(targetColorIndex, origin.y);
+  }
+
+  function spawnDragBubble() {
+    if (!state.running || activeDragBubbleCount() > 0) return false;
+    const level = displayDifficultyLevel();
+    const radius = clamp(Math.min(state.width, state.height) * rand(0.1, 0.118), 40, 52);
+    const lifeSeconds = dragBubbleLifeForLevel(level) + rand(-0.22, 0.28);
+    const candidate = dragBubbleSpawnCandidate(radius, lifeSeconds);
+    if (!candidate) return false;
+    const targetColorIndex = 1 - candidate.colorIndex;
+    const targetPoint = dragBubbleTargetPoint(candidate, targetColorIndex, radius);
+    const hint = normalizeVector(targetPoint.x - candidate.x, targetPoint.y - candidate.y, { x: 1, y: 0 });
+    const spawned = spawnBubble(false, "drag", {
+      edge: "top",
+      x: candidate.x,
+      y: candidate.y,
+      target: { x: candidate.x, y: candidate.y },
+      velocity: { vx: 0, vy: 0 },
+      radius,
+      speed: 0,
+      fairPassComplete: true,
+      quietHint: true,
+      spawnRevealSeconds: 0.42,
+      ignoreCapacity: true,
+      dragSourceColorIndex: candidate.colorIndex,
+      dragTargetColorIndex: targetColorIndex,
+      dragLifeSeconds: lifeSeconds,
+      dragHintX: hint.x,
+      dragHintY: hint.y,
+    });
+    if (!spawned) return false;
+    state.ripples.push({
+      x: candidate.x,
+      y: candidate.y,
+      radius: radius * 0.38,
+      age: 0,
+      life: 0.4,
+      color: palette[targetColorIndex].light,
+      power: 0.42,
+    });
+    return true;
+  }
+
+  function maybeSpawnDragBubble() {
+    const level = displayDifficultyLevel();
+    if (!state.running || level < dragBubbleMinLevel || state.elapsed < state.nextDragAt) return;
+    if (activeDragBubbleCount() > 0) {
+      state.nextDragAt = state.elapsed + 850;
+      return;
+    }
+    const sceneCount = state.bubbles.reduce((count, bubble) => count + (bubble.age >= -0.45 ? 1 : 0), 0);
+    const chargePressure = activeChargeBubbleCount() >= Math.max(2, maxActiveChargeBubblesForLevel(level) - 1);
+    if (chargePressure || sceneCount > activeBubbleLimit(level) + 2) {
+      state.nextDragAt = state.elapsed + rand(620, 980);
+      return;
+    }
+    if (spawnDragBubble()) {
+      state.nextDragAt = state.elapsed + nextDragBubbleDelay(level);
+    } else {
+      state.nextDragAt = state.elapsed + rand(900, 1400);
+    }
+  }
+
+  function dragBubbleTargetCoverage(bubble) {
+    const r = bubble.baseRadius * 0.38;
+    const points = [
+      { x: bubble.x, y: bubble.y },
+      { x: bubble.x - r, y: bubble.y },
+      { x: bubble.x + r, y: bubble.y },
+      { x: bubble.x, y: bubble.y - r },
+      { x: bubble.x, y: bubble.y + r },
+    ];
+    const matches = points.reduce(
+      (count, point) => count + (backgroundColorIndexAt(point.x, point.y) === bubble.dragTargetColorIndex ? 1 : 0),
+      0,
+    );
+    return matches / points.length;
+  }
+
+  function beginDragBubble(x, y, pointerId) {
+    if (state.dragPointerId !== null) return false;
+    for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
+      const bubble = state.bubbles[index];
+      if (!bubble.isDrag || bubble.dragResolved || bubble.age < 0.14 || bubble.dragFade > 0.78) continue;
+      if (Math.hypot(x - bubble.x, y - bubble.y) > bubble.baseRadius * 1.28 + 8) continue;
+      state.dragPointerId = pointerId;
+      state.dragBubbleUid = bubble.uid;
+      bubble.dragActive = true;
+      bubble.dragPointerX = x;
+      bubble.dragPointerY = y;
+      bubble.dragLastPointerX = x;
+      bubble.dragLastPointerY = y;
+      bubble.dragGrabX = x;
+      bubble.dragGrabY = y;
+      bubble.dragTravel = 0;
+      bubble.dragIntentAt = 0;
+      bubble.dragAnchorX = bubble.x;
+      bubble.dragAnchorY = bubble.y;
+      noteUsefulAction();
+      return true;
+    }
+    return false;
+  }
+
+  function moveDragBubblePointer(x, y, pointerId) {
+    if (state.dragPointerId !== pointerId) return false;
+    const bubble = dragBubbleByUid();
+    if (!bubble) return true;
+    const clampedX = clamp(x, bubble.baseRadius * 0.55, state.width - bubble.baseRadius * 0.55);
+    const clampedY = clamp(y, bubble.baseRadius * 0.55, state.height - bubble.baseRadius * 0.55);
+    const moveDistance = Math.hypot(clampedX - bubble.dragLastPointerX, clampedY - bubble.dragLastPointerY);
+    bubble.dragTravel += moveDistance;
+    bubble.dragLastPointerX = clampedX;
+    bubble.dragLastPointerY = clampedY;
+    bubble.dragPointerX = clampedX;
+    bubble.dragPointerY = clampedY;
+    if (
+      bubble.dragTravel >= bubble.baseRadius * 0.92 &&
+      backgroundColorIndexAt(clampedX, clampedY) === bubble.dragTargetColorIndex
+    ) {
+      bubble.dragIntentAt = bubble.dragIntentAt || state.elapsed;
+    }
+    return true;
+  }
+
+  function releaseDragBubblePointer(pointerId) {
+    if (state.dragPointerId !== pointerId) return false;
+    const bubble = dragBubbleByUid();
+    if (bubble) {
+      bubble.dragActive = false;
+      bubble.dragAnchorX = bubble.x;
+      bubble.dragAnchorY = bubble.y;
+      bubble.dragIntentAt = 0;
+    }
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
+    return true;
+  }
+
+  function completeDragBubble(bubble, index) {
+    if (bubble.dragResolved) return;
+    bubble.dragResolved = true;
+    bubble.dragActive = false;
+    state.bubbles.splice(index, 1);
+    state.dragBubbleUid = null;
+    noteUsefulAction();
+    state.poppedCount += 1;
+    state.score += 4 + comboScoreBonus();
+    registerCombo();
+    const waterGain = dragBubbleSuccessWater;
+    addWater(waterGain);
+    const tone = palette[bubble.dragTargetColorIndex] ?? openTone;
+    makePunctureSplash(bubble, bubble.x, bubble.y, tone, Math.round(16 + bubble.baseRadius * 0.28), false, false);
+    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.76, `x${state.combo} +${formatWaterGain(waterGain)}`, tone.light, 0.9, {
+      life: 0.52,
+      vy: -24,
+      stroke: "rgba(18, 39, 52, 0.44)",
+      shadow: "rgba(255,255,255,0.16)",
+    });
+    state.flash = Math.max(state.flash, 0.14);
+    vibratePop(14);
+    playPop("big");
+  }
+
+  function failDragBubble(bubble, index) {
+    if (bubble.dragResolved) return;
+    bubble.dragResolved = true;
+    bubble.dragActive = false;
+    state.bubbles.splice(index, 1);
+    state.dragBubbleUid = null;
+    noteWrongAction();
+    resetCombo();
+    const penalty = dragBubblePenaltyForLevel();
+    state.water = Math.max(0, state.water - penalty);
+    waterShockUntil = Math.max(waterShockUntil, state.elapsed + 360);
+    state.mistakeFlash = Math.max(state.mistakeFlash, 0.14);
+    makePunctureSplash(bubble, bubble.x, bubble.y, whiteTone, Math.round(10 + bubble.baseRadius * 0.18), false, false);
+    state.ripples.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.baseRadius * 0.46,
+      age: 0,
+      life: 0.3,
+      color: colorWithAlpha("#e9faff", 0.56),
+      power: 0.42,
+    });
+    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.7, `-${formatWaterGain(penalty)}`, "#f2fbff", 0.72, {
+      life: 0.44,
+      vy: -18,
+      stroke: "rgba(21, 42, 54, 0.42)",
+      shadow: "rgba(255,255,255,0.12)",
+    });
+    playPop("regular");
+    updateHud();
+    if (isWaterGameOver()) endGame();
+  }
+
+  function updateDragBubble(bubble, index, dt) {
+    const lifeSeconds = Math.max(2, bubble.dragLifeSeconds || dragBubbleLifeForLevel());
+    const fadeStart = Math.max(0.8, lifeSeconds - dragBubbleFadeSeconds);
+    bubble.dragFade = smoothstep(fadeStart, lifeSeconds, bubble.age);
+    if (bubble.age >= lifeSeconds) {
+      failDragBubble(bubble, index);
+      return true;
+    }
+
+    const dragging = bubble.dragActive && state.dragPointerId !== null && state.dragBubbleUid === bubble.uid;
+    const idleX = bubble.dragAnchorX + Math.sin(bubble.age * 1.25 + bubble.skinPhase) * 3.2;
+    const idleY = bubble.dragAnchorY + Math.cos(bubble.age * 1.08 + bubble.skinPhase * 0.7) * 2.8;
+    const targetX = dragging ? bubble.dragPointerX : idleX;
+    const targetY = dragging ? bubble.dragPointerY : idleY;
+    const stiffness = dragging ? 42 : 10;
+    bubble.vx += (targetX - bubble.x) * stiffness * dt;
+    bubble.vy += (targetY - bubble.y) * stiffness * dt;
+    const damping = Math.exp(-(dragging ? 9.4 : 5.6) * dt);
+    bubble.vx *= damping;
+    bubble.vy *= damping;
+    const maxSpeed = dragging ? 760 : 48;
+    const speed = Math.hypot(bubble.vx, bubble.vy);
+    if (speed > maxSpeed) {
+      const scale = maxSpeed / speed;
+      bubble.vx *= scale;
+      bubble.vy *= scale;
+    }
+    bubble.x += bubble.vx * dt;
+    bubble.y += bubble.vy * dt;
+    const margin = bubble.baseRadius * 0.66;
+    bubble.x = clamp(bubble.x, margin, state.width - margin);
+    bubble.y = clamp(bubble.y, margin, state.height - margin);
+    const pullDistance = dragging ? Math.hypot(bubble.dragPointerX - bubble.x, bubble.dragPointerY - bubble.y) : 0;
+    const desiredStretch = dragging ? clamp(pullDistance / Math.max(1, bubble.baseRadius * 1.35) + speed / 980, 0.08, 1.25) : 0;
+    bubble.dragStretch += (desiredStretch - bubble.dragStretch) * Math.min(1, dt * (dragging ? 9 : 5));
+    bubble.wobble += bubble.wobbleSpeed * dt * 0.42;
+
+    if (
+      dragging &&
+      bubble.dragIntentAt > 0 &&
+      backgroundColorIndexAt(bubble.dragPointerX, bubble.dragPointerY) === bubble.dragTargetColorIndex &&
+      dragBubbleTargetCoverage(bubble) >= 0.4
+    ) {
+      completeDragBubble(bubble, index);
+      return true;
+    }
+    return false;
+  }
+
   function spawnComboBomb() {
     if (!state.running || bubbleCapacityRemaining() <= 0) return false;
     if (state.elapsed < state.nextBombAt) return false;
@@ -3280,10 +3679,11 @@
             : flow.type === "sGroup"
               ? 520
               : 620;
-    const flowInterval = (base * rand(0.84, 1.14)) / spawnFlowRhythm(flow) - d * 90;
-    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.76, 1.04)), 190, 1180);
-    const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 260 : 0;
-    const groupBreath = Math.min(360, Math.max(0, count - 1) * (displayDifficultyLevel() <= 3 ? 145 : 95));
+    const levelPace = 1 - smoothstep(8, 18, displayDifficultyLevel()) * 0.2;
+    const flowInterval = ((base * rand(0.84, 1.14)) / spawnFlowRhythm(flow) - d * 90) * levelPace;
+    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.72, 0.98)), 165, 1120);
+    const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 190 : 0;
+    const groupBreath = Math.min(290, Math.max(0, count - 1) * (displayDifficultyLevel() <= 3 ? 132 : 78));
     state.nextSpawnAt = state.elapsed + interval + groupBreath + phraseRest;
   }
 
@@ -5650,9 +6050,9 @@
     }
 
     if (spawned <= 0) return false;
-    const nextMin = routeType === "sweepS" ? (tide ? 1780 : 1900) : routeType === "borderS" ? (tide ? 1420 : 1580) : tide ? 1320 : 1480;
-    const nextMax = routeType === "sweepS" ? (tide ? 2450 : 2600) : routeType === "borderS" ? (tide ? 2100 : 2300) : tide ? 1980 : 2180;
-    const pace = 1 - smoothstep(2, 6, level) * 0.28;
+    const nextMin = routeType === "sweepS" ? (tide ? 1520 : 1640) : routeType === "borderS" ? (tide ? 1210 : 1340) : tide ? 1120 : 1260;
+    const nextMax = routeType === "sweepS" ? (tide ? 2100 : 2240) : routeType === "borderS" ? (tide ? 1760 : 1940) : tide ? 1660 : 1840;
+    const pace = 1 - smoothstep(2, 8, level) * 0.3;
     state.nextSpawnAt = state.elapsed + rand(nextMin, nextMax) * pace;
     return true;
   }
@@ -5811,6 +6211,7 @@
 
     let count = 1;
     if (flow.type === "normal" && level >= 4 && spawnFlowRhythm(flow) > 1.24 && bubbleCapacityRemaining(level) >= 2 && Math.random() < 0.3 + d * 0.12) count += 1;
+    if (flow.type === "normal" && level >= 9 && spawnFlowRhythm(flow) > 1.08 && bubbleCapacityRemaining(level) >= 3 && Math.random() < 0.48 + d * 0.1) count += 1;
     if (level <= 2) count = 1;
     count = Math.min(count, remainingStage, bubbleCapacityRemaining(level));
     if (count <= 0) return;
@@ -5851,7 +6252,7 @@
     const cleared = [];
     const waiting = [];
     state.bubbles.forEach((bubble) => {
-      if (bubble.isCat || bubble.isCharge) {
+      if (bubble.isCat || bubble.isCharge || bubble.isDrag) {
         waiting.push(bubble);
       } else if (bubble.age >= 0) {
         cleared.push(bubble);
@@ -6037,6 +6438,7 @@
     state.poppedCount += 1;
     state.score += 2;
     registerCombo();
+    addWater(regularCorrectWaterGain);
     makePunctureSplash(bubble, hitX, hitY, whiteTone, Math.round(14 + bubble.radius * 0.22), false, false);
     makeFloatText(bubble.x, bubble.y - bubble.radius * 0.8, `x${state.combo}`, "#f8fdff", 1.02, {
       stroke: "rgba(19, 35, 55, 0.54)",
@@ -6054,7 +6456,6 @@
     noteWrongAction();
     resetCombo();
     state.water = Math.max(0, state.water - chargeBubblePenalty);
-    state.waterPressure = Math.min(waterPressureCap, state.waterPressure + chargeBubblePenalty * 0.55);
     waterShockUntil = Math.max(waterShockUntil, state.elapsed + 520);
     makePunctureSplash(bubble, bubble.x, bubble.y, whiteTone, Math.round(18 + bubble.radius * 0.32), false, false);
     makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, "-1心", "#f8fdff", 1.12, {
@@ -6132,7 +6533,7 @@
     registerCombo({ chargeSkill: false });
     recordStageCorrect(bubble);
     state.score += bubble.isWhite ? 1 : 1;
-    addWater(bubble.isWhite ? 1.1 : Math.min(2.4, (bubble.waterValue ?? 1.8) * 0.42));
+    addWater(regularCorrectWaterGain);
     state.ripples.push({
       x: bubble.x,
       y: bubble.y,
@@ -6372,7 +6773,7 @@
   }
 
   function customBubbleNeedsClear(bubble) {
-    if (!bubble || bubble.isCat || bubble.isBleach || bubble.isBomb || bubble.isClear || bubble.isCharge) return false;
+    if (!bubble || bubble.isCat || bubble.isBleach || bubble.isBomb || bubble.isClear || bubble.isCharge || bubble.isDrag) return false;
     const tapRequired = bubble.customTapRequired ?? 1;
     const holdRequired = bubble.customHoldRequiredMs ?? 0;
     return tapRequired > 1 || tapRequired === 0 || holdRequired > 0;
@@ -6496,7 +6897,7 @@
     state.poppedCount += 1;
     chargeClearSkillByBubble(bubble);
     state.score += 1;
-    addWater(3.6);
+    addWater(regularCorrectWaterGain);
     decolorBubbles(bubble);
     comboFeedbackAt(bubble.x, bubble.y, whiteTone);
     vibratePop(16);
@@ -6548,7 +6949,7 @@
 
     if (bubble.isBomb) {
       state.score += 1;
-      addWater(3.8);
+      addWater(regularCorrectWaterGain);
       makeFloatText(bubble.x, bubble.y - bubble.radius, "扩散", bombTone.light, 1.08);
       startBombBlast(bubble);
       comboFeedbackAt(bubble.x, bubble.y, bombTone);
@@ -6562,14 +6963,7 @@
       state.openPopCount += 1;
     }
 
-    const baseBudgetWater = bubble.waterValue ?? (isSmall ? 3 : 4.2);
-    const waterGain = bubble.isWhite
-      ? isSmall ? 1.5 : 2.5
-      : bubble.isSuper
-      ? 16
-      : isOpen
-        ? baseBudgetWater * 0.72 + comboWaterBoost(baseBudgetWater) * 0.7
-        : baseBudgetWater + comboWaterBoost(baseBudgetWater);
+    const waterGain = regularCorrectWaterGain;
     const scoreGain = bubble.isWhite
       ? 1
       : bubble.isSuper
@@ -6587,7 +6981,13 @@
     makeFloatText(
       bubble.x,
       bubble.y - bubble.radius * 0.72,
-      bubble.isWhite ? "+1分" : state.combo > 1 ? `x${state.combo} +${formatWaterGain(appliedWaterGain)}` : `+${formatWaterGain(appliedWaterGain)}`,
+      bubble.isWhite
+        ? "+1分"
+        : appliedWaterGain <= 0
+          ? "MAX"
+          : state.combo > 1
+            ? `x${state.combo} +${formatWaterGain(appliedWaterGain)}`
+            : `+${formatWaterGain(appliedWaterGain)}`,
       isOpen ? openTone.light : color.light,
       Math.min(1.34, 0.96 + state.combo * 0.012),
     );
@@ -6601,6 +7001,7 @@
 
     vibratePop(bubble.isSuper ? 24 : isSmall ? 7 : 14);
     playPop(popSoundKindForBubble(bubble));
+    updateHud();
   }
 
   function missBubble(bubble, index, isTap) {
@@ -6627,7 +7028,7 @@
       power: 0.28,
     });
     state.mistakeFlash = Math.max(state.mistakeFlash, 0.22);
-    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.72, "偏了", "#eefbff", 0.72, {
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.72, "-1心", "#eefbff", 0.82, {
       life: 0.42,
       vy: -18,
       stroke: "rgba(15, 33, 43, 0.46)",
@@ -6680,10 +7081,6 @@
       bubble.isWhite ||
       bubble.colorIndex === -1
     ) {
-      return true;
-    }
-
-    if (isStageTargetBubble(bubble) && bubble.fairPassComplete && bubble.wasReady) {
       return true;
     }
 
@@ -7062,6 +7459,9 @@
       const minTargetHitRadius = stageTarget ? (isCalmSmallBubble(bubble) ? 28 : 32) : 0;
       const hitRadius = Math.max(bubble.radius + hitPadding, minTargetHitRadius + (isTap ? 0 : 4));
       if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        if (bubble.isDrag) {
+          return true;
+        }
         if (bubble.isCharge) {
           if (bubble.age < (bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds)) {
             return true;
@@ -7105,6 +7505,9 @@
     state.lastSwipeX = x;
     state.lastSwipeY = y;
     canvas.setPointerCapture?.(event.pointerId);
+    if (beginDragBubble(x, y, event.pointerId)) {
+      return;
+    }
     tryPopAt(x, y, true, event.pointerId);
   }
 
@@ -7115,6 +7518,11 @@
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    if (moveDragBubblePointer(x, y, event.pointerId)) {
+      state.lastSwipeX = x;
+      state.lastSwipeY = y;
+      return;
+    }
     if (state.catHoldPointerId === event.pointerId) {
       state.catHoldX = x;
       state.catHoldY = y;
@@ -7138,6 +7546,7 @@
   }
 
   function handlePointerEnd(event) {
+    releaseDragBubblePointer(event.pointerId);
     if (state.activePointerId === event.pointerId) {
       state.activePointerId = null;
       canvas.releasePointerCapture?.(event.pointerId);
@@ -7160,6 +7569,7 @@
     maybeAdvanceStage();
     maybeActivateCatBubbleSystem();
     maybeSpawnChargeBubble();
+    maybeSpawnDragBubble();
     const d = difficulty();
     const tier = difficultyTier(d);
     if (tier > state.difficultyTier) {
@@ -7222,6 +7632,10 @@
       }
       if (bubble.isWhite && bubble.whiteUntil > 0 && state.elapsed >= bubble.whiteUntil) {
         restoreDecoloredBubble(bubble);
+      }
+      if (bubble.isDrag) {
+        updateDragBubble(bubble, i, dt);
+        continue;
       }
       if (bubble.isCharge) {
         if (updateChargeBubble(bubble, i)) {
@@ -8069,6 +8483,103 @@
     return true;
   }
 
+  function drawDragBubbleTexture(bubble, x, y, r, alpha = 1) {
+    const source = palette[bubble.dragSourceColorIndex] ?? openTone;
+    const target = palette[bubble.dragTargetColorIndex] ?? openTone;
+    const pointerDx = (bubble.dragPointerX ?? x) - x;
+    const pointerDy = (bubble.dragPointerY ?? y) - y;
+    const hintDx = bubble.dragHintX ?? 1;
+    const hintDy = bubble.dragHintY ?? 0;
+    const direction = bubble.dragActive
+      ? normalizeVector(pointerDx, pointerDy, { x: hintDx, y: hintDy })
+      : normalizeVector(hintDx, hintDy, { x: 1, y: 0 });
+    const stretch = clamp(0.26 + (bubble.dragStretch ?? 0) * 0.82, 0.26, 1.25);
+    const fade = clamp(bubble.dragFade ?? 0, 0, 1);
+    const breathe = 1 + Math.sin(bubble.age * 2.25 + bubble.skinPhase) * 0.018;
+    const length = r * (1.05 + stretch * 0.92) * breathe;
+    const back = r * (0.9 + stretch * 0.2);
+    const height = r * (0.94 - stretch * 0.2) / breathe;
+    const angle = Math.atan2(direction.y, direction.x);
+    const waist = 0.78 - stretch * 0.12;
+
+    function traceFilm(scale = 1) {
+      const frontX = length * scale;
+      const backX = back * scale;
+      const h = height * scale;
+      ctx.beginPath();
+      ctx.moveTo(-backX, 0);
+      ctx.bezierCurveTo(-backX * 0.9, -h * 0.68, -backX * 0.25, -h, h * 0.08, -h * waist);
+      ctx.bezierCurveTo(frontX * 0.36, -h * 0.72, frontX * 0.84, -h * 0.62, frontX, 0);
+      ctx.bezierCurveTo(frontX * 0.84, h * 0.62, frontX * 0.36, h * 0.72, h * 0.08, h * waist);
+      ctx.bezierCurveTo(-backX * 0.25, h, -backX * 0.9, h * 0.68, -backX, 0);
+      ctx.closePath();
+    }
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.globalAlpha *= alpha * (1 - fade * 0.9);
+
+    const shadow = ctx.createRadialGradient(0, 0, r * 0.15, 0, 0, Math.max(length, back) * 1.05);
+    shadow.addColorStop(0, colorWithAlpha(source.light, 0.1));
+    shadow.addColorStop(1, colorWithAlpha(source.light, 0));
+    ctx.fillStyle = shadow;
+    ctx.beginPath();
+    ctx.ellipse((length - back) * 0.15, r * 0.08, (length + back) * 0.58, height * 0.98, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    traceFilm();
+    const film = ctx.createLinearGradient(-back, -height * 0.35, length, height * 0.28);
+    film.addColorStop(0, colorWithAlpha(source.color, 0.25));
+    film.addColorStop(0.22, "rgba(255,255,255,0.2)");
+    film.addColorStop(0.5, colorWithAlpha(source.light, 0.11));
+    film.addColorStop(0.77, colorWithAlpha(target.light, 0.2));
+    film.addColorStop(1, colorWithAlpha(target.color, 0.28));
+    ctx.fillStyle = film;
+    ctx.fill();
+
+    ctx.save();
+    traceFilm(0.98);
+    ctx.clip();
+    ctx.globalCompositeOperation = "screen";
+    const rainbow = ctx.createLinearGradient(-back, height, length, -height);
+    rainbow.addColorStop(0, "rgba(255,184,226,0.22)");
+    rainbow.addColorStop(0.28, "rgba(151,237,255,0.2)");
+    rainbow.addColorStop(0.54, "rgba(255,247,177,0.16)");
+    rainbow.addColorStop(0.8, "rgba(184,168,255,0.2)");
+    rainbow.addColorStop(1, "rgba(255,255,255,0.3)");
+    ctx.strokeStyle = rainbow;
+    ctx.lineWidth = Math.max(5, r * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(-back * 0.72, height * 0.48);
+    ctx.bezierCurveTo(-back * 0.05, height * 0.82, length * 0.38, height * 0.48, length * 0.9, -height * 0.18);
+    ctx.stroke();
+    ctx.restore();
+
+    traceFilm();
+    ctx.strokeStyle = "rgba(247,253,255,0.78)";
+    ctx.lineWidth = Math.max(1.4, r * 0.045);
+    ctx.stroke();
+    traceFilm(0.94);
+    ctx.strokeStyle = colorWithAlpha(target.light, 0.34);
+    ctx.lineWidth = Math.max(1, r * 0.025);
+    ctx.stroke();
+
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = "rgba(255,255,255,0.72)";
+    ctx.beginPath();
+    ctx.ellipse(-back * 0.42, -height * 0.46, r * 0.28, r * 0.085, -0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = colorWithAlpha(target.light, 0.52);
+    for (let i = 0; i < 3; i += 1) {
+      ctx.beginPath();
+      ctx.arc(length * 0.72 + i * r * 0.11, (i - 1) * r * 0.1, Math.max(1.3, r * 0.035), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    return true;
+  }
+
   function drawWhiteBubbleSignal(x, y, r, whiteProgress = 1, whiteWarning = 0) {
     const pulse = 0.5 + Math.sin(state.visualTime / 150) * 0.5;
 
@@ -8217,6 +8728,11 @@
     const whiteBlink = whiteWarning * (0.5 + Math.sin(state.visualTime / 82) * 0.5);
     const whiteAlpha = bubble.isWhite ? clamp(0.94 + whiteProgress * 0.05 - whiteBlink * 0.16, 0.76, 1) : 1;
     const drawAlpha = whiteAlpha * revealAlpha;
+
+    if (bubble.isDrag) {
+      drawDragBubbleTexture(bubble, x, y, r, drawAlpha);
+      return;
+    }
 
     if (bubble.isStream) {
       const speed = Math.max(1, Math.hypot(bubble.vx, bubble.vy));
@@ -9060,7 +9576,10 @@
     state.nextPowerAt = state.elapsed + 26000;
     state.nextBombAt = state.elapsed;
     state.nextChargeAt = targetLevel <= 1 ? stageDurationMs + rand(3600, 6800) : state.elapsed + rand(2600, 4800);
+    state.nextDragAt = targetLevel < dragBubbleMinLevel ? (dragBubbleMinLevel - 1) * stageDurationMs + rand(4400, 7200) : state.elapsed + rand(2100, 3900);
     state.chargeWave = null;
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
     state.nextSpawnAt = state.elapsed + 120;
     state.lastPlayableAt = state.elapsed;
     state.lastRhythmBridgeAt = Number.NEGATIVE_INFINITY;
