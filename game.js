@@ -3,7 +3,7 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  const buildVersion = "1.1.91";
+  const buildVersion = "1.1.92";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -43,7 +43,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.1.91`;
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.1.92`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -144,16 +144,7 @@
       smoothingQuality: "medium",
     },
   ];
-  const waterBudgetRounds = [
-    { count: 10, total: 300 },
-    { count: 17, total: 250 },
-    { count: 23, total: 200 },
-    { count: 29, total: 150 },
-    { count: 33, total: 150 },
-    { count: 36, total: 120 },
-  ];
   const stageDurationMs = 20000;
-  const stageEndGraceMs = 3000;
 
   const palette = [
     { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
@@ -188,7 +179,6 @@
   const chargeBubbleFuseMaxSeconds = 4.45;
   const chargeBubblePenalty = 25;
   const correctWaterGain = 0.1;
-  const mistakeWaterPenalty = 25;
   const gameOverWaterThreshold = 25;
   const customPackStorageKey = "paopao.customBubblePack.v1";
   const localLeaderboardStorageKey = "paopao.localLeaderboard.v1";
@@ -236,9 +226,6 @@
     comboRecoveryPower: 0,
     clearSkillCharge: 1,
     clearSkillUses: 0,
-    waterRoundIndex: 0,
-    waterRoundSpawned: 0,
-    waterOpportunityCount: 0,
     stagePlan: null,
     stageLevel: 1,
     stageStartAt: 0,
@@ -265,6 +252,8 @@
     nextPowerAt: 22000,
     nextStreamAt: 18000,
     nextSpawnAt: 0,
+    lastPlayableAt: 0,
+    lastRhythmBridgeAt: -Infinity,
     bubbleCounter: 0,
     customBubblePack: null,
     customPackStatus: "",
@@ -843,17 +832,18 @@
   }
 
   function bubbleCountForLevel(level) {
-    const budget = waterBudgetRounds[Math.min(level - 1, waterBudgetRounds.length - 1)];
-    if (level <= waterBudgetRounds.length) return budget.count;
-    const extra = level - waterBudgetRounds.length;
-    return Math.round(clamp(budget.count + extra * 1.08, budget.count, 44));
+    const safeLevel = Math.max(1, level);
+    const steadyGrowth = 14 + (safeLevel - 1) * 4.1;
+    const midGameLift = smoothstep(3, 10, safeLevel) * 6;
+    const humanLimitLift = smoothstep(9, 20, safeLevel) * 11;
+    return Math.round(clamp(steadyGrowth + midGameLift + humanLimitLift, 14, 112));
   }
 
   function activeBubbleLimit(level = displayDifficultyLevel()) {
-    const base = level <= 4 ? maxActiveBubbles : level <= 8 ? 7 : 6;
+    const base = level <= 1 ? 10 : level <= 3 ? 12 : level <= 6 ? 14 : level <= 10 ? 16 : level <= 16 ? 18 : 20;
     try {
       if (isIslandChoreoPattern(currentBackgroundPatternId())) {
-        return Math.max(base, 10);
+        return Math.max(base, 12);
       }
     } catch {
       return base;
@@ -863,6 +853,7 @@
 
   function bubbleCapacityWeight(bubble) {
     if (!bubble) return 0;
+    if (bubble.isCharge) return bubble.age < 0 ? 0.2 : 0.55;
     if ((bubble.islandChainId || bubble.pathLockedMotion) && bubble.age < 0) return 1;
     if (bubble.age < -1.15) return 0.18;
     if (bubble.age < -0.28) return 0.35;
@@ -878,22 +869,16 @@
   }
 
   function levelWaterDrainRate(level) {
-    const p = clamp((level - 1) / 14, 0, 1);
+    const p = clamp((level - 1) / 29, 0, 1);
     return clamp(
-      1.16 +
-        p * 1.15 +
-        smoothstep(1, 5, level) * 0.42 +
-        smoothstep(5, 11, level) * 0.34,
-      1.16,
-      3.05,
+      0.34 +
+        p * 0.56 +
+        smoothstep(4, 10, level) * 0.24 +
+        smoothstep(9, 16, level) * 0.3 +
+        smoothstep(16, 30, level) * 0.7,
+      0.34,
+      2.14,
     );
-  }
-
-  function stageWaterBudgetForLevel(level) {
-    const targetBubbles = Math.max(1, Math.round(bubbleCountForLevel(level) * targetCorrectRateForLevel(level)));
-    const sustain = level <= 3 ? 1.16 : level <= 8 ? 1.03 : level <= 15 ? 0.92 : 0.88;
-    const perTargetFloor = level <= 3 ? 0.16 : level <= 8 ? 0.085 : 0.052;
-    return levelWaterDrainRate(level) * (stageDurationMs / 1000) * sustain + targetBubbles * perTargetFloor;
   }
 
   function averageBubbleMissPenaltyForLevel(level) {
@@ -912,21 +897,21 @@
     const cappedLevel = Math.min(level, 10);
     if (level <= 1) {
       return {
-        bigRise: 0.3,
-        bigSide: 0.24,
-        normal: 0.46,
+        bigRise: 0.27,
+        bigSide: 0.21,
+        normal: 0.52,
         crossArc: 0,
         machine: 0,
         sGroup: 0,
       };
     }
     const weights = {
-      bigRise: level <= 3 ? 0.18 : level <= 7 ? 0.15 : 0.13,
-      bigSide: level <= 3 ? 0.15 : level <= 7 ? 0.14 : 0.12,
-      normal: level <= 3 ? 0.28 : level <= 6 ? 0.25 : 0.22,
-      crossArc: level >= 2 ? 0.19 + cappedLevel * 0.011 : 0,
-      machine: level >= 3 ? 0.1 + cappedLevel * 0.008 : 0,
-      sGroup: level >= 2 ? 0.075 + cappedLevel * 0.008 : 0,
+      bigRise: level <= 3 ? 0.14 : level <= 7 ? 0.11 : 0.09,
+      bigSide: level <= 3 ? 0.12 : level <= 7 ? 0.1 : 0.08,
+      normal: level <= 3 ? 0.22 : level <= 6 ? 0.18 : 0.15,
+      crossArc: level >= 2 ? 0.22 + cappedLevel * 0.01 : 0,
+      machine: level >= 3 ? 0.13 + cappedLevel * 0.008 : 0,
+      sGroup: level >= 2 ? 0.14 + cappedLevel * 0.009 : 0,
     };
     return weights;
   }
@@ -986,20 +971,9 @@
 
   function stageCompletion() {
     if (!state.stagePlan) return 0;
-    return clamp(state.stageSpawned / Math.max(1, state.stagePlan.totalBubbles), 0, 1);
-  }
-
-  function activeStageTargetCount() {
-    return state.bubbles.reduce(
-      (count, bubble) =>
-        count +
-        (bubble.stageLevel === state.stageLevel && bubble.colorIndex >= 0 && !bubble.isWhite && (bubble.waterValue ?? 0) > 0 ? 1 : 0),
-      0,
-    );
-  }
-
-  function applyStageAccuracyGate() {
-    return true;
+    const spawnProgress = state.stageSpawned / Math.max(1, state.stagePlan.totalBubbles);
+    const timeProgress = stageElapsedMs() / stageDurationMs;
+    return clamp(Math.max(spawnProgress, timeProgress), 0, 1);
   }
 
   function maybeAdvanceStage() {
@@ -1007,11 +981,7 @@
       resetStagePlan(1);
       return;
     }
-    if (stageRemainingBubbles() > 0) return;
-    if (!state.stageFinalSpawnAt) state.stageFinalSpawnAt = state.elapsed;
-    const activeTargets = activeStageTargetCount();
-    const graceDone = state.elapsed - state.stageFinalSpawnAt >= stageEndGraceMs;
-    if (activeTargets > 0 && !graceDone) return;
+    if (stageElapsedMs() < stageDurationMs) return;
     const nextLevel = state.stageLevel + 1;
     triggerDifficultyUp(nextLevel - 1);
     resetStagePlan(nextLevel);
@@ -1359,10 +1329,6 @@
     state.bombComboTarget = pickBombComboTarget();
   }
 
-  function currentWaterBudgetRound() {
-    return waterBudgetRounds[Math.min(state.waterRoundIndex, waterBudgetRounds.length - 1)];
-  }
-
   function bubbleDifficultyValueWeight(radius, speed, options = {}) {
     const sizeWeight = clamp(42 / Math.max(16, radius), 0.68, 1.52);
     const speedWeight = clamp(speed / 88, 0.62, 1.58);
@@ -1382,8 +1348,6 @@
     const waterValue = clamp(plan.baseCorrectWater * (0.72 + weight * 0.26), 0.1, 2.45);
     const missPenalty = clamp(plan.baseMissPenalty * (0.72 + weight * 0.3), 0.22, 3.35);
     const wrongPenalty = clamp(plan.baseWrongPenalty * (0.76 + weight * 0.34), missPenalty * 1.28, 5.25);
-    state.waterRoundSpawned += 1;
-    state.waterOpportunityCount += 1;
     state.stageTargetSpawned += 1;
     return {
       waterValue,
@@ -1395,7 +1359,9 @@
 
   function comboWaterBoost(base) {
     if (state.combo <= 1) return 0;
-    return base * Math.min(0.24, (state.combo - 1) * 0.013);
+    const steady = Math.min(0.24, (state.combo - 1) * 0.013);
+    const mastery = smoothstep(22, 48, state.combo) * 0.16 + smoothstep(58, 118, state.combo) * 1.35;
+    return base * Math.min(1.75, steady + mastery);
   }
 
   function comboWaterBonus() {
@@ -1799,9 +1765,6 @@
     state.comboRecoveryPower = 0;
     state.clearSkillCharge = 1;
     state.clearSkillUses = 0;
-    state.waterRoundIndex = 0;
-    state.waterRoundSpawned = 0;
-    state.waterOpportunityCount = 0;
     state.stageLevel = 1;
     state.stageStartAt = 0;
     state.stageFinalSpawnAt = 0;
@@ -1827,6 +1790,8 @@
     state.nextPowerAt = 22000;
     state.nextStreamAt = 40000;
     state.nextSpawnAt = 120;
+    state.lastPlayableAt = 0;
+    state.lastRhythmBridgeAt = -Infinity;
     state.bubbleCounter = 0;
     state.customBubblePack = loadCustomBubblePack();
     state.customPackStatus = state.customBubblePack ? `PACK ${state.customBubblePack.name}` : "";
@@ -2070,7 +2035,8 @@
     const level = displayDifficultyLevel();
     const p = clamp((level - 1) / 18, 0, 1);
     const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.08 + p * 0.2);
-    return clamp(levelWaterDrainRate(level) + stageTension, 1.16, 3.32);
+    const overtime = smoothstep(24, 31, level) * 0.75 + smoothstep(31, 38, level) * 1.05;
+    return clamp(levelWaterDrainRate(level) + stageTension + overtime, 0.34, 4.2);
   }
 
   function waterPressureHorizon() {
@@ -2133,6 +2099,8 @@
   function drainWater(dt) {
     const pressureRate = state.waterPressure / waterPressureHorizon();
     state.waterPressure = Math.max(0, state.waterPressure - pressureRate * dt);
+    const openingEase = 0.58 + smoothstep(2, 10, state.elapsed / 1000) * 0.42;
+    state.water = Math.max(0, state.water - waterDrainRate() * openingEase * dt);
   }
 
   function formatWaterGain(value) {
@@ -2141,7 +2109,7 @@
   }
 
   function addWater(amount, options = {}) {
-    const applied = correctWaterGain;
+    const applied = Math.max(0, Number.isFinite(amount) ? amount : correctWaterGain);
     state.water = Math.min(100, state.water + applied);
     return applied;
   }
@@ -2197,7 +2165,7 @@
 
   function penalizeStageMistake(bubble, type) {
     if (!isStageTargetBubble(bubble)) return;
-    const penalty = mistakeWaterPenalty;
+    const penalty = stageMistakePenalty(type, bubble);
     if (bubble.stageLevel === state.stageLevel) {
       if (type === "wrong") state.stageWrongPops += 1;
       if (type === "miss") state.stageMissedTargets += 1;
@@ -2290,6 +2258,9 @@
       (forcedSize !== "normal" && (forceSmall || (d > 0.58 && Math.random() < (d - 0.42) * 0.34)));
     const radiusKind = forcedSize === "large" ? "large" : smallWave ? "small" : "normal";
     const radius = options.radius ?? (isBleach ? radiusForDifficulty(d, "normal") * rand(0.9, 1.04) : radiusForDifficulty(d, radiusKind));
+    if (options.customPath?.mode?.includes("flow") && Number.isInteger(options.colorIndex)) {
+      options.customPath.colorIndex = options.colorIndex;
+    }
     if (
       kind === "normal" &&
       options.customPath?.mode?.includes("flow") &&
@@ -2645,15 +2616,16 @@
   function maxActiveChargeBubblesForLevel(level = displayDifficultyLevel()) {
     if (level <= 2) return 2;
     if (level <= 5) return 3;
-    return 4;
+    if (level <= 9) return 4;
+    return 5;
   }
 
   function nextChargeBubbleDelay(level = displayDifficultyLevel()) {
-    if (level <= 1) return rand(12000, 18000);
-    if (level <= 2) return rand(9000, 13600);
-    if (level <= 5) return rand(8000, 12000);
-    if (level <= 8) return rand(7000, 10500);
-    return rand(6400, 9600);
+    if (level <= 1) return rand(11000, 16000);
+    if (level <= 2) return rand(6800, 10200);
+    if (level <= 5) return rand(5700, 8800);
+    if (level <= 9) return rand(4800, 7400);
+    return rand(4100, 6500);
   }
 
   function chargePoint(xRatio, yRatio) {
@@ -2768,8 +2740,8 @@
     const pool = choices.length ? choices : chargePatternPool(level);
     const pattern = pool[Math.floor(rand(0, pool.length))];
     const waveId = ++state.chargeWaveCounter;
-    const peak = level >= 9 && waveId % 5 === 0;
-    const maxPerBeat = level <= 2 ? 1 : level <= 5 ? 2 : level <= 8 ? 3 : peak ? 4 : 3;
+    const peak = level >= 8 && waveId % 6 === 0;
+    const maxPerBeat = level <= 2 ? 1 : level <= 4 ? 2 : level <= 8 ? 3 : peak ? 4 : 3;
     const mirrorX = Math.random() < 0.5;
     const mirrorY = pattern === "diagonal" || pattern === "v" || pattern === "wave" ? Math.random() < 0.5 : false;
     const offsetX = rand(-0.018, 0.018);
@@ -2794,8 +2766,8 @@
       peak,
       beats,
       beatIndex: 0,
-      beatMs: level <= 2 ? rand(1050, 1250) : level <= 5 ? rand(900, 1120) : level <= 8 ? rand(780, 990) : rand(720, 920),
-      nextBeatAt: state.elapsed + rand(260, 460),
+      beatMs: level <= 2 ? rand(980, 1190) : level <= 5 ? rand(820, 1040) : level <= 8 ? rand(720, 920) : rand(650, 850),
+      nextBeatAt: state.elapsed + rand(190, 380),
       retries: 0,
       spawned: 0,
     };
@@ -2808,15 +2780,17 @@
       if (bubble.chargeResolved || bubble.age < -1.1) return count;
       return count + 1;
     }, 0);
-    const sceneCap = Math.min(9, activeBubbleLimit(level) + 2);
+    const sceneCap = activeBubbleLimit(level) + maxActiveChargeBubblesForLevel(level) + 2;
     return Math.max(0, Math.min(chargeSlots, sceneCap - committedScene));
   }
 
   function chargeBubbleSpawnPoint(radius, preferredPoint = null) {
     const preferred = preferredPoint ?? chargePoint(rand(0.24, 0.76), rand(0.26, 0.72));
     const blockers = state.bubbles.filter((bubble) => !bubble.chargeResolved && bubble.age > -0.65);
-    for (let attempt = 0; attempt < 14; attempt += 1) {
-      const spread = attempt === 0 ? 0 : Math.min(0.055, 0.012 + attempt * 0.004);
+    let bestCandidate = null;
+    let bestClearance = Number.NEGATIVE_INFINITY;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const spread = attempt === 0 ? 0 : Math.min(0.105, 0.014 + attempt * 0.0045);
       const angle = attempt * 2.399 + (state.chargeWaveCounter % 5) * 0.41;
       const candidate = {
         xRatio: clamp(preferred.xRatio + Math.cos(angle) * spread, 0.21, 0.79),
@@ -2824,14 +2798,22 @@
       };
       candidate.x = state.width * candidate.xRatio;
       candidate.y = state.height * candidate.yRatio;
-      const clear = blockers.every((bubble) => {
+      let clearance = Number.POSITIVE_INFINITY;
+      let clear = true;
+      for (const bubble of blockers) {
         const otherRadius = bubble.baseRadius ?? bubble.radius ?? 24;
-        const gap = bubble.isCharge ? (radius + otherRadius) * 1.1 + 6 : radius + otherRadius + 10;
-        return Math.hypot(candidate.x - bubble.x, candidate.y - bubble.y) >= gap;
-      });
+        const gap = bubble.isCharge ? (radius + otherRadius) * 1.08 + 7 : (radius + otherRadius) * 0.82 + 6;
+        const localClearance = Math.hypot(candidate.x - bubble.x, candidate.y - bubble.y) - gap;
+        clearance = Math.min(clearance, localClearance);
+        if (localClearance < 0) clear = false;
+      }
       if (clear) return candidate;
+      if (clearance > bestClearance) {
+        bestClearance = clearance;
+        bestCandidate = candidate;
+      }
     }
-    return null;
+    return bestClearance >= -radius * 0.18 ? bestCandidate : null;
   }
 
   function spawnChargeBubble(options = {}) {
@@ -3219,10 +3201,10 @@
       startAt: state.elapsed,
       duration:
         level <= 1
-          ? rand(4300, 6800)
+          ? rand(3400, 5200)
           : type === "machine" || type === "crossArc" || type === "sGroup"
-            ? rand(2400, 4000)
-            : rand(3000, 5600) - d * 380,
+            ? rand(1900, 3100)
+            : rand(2400, 4300) - d * 280,
       primary: makeSpawnRegion(primaryBase),
       secondary: secondaryBase ? makeSpawnRegion(secondaryBase, 1.4) : null,
       type,
@@ -3234,6 +3216,18 @@
   }
 
   function chooseSpawnArchetype(level, d) {
+    const phraseDeck =
+      level <= 1
+        ? ["normal", "bigRise", "normal", "bigSide"]
+        : level <= 2
+          ? ["crossArc", "normal", "sGroup", "bigRise", "normal", "bigSide"]
+          : level <= 4
+            ? ["crossArc", "machine", "normal", "sGroup", "bigSide", "crossArc"]
+            : ["machine", "crossArc", "sGroup", "normal", "crossArc", "bigRise", "sGroup", "bigSide"];
+    const phraseChance = level <= 1 ? 0.72 : level <= 3 ? 0.82 : 0.88;
+    if (Math.random() < phraseChance) {
+      return phraseDeck[(state.spawnFlowIndex + level * 2) % phraseDeck.length];
+    }
     const weights = state.stagePlan?.weights ?? stageTypeWeights(level);
     const choices = Object.entries(weights)
       .map(([type, weight]) => [type, Math.max(0, weight * rand(0.94, 1.06) + d * 0.02)])
@@ -3262,7 +3256,11 @@
     const progress = spawnFlowProgress(flow);
     const pulse = Math.sin(progress * Math.PI);
     const peak = Math.exp(-Math.pow((progress - flow.peak) / 0.18, 2));
-    return clamp(0.48 + pulse * 0.62 + peak * 0.36, 0.42, 1.62);
+    const level = displayDifficultyLevel();
+    const barSeconds = clamp(3.5 - (level - 1) * 0.07, 2.45, 3.5);
+    const barPosition = ((stageElapsedMs() / 1000) % barSeconds) / barSeconds;
+    const accent = barPosition < 0.18 ? 0.18 : barPosition > 0.82 ? -0.12 : 0.06;
+    return clamp(0.56 + pulse * 0.66 + peak * 0.4 + accent, 0.44, 1.78);
   }
 
   function scheduleFlowSpawn(flow, count = 1) {
@@ -3272,20 +3270,21 @@
     const budgetInterval = remainingMs / remaining;
     const base =
       flow.type === "bigRise"
-        ? 1120
+        ? 960
         : flow.type === "bigSide"
-          ? 980
+          ? 840
           : flow.type === "crossArc"
-            ? 620
+            ? 500
           : flow.type === "machine" && !flow.usedBurst
-            ? 420
+            ? 350
             : flow.type === "sGroup"
-              ? 680
-              : 760;
-    const flowInterval = (base * rand(0.82, 1.18)) / spawnFlowRhythm(flow) - d * 130;
-    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.72, 1.08)), 260, 1420);
-    const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 420 : 0;
-    state.nextSpawnAt = state.elapsed + interval + Math.max(0, count - 1) * 500 + phraseRest;
+              ? 520
+              : 620;
+    const flowInterval = (base * rand(0.84, 1.14)) / spawnFlowRhythm(flow) - d * 90;
+    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.76, 1.04)), 190, 1180);
+    const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 260 : 0;
+    const groupBreath = Math.min(360, Math.max(0, count - 1) * (displayDifficultyLevel() <= 3 ? 145 : 95));
+    state.nextSpawnAt = state.elapsed + interval + groupBreath + phraseRest;
   }
 
   function pickFlowRegion(flow) {
@@ -3579,7 +3578,7 @@
 
   function flowPathWouldOverlap(path, radius, delaySeconds = 0) {
     if (!path?.points?.length || !path.mode?.includes("flow")) return false;
-    const horizon = Math.min(6.4, Math.max(3.2, delaySeconds + path.duration * 0.72));
+    const horizon = Math.min(4.8, Math.max(2.8, delaySeconds + path.duration * 0.54));
     for (const other of state.bubbles) {
       const otherPath = other.customPath;
       if (
@@ -3594,7 +3593,8 @@
         continue;
       }
       const otherWait = Math.max(0, -(other.age ?? 0));
-      const threshold = (radius + other.baseRadius) * 0.78;
+      const sameColor = path.colorIndex >= 0 && path.colorIndex === other.colorIndex;
+      const threshold = (radius + other.baseRadius) * (sameColor ? 0.5 : 0.62);
       for (let future = 0.36; future <= horizon; future += 0.42) {
         const newElapsed = future - delaySeconds;
         const otherElapsed = (otherPath.elapsed ?? 0) + future - otherWait;
@@ -4066,7 +4066,12 @@
     const d = difficulty();
     const capacity = bubbleCapacityRemaining();
     const islandActive = isIslandChoreoPattern(currentBackgroundPatternId());
-    const desired = Math.round(rand(level <= 2 ? 2 : 3, islandActive || level >= 6 ? 4 : 3));
+    const desired = Math.round(
+      rand(
+        level <= 2 ? 2 : level <= 5 ? 3 : level <= 9 ? 4 : 5,
+        islandActive || level >= 10 ? 6 : level >= 6 ? 5 : 4,
+      ),
+    );
     const count = Math.min(desired, maxAllowed, capacity);
     if (count < 2) return 0;
 
@@ -4127,7 +4132,8 @@
     const d = difficulty();
     const region = flow.primary;
     const colorIndex = pickBalancedColorIndex();
-    const count = Math.min(Math.round(rand(3, 4)), maxAllowed, bubbleCapacityRemaining());
+    const level = displayDifficultyLevel();
+    const count = Math.min(Math.round(rand(level >= 8 ? 4 : 3, level >= 8 ? 6 : 4)), maxAllowed, bubbleCapacityRemaining());
     if (count <= 0) return 0;
     const radius = clamp(radiusForArchetype("machine") * 1.08, 24, 32);
     const base = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.012);
@@ -4188,7 +4194,7 @@
   function spawnFlowCrossArc(flow, maxAllowed = maxActiveBubbles) {
     const d = difficulty();
     const capacity = bubbleCapacityRemaining();
-    const total = Math.min(4, maxAllowed, capacity);
+    const total = Math.min(displayDifficultyLevel() >= 8 ? 6 : 4, maxAllowed, capacity);
     if (total <= 1) return 0;
 
     const regions = [flow.primary, flow.secondary ?? flow.primary];
@@ -4257,7 +4263,8 @@
   }
 
   function spawnFlowSGroup(flow, maxAllowed = maxActiveBubbles) {
-    const count = Math.min(Math.round(rand(2, 3)), maxAllowed, bubbleCapacityRemaining());
+    const level = displayDifficultyLevel();
+    const count = Math.min(Math.round(rand(level >= 8 ? 4 : 2, level >= 8 ? 5 : 3)), maxAllowed, bubbleCapacityRemaining());
     if (count <= 0) return 0;
     const region = flow.primary;
     const colorIndex = pickBalancedColorIndex();
@@ -4963,12 +4970,12 @@
     const pair = pairs[runIndex % pairs.length];
     const stable = info.hold >= 0.24;
     const variant = runIndex % 6;
-    if (variant === 0) return { type: "outsideTrain", count: stable ? 5 : 3, colorIndex: info.outsideColorIndex, sizeKind: "small", pair };
-    if (variant === 1) return { type: "islandTrain", count: stable ? 4 : 3, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
-    if (variant === 2) return { type: "mirrorDuo", count: stable ? 2 : 1, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "normal", pair };
+    if (variant === 0) return { type: "outsideTrain", count: stable ? 7 : 4, colorIndex: info.outsideColorIndex, sizeKind: "small", pair };
+    if (variant === 1) return { type: "islandTrain", count: stable ? 6 : 4, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
+    if (variant === 2) return { type: "mirrorDuo", count: stable ? 4 : 2, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "normal", pair };
     if (variant === 3) return { type: "orbitSolo", count: 1, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: stable ? "large" : "normal", pair };
-    if (variant === 4) return { type: "outsideDuo", count: 2, colorIndex: info.outsideColorIndex, sizeKind: "normal", pair };
-    return { type: "softTrain", count: stable ? 4 : 2, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
+    if (variant === 4) return { type: "outsideDuo", count: stable ? 3 : 2, colorIndex: info.outsideColorIndex, sizeKind: "normal", pair };
+    return { type: "softTrain", count: stable ? 6 : 3, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
   }
 
   function buildIslandSafePath(info, colorIndex, radius, speed, runIndex, laneIndex, routeType, pair) {
@@ -5180,6 +5187,7 @@
       (bubble) =>
         bubble.islandChainId?.startsWith("island-transition-") &&
         !bubble.pathComplete &&
+        !bubble.wasReady &&
         isStageTargetBubble(bubble),
     );
     if (transitionInFlight) {
@@ -5300,7 +5308,7 @@
 
     if (spawned <= 0) return false;
     const entryWindow = Math.min(1800, basePath.duration * 1000 * 0.13);
-    state.nextSpawnAt = state.elapsed + longestDelay * 1000 + entryWindow + rand(520, 820);
+    state.nextSpawnAt = state.elapsed + entryWindow + rand(380, 560);
     return true;
   }
 
@@ -5592,7 +5600,8 @@
     const runIndex = flow.waveChoreoIndex ?? 0;
     flow.waveChoreoIndex = runIndex + 1;
     const routeType = waveChoreoRouteType(runIndex);
-    const desiredCount = routeType === "sweepS" ? 1 : 2;
+    const level = displayDifficultyLevel();
+    const desiredCount = routeType === "sweepS" ? (level >= 3 ? 2 : 1) : level >= 3 ? 3 : 2;
     const count = Math.min(desiredCount, remainingStage, capacity);
     let spawned = 0;
 
@@ -5608,7 +5617,7 @@
             : rand(tide ? 42 + d * 6 : 38 + d * 5, tide ? 56 + d * 9 : 52 + d * 8);
       const customPath = buildWaveBoundaryChoreoPath(colorIndex, radius, speed, index, count, runIndex, patternId, routeType);
       if (!customPath?.points?.length) continue;
-      const delay = index * rand(routeType === "borderS" ? 0.58 : 0.46, routeType === "borderS" ? 0.82 : 0.68);
+      const delay = index * rand(routeType === "borderS" ? 0.46 : 0.36, routeType === "borderS" ? 0.68 : 0.56);
       customPath.completeFairPass = false;
       if (!pathHasPlayableStructuredPath(customPath, colorIndex, structuredPathMinMatch, delay)) continue;
       customPath.trustedStructuredPath = true;
@@ -5643,8 +5652,65 @@
     if (spawned <= 0) return false;
     const nextMin = routeType === "sweepS" ? (tide ? 1780 : 1900) : routeType === "borderS" ? (tide ? 1420 : 1580) : tide ? 1320 : 1480;
     const nextMax = routeType === "sweepS" ? (tide ? 2450 : 2600) : routeType === "borderS" ? (tide ? 2100 : 2300) : tide ? 1980 : 2180;
-    state.nextSpawnAt = state.elapsed + rand(nextMin, nextMax);
+    const pace = 1 - smoothstep(2, 6, level) * 0.28;
+    state.nextSpawnAt = state.elapsed + rand(nextMin, nextMax) * pace;
     return true;
+  }
+
+  function spawnRhythmBridge(flow, remainingStage) {
+    if (remainingStage <= 0 || bubbleCapacityRemaining() <= 0) return false;
+    const d = difficulty();
+    const region = pickFlowRegion(flow);
+    const radius = clamp(radiusForDifficulty(d, Math.random() < 0.58 ? "small" : "normal"), 24, 37);
+    const start = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.026);
+    const entryProbe = clampToReadablePlayfield(start, radius, 14);
+    const projectedTime = state.elapsed + 900;
+    const preferredColor = projectedBackgroundColorIndexAt(entryProbe.x, entryProbe.y, projectedTime);
+    const speed = rand(52 + d * 6, 66 + d * 9);
+    let colorIndex = preferredColor;
+    let customPath = null;
+
+    for (const candidateColor of [preferredColor, 1 - preferredColor]) {
+      const candidatePath = buildPredictableMatchPath(
+        region.edge,
+        start,
+        candidateColor,
+        radius,
+        speed,
+        state.spawnFlowIndex * 2.17 + state.bubbleCounter * 0.31,
+        null,
+        "rhythm-bridge",
+      );
+      if (!candidatePath?.points?.length) continue;
+      candidatePath.completeFairPass = false;
+      candidatePath.trustedStructuredPath = true;
+      if (!pathHasPlayableStructuredPath(candidatePath, candidateColor, structuredPathMinMatch, 0)) continue;
+      colorIndex = candidateColor;
+      customPath = candidatePath;
+      break;
+    }
+    if (!customPath) return false;
+
+    const target = pointAtCustomPath(customPath, 0.1) ?? customPath.points[1];
+    return spawnBubble(radius <= 30, "normal", {
+      edge: region.edge,
+      x: start.x,
+      y: start.y,
+      colorIndex,
+      target,
+      velocity: aimedVelocity(start.x, start.y, target, speed, 0),
+      radius,
+      speed,
+      sizeKind: radius <= 30 ? "small" : "normal",
+      isStream: true,
+      streamPattern: "softS",
+      streamAmplitude: 0,
+      streamFrequency: 1,
+      customPath,
+      exitAfterPath: true,
+      pathLockedMotion: true,
+      quietHint: false,
+    });
   }
 
   function spawnWave() {
@@ -5658,7 +5724,7 @@
     const activeLimit = activeBubbleLimit(level);
 
     if (remainingStage <= 0) {
-      state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 360);
+      state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 180);
       return;
     }
 
@@ -5667,12 +5733,26 @@
       return;
     }
 
+    const playableGap = state.elapsed - Math.max(state.stageStartAt, state.lastPlayableAt || state.stageStartAt);
+    const bridgeThreshold = level <= 4 ? 2200 : level <= 8 ? 1750 : 1450;
+    const bridgeCooldown = level <= 8 ? 2600 : 2200;
+    if (
+      level >= 3 &&
+      playableGap >= bridgeThreshold &&
+      state.elapsed - state.lastRhythmBridgeAt >= bridgeCooldown &&
+      spawnRhythmBridge(flow, remainingStage)
+    ) {
+      state.lastRhythmBridgeAt = state.elapsed;
+      state.nextSpawnAt = state.elapsed + rand(280, 420);
+      return;
+    }
+
     const islandPatternActive = isIslandChoreoPattern(currentBackgroundPatternId());
     if (islandPatternActive) {
       if (trySpawnIslandChoreo(flow, remainingStage)) {
         return;
       }
-      state.nextSpawnAt = state.elapsed + 420;
+      state.nextSpawnAt = state.elapsed + 240;
       return;
     }
 
@@ -5681,7 +5761,7 @@
       if (trySpawnWaveBoundaryChoreo(flow, remainingStage)) {
         return;
       }
-      state.nextSpawnAt = state.elapsed + 820;
+      state.nextSpawnAt = state.elapsed + 420;
       return;
     }
 
@@ -5696,19 +5776,19 @@
       return;
     }
 
-    if (level >= 2 && flow.type === "crossArc" && !flow.usedBurst && state.bubbles.length <= 6) {
+    if (level >= 2 && flow.type === "crossArc" && !flow.usedBurst && bubbleCapacityRemaining(level) >= 2) {
       const count = spawnFlowCrossArc(flow, remainingStage);
       scheduleFlowSpawn(flow, Math.max(1, count));
       return;
     }
 
-    if (level >= 3 && flow.type === "machine" && !flow.usedBurst && state.bubbles.length <= 7) {
+    if (level >= 3 && flow.type === "machine" && !flow.usedBurst && bubbleCapacityRemaining(level) >= 2) {
       const count = spawnFlowGun(flow, remainingStage);
       scheduleFlowSpawn(flow, Math.max(1, count));
       return;
     }
 
-    if (level >= 2 && flow.type === "sGroup" && !flow.usedBurst && state.bubbles.length <= 8) {
+    if (level >= 2 && flow.type === "sGroup" && !flow.usedBurst && bubbleCapacityRemaining(level) >= 2) {
       const count = spawnFlowSGroup(flow, remainingStage);
       scheduleFlowSpawn(flow, Math.max(1, count));
       return;
@@ -5717,11 +5797,11 @@
     const smallClusterChance = islandPatternActive
       ? 0.76
       : level <= 2
-        ? 0.48
+        ? 0.54
         : flow.type === "normal"
-          ? level >= 6 ? 0.38 : 0.56
-          : level >= 6 ? 0.24 + d * 0.03 : 0.32;
-    if (remainingStage >= 2 && state.bubbles.length <= activeLimit - 2 && Math.random() < smallClusterChance) {
+          ? level >= 6 ? 0.48 : 0.6
+          : level >= 6 ? 0.31 + d * 0.04 : 0.38;
+    if (remainingStage >= 2 && bubbleCapacityRemaining(level) >= 2 && Math.random() < smallClusterChance) {
       const count = spawnFlowSmallCluster(flow, remainingStage);
       if (count > 0) {
         scheduleFlowSpawn(flow, count);
@@ -5730,20 +5810,27 @@
     }
 
     let count = 1;
-    if (flow.type === "normal" && level >= 5 && spawnFlowRhythm(flow) > 1.32 && state.bubbles.length <= 6 && Math.random() < 0.24 + d * 0.1) count += 1;
+    if (flow.type === "normal" && level >= 4 && spawnFlowRhythm(flow) > 1.24 && bubbleCapacityRemaining(level) >= 2 && Math.random() < 0.3 + d * 0.12) count += 1;
     if (level <= 2) count = 1;
-    count = Math.min(count, remainingStage, Math.max(0, activeLimit - state.bubbles.length));
+    count = Math.min(count, remainingStage, bubbleCapacityRemaining(level));
     if (count <= 0) return;
 
     const pairColor = count > 1 ? pickBalancedColorIndex() : null;
+    let spawned = 0;
     for (let index = 0; index < count; index += 1) {
-      spawnFlowBubble(flow, {
+      if (spawnFlowBubble(flow, {
         colorIndex: pairColor ?? undefined,
         delay: index * rand(0.68, 0.9),
         quietHint: index > 0,
-      });
+      })) {
+        spawned += 1;
+      }
     }
-    scheduleFlowSpawn(flow, count);
+    if (spawned <= 0) {
+      state.nextSpawnAt = state.elapsed + 160;
+      return;
+    }
+    scheduleFlowSpawn(flow, spawned);
   }
 
   function activateOpenMode(x, y) {
@@ -6634,6 +6721,9 @@
   function updateBubbleMatchDwell(bubble, dt) {
     if (!isStageTargetBubble(bubble)) return;
     if (cachedBubbleHasMatchingPatch(bubble)) {
+      if (!bubble.wasReady) {
+        state.lastPlayableAt = state.elapsed;
+      }
       bubble.wasReady = true;
       bubble.matchDwell = Math.min(fairMatchDwell, (bubble.matchDwell ?? 0) + dt);
       if (bubble.matchDwell >= fairMatchDwell) {
@@ -8972,6 +9062,8 @@
     state.nextChargeAt = targetLevel <= 1 ? stageDurationMs + rand(3600, 6800) : state.elapsed + rand(2600, 4800);
     state.chargeWave = null;
     state.nextSpawnAt = state.elapsed + 120;
+    state.lastPlayableAt = state.elapsed;
+    state.lastRhythmBridgeAt = Number.NEGATIVE_INFINITY;
     state.openUntil = 0;
     resetBombComboTimer();
     resetStagePlan(targetLevel);
