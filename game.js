@@ -3,7 +3,8 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-  const buildVersion = "1.1.96";
+  const phoneShell = canvas.closest(".phone-shell");
+  const buildVersion = "1.2.1";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -19,6 +20,17 @@
   const difficultyEl = document.getElementById("difficultyLevel");
   const clearSkillButton = document.getElementById("clearSkill");
   const clearSkillValue = document.getElementById("clearSkillValue");
+  const settingsButton = document.getElementById("settingsButton");
+  const settingsScrim = document.getElementById("settingsScrim");
+  const settingsPanel = document.getElementById("settingsPanel");
+  const settingsCloseButton = document.getElementById("settingsClose");
+  const settingsStatus = document.getElementById("settingsStatus");
+  const settingsLevelSelect = document.getElementById("settingsLevel");
+  const settingsJumpButton = document.getElementById("settingsJump");
+  const settingsStageMeta = document.getElementById("settingsStageMeta");
+  const settingsPauseButton = document.getElementById("settingsPause");
+  const settingsPauseIcon = document.getElementById("settingsPauseIcon");
+  const settingsPauseLabel = document.getElementById("settingsPauseLabel");
   const perfDebug = document.getElementById("perfDebug");
   const debugLevelSelect = document.getElementById("debugLevel");
   const debugJumpButton = document.getElementById("debugJump");
@@ -43,7 +55,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.1.96`;
+      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.2.1`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -212,6 +224,7 @@
     height: 0,
     dpr: 1,
     running: false,
+    paused: false,
     lastTime: 0,
     visualTime: 0,
     elapsed: 0,
@@ -252,6 +265,8 @@
     dragBubbleCounter: 0,
     dragPointerId: null,
     dragBubbleUid: null,
+    pulseBeatKey: "",
+    pulsePatternLevel: 0,
     bombSpawnCursor: 0,
     difficultyTier: 0,
     difficultyFlash: 0,
@@ -292,6 +307,8 @@
     blasts: [],
     floaters: [],
     hints: [],
+    pointerFx: [],
+    pointerTrail: [],
     spawnFlow: null,
     spawnFlowIndex: 0,
     backgroundFlow: {
@@ -307,6 +324,7 @@
     activePointerId: null,
     lastSwipeX: 0,
     lastSwipeY: 0,
+    pointerHoldNextAt: 0,
   };
 
   let audioContext;
@@ -324,6 +342,7 @@
   const comboPitchWindowSeconds = 1.5;
   let popPitchStreak = 0;
   let lastPopSoundAt = Number.NEGATIVE_INFINITY;
+  let lastChargeTickAt = Number.NEGATIVE_INFINITY;
   let introRunning = false;
   let frameRequest = 0;
   let lastFrameTime = 0;
@@ -337,6 +356,7 @@
   let waterShockUntil = 0;
   let waterCriticalUntil = 0;
   let lastWaterBand = "safe";
+  const heartSrcCache = new Map();
   let waterLowVibrationArmed = true;
   let performanceTier = initialPerformanceTier();
   let initialTier = performanceTier;
@@ -746,6 +766,8 @@
     trimArray(state.blasts, effectLimit("blasts"));
     trimArray(state.floaters, effectLimit("floaters"));
     trimArray(state.hints, effectLimit("hints"));
+    trimArray(state.pointerFx, 20);
+    trimArray(state.pointerTrail, 30);
   }
 
   function resetFrameStats() {
@@ -799,12 +821,17 @@
     state.blasts = [];
     state.floaters = [];
     state.hints = [];
+    state.pointerFx = [];
+    state.pointerTrail = [];
     state.difficultyBanners = [];
     state.activePointerId = null;
     state.customHoldPointerId = null;
     state.customHoldBubbleUid = null;
     state.catHoldPointerId = null;
     state.catHoldBubbleId = null;
+    state.pointerHoldNextAt = 0;
+    state.pulseBeatKey = "";
+    state.pulsePatternLevel = 0;
   }
 
   function updatePerfDebug(now = performance.now(), force = false) {
@@ -821,7 +848,7 @@
   }
 
   function scheduleLoop() {
-    if (frameRequest || document.hidden || !state.running) return;
+    if (frameRequest || document.hidden || !state.running || state.paused) return;
     frameRequest = requestAnimationFrame(loop);
   }
 
@@ -1661,12 +1688,17 @@
     return 0;
   }
 
-  function redDotHeartSrc(filled) {
-    const fill = filled ? "#f43645" : "rgba(255,255,255,0.18)";
-    const stroke = filled ? "#fff3f5" : "rgba(255,255,255,0.58)";
-    const inner = filled ? "#ff7580" : "rgba(255,255,255,0.28)";
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="23" fill="${fill}" stroke="${stroke}" stroke-width="5"/><circle cx="24" cy="22" r="7" fill="${inner}"/></svg>`;
-    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  function redDotHeartSrc(fillAmount) {
+    const amount = typeof fillAmount === "boolean" ? (fillAmount ? 1 : 0) : clamp(fillAmount, 0, 1);
+    const step = Math.round(amount * 100);
+    if (heartSrcCache.has(step)) return heartSrcCache.get(step);
+    const quantized = step / 100;
+    const fillY = 55 - quantized * 46;
+    const fillHeight = quantized * 46;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><clipPath id="fill"><rect x="5" y="${fillY}" width="54" height="${fillHeight}" rx="3"/></clipPath></defs><circle cx="32" cy="32" r="23" fill="rgba(255,255,255,0.16)" stroke="rgba(255,255,255,0.62)" stroke-width="5"/><circle cx="32" cy="32" r="23" fill="#f43645" clip-path="url(#fill)"/><circle cx="24" cy="22" r="7" fill="rgba(255,255,255,${0.2 + quantized * 0.42})"/><circle cx="32" cy="32" r="20.5" fill="none" stroke="rgba(255,255,255,${0.12 + quantized * 0.18})" stroke-width="1.4"/></svg>`;
+    const source = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    heartSrcCache.set(step, source);
+    return source;
   }
 
   function updateHud() {
@@ -1705,9 +1737,11 @@
     }
     lastWaterBand = waterBand;
     lastHudWater = exactWater;
-    const filledHearts = exactWater <= 0 ? 0 : Math.min(heartCount, Math.ceil(exactWater / heartWater - 0.000001));
     heartBubbles.forEach((heart, index) => {
-      heart.src = redDotHeartSrc(index < filledHearts);
+      const segmentProgress = clamp((exactWater - index * heartWater) / heartWater, 0, 1);
+      heart.src = redDotHeartSrc(segmentProgress);
+      heart.classList.toggle("charging", segmentProgress > 0.001 && segmentProgress < 0.999 && state.elapsed < waterGainUntil);
+      heart.style.setProperty("--heart-fill", segmentProgress.toFixed(3));
     });
     waterFill.style.width = `${exactWater}%`;
     waterValue.textContent = `${Math.abs(exactWater - Math.round(exactWater)) < 0.05 ? Math.round(exactWater) : exactWater.toFixed(1)}%`;
@@ -1745,14 +1779,16 @@
     const skillReady = state.clearSkillCharge >= 1 && state.clearSkillUses < clearSkillMaxUses;
     clearSkillButton.style.setProperty("--clear-charge", state.clearSkillCharge.toFixed(3));
     clearSkillButton.classList.toggle("ready", skillReady);
-    clearSkillButton.disabled = !state.running || !skillReady;
+    clearSkillButton.disabled = !state.running || state.paused || !skillReady;
     clearSkillValue.textContent =
       state.clearSkillUses >= clearSkillMaxUses ? "DONE" : skillReady ? "READY" : `${Math.round(state.clearSkillCharge * 100)}%`;
     updateDebugPanel();
   }
 
-  function resetGame() {
+  function resetGame(options = {}) {
+    const startPaused = Boolean(options?.startPaused);
     state.running = true;
+    state.paused = startPaused;
     state.lastTime = performance.now();
     state.elapsed = 0;
     state.score = 0;
@@ -1796,6 +1832,8 @@
     state.dragBubbleCounter = 0;
     state.dragPointerId = null;
     state.dragBubbleUid = null;
+    state.pulseBeatKey = "";
+    state.pulsePatternLevel = 0;
     state.bombSpawnCursor = 0;
     state.difficultyTier = 0;
     state.difficultyFlash = 0;
@@ -1990,6 +2028,8 @@
       navigator.vibrate([22, 38, 22]);
     }
     state.running = false;
+    state.paused = false;
+    closeSettings({ resume: false });
     state.dragPointerId = null;
     state.dragBubbleUid = null;
     curtain.classList.add("result-mode");
@@ -2397,6 +2437,10 @@
       isCat,
       isCharge,
       isDrag,
+      isPulse: Boolean(options.isPulse),
+      pulseBeatKey: options.pulseBeatKey ?? "",
+      pulseAnchorX: options.pulseAnchorX ?? x,
+      pulseAnchorY: options.pulseAnchorY ?? y,
       chargeWarningSeconds: options.chargeWarningSeconds ?? chargeBubbleWarningSeconds,
       chargeFuseSeconds: options.chargeFuseSeconds ?? rand(chargeBubbleFuseMinSeconds, chargeBubbleFuseMaxSeconds),
       chargeExplodeAt: options.chargeExplodeAt ?? 0,
@@ -2407,6 +2451,8 @@
       chargeBeat: options.chargeBeat ?? 0,
       chargeWasActive: false,
       chargeResolved: false,
+      chargeDanger: 0,
+      chargeNextTickAt: 0,
       dragId: isDrag ? ++state.dragBubbleCounter : 0,
       dragSourceColorIndex: options.dragSourceColorIndex ?? -1,
       dragTargetColorIndex: options.dragTargetColorIndex ?? -1,
@@ -4695,8 +4741,10 @@
     "FOLD",
     "ORBIT",
     "BRAID",
+    "PULSE_BLUE",
+    "PULSE_PINK",
   ];
-  const highBackgroundPatternIds = ["ISLAND_PINK", "FOLD", "ISLAND_BLUE", "ORBIT", "BRAID"];
+  const highBackgroundPatternIds = ["ISLAND_PINK", "PULSE_BLUE", "FOLD", "ISLAND_BLUE", "PULSE_PINK", "ORBIT", "BRAID"];
   const islandChoreoPatterns = {
     ISLAND_PINK: { sign: -1, cornerX: 0.16, cornerY: 0.2, centerX: 0.51, centerY: 0.5, radius: 0.37 },
     ISLAND_BLUE: { sign: 1, cornerX: 0.84, cornerY: 0.78, centerX: 0.48, centerY: 0.52, radius: 0.37 },
@@ -4713,7 +4761,15 @@
   }
 
   function currentBackgroundPatternId() {
-    return backgroundPatternIdForLevel(currentBackgroundLevel());
+    return window.PaopaoBackgroundEngine?.patternIdAt?.(backgroundEngineTimeSeconds()) ?? backgroundPatternIdForLevel(currentBackgroundLevel());
+  }
+
+  function currentPulseInfo() {
+    return window.PaopaoBackgroundEngine?.pulseInfoAt?.(backgroundEngineTimeSeconds()) ?? null;
+  }
+
+  function isPulsePattern(patternId = currentBackgroundPatternId()) {
+    return patternId === "PULSE_BLUE" || patternId === "PULSE_PINK";
   }
 
   function currentBackgroundCycleInfo() {
@@ -6113,6 +6169,105 @@
     });
   }
 
+  function enterPulsePattern(info) {
+    state.bubbles.length = 0;
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
+    state.pulsePatternLevel = info.level;
+    state.pulseBeatKey = "";
+    resetCombo();
+  }
+
+  function pulseBubblePoint(info, physicalRadius, bubbleRadius, index, placed) {
+    const minDimension = Math.min(state.width, state.height);
+    const centerX = info.centerX * state.width;
+    const centerY = info.centerY * state.height;
+    const distance = physicalRadius * minDimension;
+    const phase = info.beat * 1.67 + index * 2.31;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const angle = phase + attempt * 2.399963;
+      const x = centerX + Math.cos(angle) * distance;
+      const y = centerY + Math.sin(angle) * distance;
+      const margin = bubbleRadius + 18;
+      if (x < margin || x > state.width - margin || y < Math.max(88, margin) || y > state.height - margin - 24) continue;
+      if (placed.some((point) => Math.hypot(point.x - x, point.y - y) < bubbleRadius * 2.5)) continue;
+      return { x, y };
+    }
+    return null;
+  }
+
+  function spawnPulseBeat(info) {
+    const level = displayDifficultyLevel();
+    const count = Math.min(level <= 4 ? 2 : level >= 18 ? 4 : 3, stageRemainingBubbles(), bubbleCapacityRemaining(level));
+    if (count <= 0) return false;
+    const radiusSteps = count >= 4 ? [0.19, 0.36, 0.53, 0.7] : count === 2 ? [0.3, 0.62] : [0.22, 0.44, 0.66];
+    const placed = [];
+    let spawned = 0;
+    for (let index = 0; index < count; index += 1) {
+      const bubbleRadius = clamp(31 + Math.sin(info.beat * 1.4 + index) * 2.4, 27, 34);
+      const point = pulseBubblePoint(info, radiusSteps[index], bubbleRadius, index, placed);
+      if (!point) continue;
+      const didSpawn = spawnBubble(bubbleRadius <= 29, "normal", {
+        edge: "top",
+        x: point.x,
+        y: point.y,
+        target: point,
+        velocity: { vx: 0, vy: 0 },
+        radius: bubbleRadius,
+        speed: 0,
+        colorIndex: info.ringColorIndex,
+        sizeKind: bubbleRadius <= 29 ? "small" : "normal",
+        isPulse: true,
+        pulseBeatKey: info.beatKey,
+        pulseAnchorX: point.x,
+        pulseAnchorY: point.y,
+        fairPassComplete: false,
+        allowFreePath: true,
+        quietHint: true,
+        spawnRevealSeconds: 0.28,
+      });
+      if (didSpawn) {
+        placed.push(point);
+        spawned += 1;
+      }
+    }
+    return spawned > 0;
+  }
+
+  function maybeSpawnPulseBeat(info = currentPulseInfo()) {
+    if (!state.running || !info) return false;
+    if (state.pulsePatternLevel !== info.level) {
+      enterPulsePattern(info);
+    }
+    if (state.pulseBeatKey === info.beatKey || info.phase > 0.24) return false;
+    state.pulseBeatKey = info.beatKey;
+    return spawnPulseBeat(info);
+  }
+
+  function updatePulseBubble(bubble, index, dt) {
+    const info = currentPulseInfo();
+    if (!info || info.beatKey !== bubble.pulseBeatKey || info.phase >= Math.min(0.98, info.sweepEnd + 0.08)) {
+      penalizeStageMistake(bubble, "miss");
+      state.bubbles.splice(index, 1);
+      return true;
+    }
+    bubble.x = bubble.pulseAnchorX + Math.sin(bubble.age * 1.8 + bubble.skinPhase) * 1.6;
+    bubble.y = bubble.pulseAnchorY + Math.cos(bubble.age * 1.55 + bubble.skinPhase) * 1.35;
+    bubble.vx = 0;
+    bubble.vy = 0;
+    bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 3.4 + bubble.skinPhase) * 0.018);
+    bubble.wobble += bubble.wobbleSpeed * dt * 0.28;
+    if (cachedBubbleHasMatchingPatch(bubble)) {
+      bubble.wasReady = true;
+      state.lastPlayableAt = state.elapsed;
+    }
+    return false;
+  }
+
   function spawnWave() {
     const d = difficulty();
     const level = displayDifficultyLevel();
@@ -6122,6 +6277,11 @@
     const flow = ensureSpawnFlow();
     const remainingStage = stageRemainingBubbles();
     const activeLimit = activeBubbleLimit(level);
+
+    if (isPulsePattern()) {
+      state.nextSpawnAt = state.elapsed + 240;
+      return;
+    }
 
     if (remainingStage <= 0) {
       state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 180);
@@ -6439,8 +6599,32 @@
     state.score += 2;
     registerCombo();
     addWater(regularCorrectWaterGain);
+    const blastRadius = clamp(bubble.radius * 1.72 + 12, 72, 132);
+    let chainCount = 0;
+    for (let otherIndex = state.bubbles.length - 1; otherIndex >= 0; otherIndex -= 1) {
+      const other = state.bubbles[otherIndex];
+      if (other.age < 0 || isSpecialBubble(other)) continue;
+      const distance = Math.hypot(other.x - bubble.x, other.y - bubble.y);
+      if (distance > blastRadius + other.radius * 0.34) continue;
+      burstBubbleByBlast(other, otherIndex);
+      chainCount += 1;
+    }
+    state.blasts.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: bubble.radius * 0.34,
+      maxRadius: blastRadius,
+      speed: 560,
+      age: 0,
+      life: 0.34,
+      color: whiteTone.light,
+      accentColor: "#ffffff",
+      fillAlpha: 0.1,
+      decorative: true,
+      rings: 2,
+    });
     makePunctureSplash(bubble, hitX, hitY, whiteTone, Math.round(14 + bubble.radius * 0.22), false, false);
-    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.8, `x${state.combo}`, "#f8fdff", 1.02, {
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.8, chainCount > 0 ? `x${chainCount + 1}` : `x${state.combo}`, "#f8fdff", 1.02, {
       stroke: "rgba(19, 35, 55, 0.54)",
       shadow: "rgba(255,255,255,0.2)",
     });
@@ -6498,11 +6682,21 @@
     const dangerPulse = smoothstep(0.72, 1, progress);
     bubble.chargePreviewProgress = 1;
     bubble.chargeGrowthProgress = progress;
+    bubble.chargeDanger = dangerPulse;
     const grow =
       0.26 +
       eased * 1.02 +
       Math.sin(state.visualTime / 116 + bubble.skinPhase) * (0.005 + dangerPulse * 0.018);
     bubble.radius = bubble.baseRadius * grow;
+    if (
+      dangerPulse > 0.04 &&
+      state.elapsed >= (bubble.chargeNextTickAt || 0) &&
+      state.elapsed - lastChargeTickAt >= 84
+    ) {
+      playChargeWarningTick(dangerPulse);
+      lastChargeTickAt = state.elapsed;
+      bubble.chargeNextTickAt = state.elapsed + (280 - dangerPulse * 168);
+    }
     if (state.elapsed >= (bubble.chargeExplodeAt || 0)) {
       explodeChargeBubble(bubble, index);
       return true;
@@ -7445,7 +7639,70 @@
     resolveBubbleWallContact(bubble, 0, -1, bubble.y - (state.height - contact), d);
   }
 
+  function pushPointerFx(type, x, y, power = 1) {
+    state.pointerFx.push({ type, x, y, age: 0, life: type === "hold" ? 0.68 : 0.46, power });
+    if (state.pointerFx.length > 20) state.pointerFx.splice(0, state.pointerFx.length - 20);
+  }
+
+  function pushPointerTrail(fromX, fromY, toX, toY) {
+    const distance = Math.hypot(toX - fromX, toY - fromY);
+    if (distance < 3.5) return;
+    state.pointerTrail.push({
+      fromX,
+      fromY,
+      toX,
+      toY,
+      age: 0,
+      life: clamp(0.26 + distance * 0.0018, 0.26, 0.38),
+      width: clamp(4.5 + distance * 0.055, 5, 10),
+      colorIndex: backgroundColorIndexAt(toX, toY),
+    });
+    if (state.pointerTrail.length > 30) state.pointerTrail.splice(0, state.pointerTrail.length - 30);
+  }
+
+  function updatePointerFeedback(dt) {
+    if (state.activePointerId !== null && state.elapsed >= state.pointerHoldNextAt) {
+      pushPointerFx("hold", state.lastSwipeX, state.lastSwipeY, 0.78);
+      state.pointerHoldNextAt = state.elapsed + 430;
+    }
+    for (let index = state.pointerFx.length - 1; index >= 0; index -= 1) {
+      const effect = state.pointerFx[index];
+      effect.age += dt;
+      if (effect.age >= effect.life) state.pointerFx.splice(index, 1);
+    }
+    for (let index = state.pointerTrail.length - 1; index >= 0; index -= 1) {
+      const trail = state.pointerTrail[index];
+      trail.age += dt;
+      if (trail.age >= trail.life) state.pointerTrail.splice(index, 1);
+    }
+  }
+
+  function chargeInteractionProgress(bubble) {
+    const warningSeconds = bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds;
+    if (bubble.age < warningSeconds) return -1;
+    return clamp(
+      (bubble.age - warningSeconds) / Math.max(0.001, bubble.chargeFuseSeconds ?? chargeBubbleFuseMaxSeconds),
+      0,
+      1,
+    );
+  }
+
+  function tryPopPriorityChargeAt(x, y, isTap) {
+    for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
+      const bubble = state.bubbles[index];
+      if (!bubble.isCharge || bubble.chargeResolved || bubble.age < 0) continue;
+      const hitRadius = bubble.radius + (isTap ? 9 : 15);
+      if ((x - bubble.x) ** 2 + (y - bubble.y) ** 2 > hitRadius * hitRadius) continue;
+      const progress = chargeInteractionProgress(bubble);
+      if (progress < 0 || (!isTap && progress < 0.56)) return true;
+      popChargeBubble(bubble, index, x, y);
+      return true;
+    }
+    return false;
+  }
+
   function tryPopAt(x, y, isTap, pointerId = null) {
+    if (tryPopPriorityChargeAt(x, y, isTap)) return true;
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
       const bubble = state.bubbles[i];
       if (bubble.age < 0) {
@@ -7463,12 +7720,7 @@
           return true;
         }
         if (bubble.isCharge) {
-          if (bubble.age < (bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds)) {
-            return true;
-          }
-          if (!isTap) {
-            return true;
-          }
+          return true;
         }
         if (bubble.isCat) {
           if (isTap) {
@@ -7496,7 +7748,7 @@
 
   function handlePointerDown(event) {
     event.preventDefault();
-    if (!state.running) return;
+    if (!state.running || state.paused) return;
 
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -7504,6 +7756,8 @@
     state.activePointerId = event.pointerId;
     state.lastSwipeX = x;
     state.lastSwipeY = y;
+    state.pointerHoldNextAt = state.elapsed + 280;
+    pushPointerFx("tap", x, y, 1);
     canvas.setPointerCapture?.(event.pointerId);
     if (beginDragBubble(x, y, event.pointerId)) {
       return;
@@ -7513,11 +7767,12 @@
 
   function handlePointerMove(event) {
     event.preventDefault();
-    if (!state.running || state.activePointerId !== event.pointerId) return;
+    if (!state.running || state.paused || state.activePointerId !== event.pointerId) return;
 
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    pushPointerTrail(state.lastSwipeX, state.lastSwipeY, x, y);
     if (moveDragBubblePointer(x, y, event.pointerId)) {
       state.lastSwipeX = x;
       state.lastSwipeY = y;
@@ -7546,9 +7801,13 @@
   }
 
   function handlePointerEnd(event) {
+    if (state.running && !state.paused && state.activePointerId === event.pointerId) {
+      pushPointerFx("release", state.lastSwipeX, state.lastSwipeY, 0.62);
+    }
     releaseDragBubblePointer(event.pointerId);
     if (state.activePointerId === event.pointerId) {
       state.activePointerId = null;
+      state.pointerHoldNextAt = 0;
       canvas.releasePointerCapture?.(event.pointerId);
     }
     if (state.catHoldPointerId === event.pointerId) {
@@ -7562,14 +7821,19 @@
   }
 
   function update(dt) {
-    if (!state.running) return;
+    if (!state.running || state.paused) return;
 
     state.elapsed += dt * 1000;
     updateBackgroundFlow(dt);
     maybeAdvanceStage();
-    maybeActivateCatBubbleSystem();
-    maybeSpawnChargeBubble();
-    maybeSpawnDragBubble();
+    const pulseInfo = currentPulseInfo();
+    if (pulseInfo) {
+      maybeSpawnPulseBeat(pulseInfo);
+    } else {
+      maybeActivateCatBubbleSystem();
+      maybeSpawnChargeBubble();
+      maybeSpawnDragBubble();
+    }
     const d = difficulty();
     const tier = difficultyTier(d);
     if (tier > state.difficultyTier) {
@@ -7577,6 +7841,7 @@
     }
     updateHiddenLeak(dt);
     drainWater(dt);
+    updatePointerFeedback(dt);
     state.flash = Math.max(0, state.flash - dt * 1.9);
     state.mistakeFlash = Math.max(0, state.mistakeFlash - dt * 4.2);
     state.difficultyFlash = Math.max(0, state.difficultyFlash - dt * 0.9);
@@ -7601,7 +7866,9 @@
       state.nextSpawnAt = state.elapsed + 90;
     }
     maybeAdvanceStage();
-    maybeActivateCatBubbleSystem();
+    if (!pulseInfo) {
+      maybeActivateCatBubbleSystem();
+    }
     updateCatBubbleHold(dt);
     updateCustomBubbleHold(dt);
 
@@ -7609,6 +7876,10 @@
       const bubble = state.bubbles[i];
       bubble.age += dt;
       if (bubble.age < 0) {
+        continue;
+      }
+      if (bubble.isPulse) {
+        updatePulseBubble(bubble, i, dt);
         continue;
       }
       if (bubble.isBleach) {
@@ -8359,10 +8630,16 @@
     }
 
     const danger = smoothstep(0.68, 1, progress);
+    const finalWarning = smoothstep(0.9, 1, progress);
+    const shakeAmount = Math.pow(danger, 1.45) * Math.min(5.2, 1.4 + r * 0.055);
+    ctx.translate(
+      Math.sin(state.visualTime * 0.115 + bubble.skinPhase) * shakeAmount,
+      Math.cos(state.visualTime * 0.143 + bubble.skinPhase * 1.7) * shakeAmount * 0.72,
+    );
     const bodyReveal = smoothstep(0, 0.16, progress);
     ctx.globalAlpha *= 0.58 + bodyReveal * 0.42;
-    const wobble = Math.sin(state.visualTime / 150 + bubble.skinPhase) * (0.018 + danger * 0.014);
-    const breath = Math.sin(state.visualTime / 104 + bubble.skinPhase * 0.7) * (0.012 + danger * 0.012);
+    const wobble = Math.sin(state.visualTime / (150 - danger * 82) + bubble.skinPhase) * (0.018 + danger * 0.038);
+    const breath = Math.sin(state.visualTime / (104 - danger * 46) + bubble.skinPhase * 0.7) * (0.012 + danger * 0.026);
 
     ctx.rotate(Math.sin(state.visualTime / 430 + bubble.skinPhase) * 0.045);
     ctx.scale(1 + wobble + breath, 1 - wobble * 0.5 + breath * 0.32);
@@ -8431,6 +8708,30 @@
     ctx.beginPath();
     ctx.ellipse(r * 0.34, -r * 0.28, r * 0.13, r * 0.065, -0.34, 0, Math.PI * 2);
     ctx.fill();
+
+    if (danger > 0.02) {
+      const warningPulse = 0.5 + Math.sin(state.visualTime / (74 - danger * 28)) * 0.5;
+      ctx.globalCompositeOperation = "screen";
+      ctx.strokeStyle = `rgba(255, 238, 248, ${(0.18 + warningPulse * 0.3) * danger})`;
+      ctx.lineWidth = Math.max(1.4, r * (0.035 + finalWarning * 0.035));
+      ctx.beginPath();
+      ctx.arc(0, 0, r * (1.06 + warningPulse * 0.08), 0, Math.PI * 2);
+      ctx.stroke();
+      for (let index = 0; index < 4; index += 1) {
+        const angle = state.visualTime * 0.0024 + index * Math.PI * 0.5;
+        ctx.strokeStyle = `rgba(255,255,255,${(0.18 + finalWarning * 0.52) * danger})`;
+        ctx.lineWidth = Math.max(1.2, r * 0.026);
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 1.17, angle, angle + 0.28 + finalWarning * 0.16);
+        ctx.stroke();
+      }
+      if (finalWarning > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${finalWarning * (0.08 + warningPulse * 0.12)})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     ctx.restore();
     return true;
@@ -8907,6 +9208,56 @@
     ctx.restore();
   }
 
+  function drawPointerFeedback() {
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.lineCap = "round";
+    state.pointerTrail.forEach((trail) => {
+      const life = 1 - clamp(trail.age / trail.life, 0, 1);
+      const tone = trail.colorIndex === 0 ? palette[0] : palette[1];
+      ctx.shadowColor = colorWithAlpha(tone.light, 0.25 * life);
+      ctx.shadowBlur = 8;
+      ctx.strokeStyle = colorWithAlpha(tone.light, 0.2 * life);
+      ctx.lineWidth = trail.width * (0.55 + life * 0.45);
+      ctx.beginPath();
+      ctx.moveTo(trail.fromX, trail.fromY);
+      ctx.lineTo(trail.toX, trail.toY);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = colorWithAlpha("#ffffff", 0.32 * life);
+      ctx.lineWidth = Math.max(1, trail.width * 0.2);
+      ctx.stroke();
+    });
+
+    state.pointerFx.forEach((effect) => {
+      const progress = clamp(effect.age / effect.life, 0, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      const alpha = (1 - progress) * effect.power;
+      const isHold = effect.type === "hold";
+      const radius = isHold ? 11 + ease * 31 : 6 + ease * 27;
+      const glow = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, radius);
+      glow.addColorStop(0, `rgba(255,255,255,${0.1 * alpha})`);
+      glow.addColorStop(0.55, `rgba(191,239,250,${0.07 * alpha})`);
+      glow.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(238,252,255,${(isHold ? 0.34 : 0.5) * alpha})`;
+      ctx.lineWidth = isHold ? 1.3 : 1.7;
+      ctx.beginPath();
+      ctx.arc(effect.x, effect.y, radius * (isHold ? 0.88 : 1), 0, Math.PI * 2);
+      ctx.stroke();
+      if (!isHold && progress < 0.48) {
+        ctx.fillStyle = `rgba(255,255,255,${0.62 * (1 - progress / 0.48)})`;
+        ctx.beginPath();
+        ctx.arc(effect.x, effect.y, 2.4 + progress * 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    ctx.restore();
+  }
+
   function drawBlasts() {
     state.blasts.forEach((blast) => {
       const t = blast.age / blast.life;
@@ -9253,6 +9604,7 @@
     drawBackground();
     drawDifficultyBanners();
     drawWaterStressOverlay();
+    drawPointerFeedback();
     state.bubbles.forEach(drawBubble);
     drawRipples();
     drawBlasts();
@@ -9265,7 +9617,7 @@
 
   function loop(now) {
     frameRequest = 0;
-    if (document.hidden || !state.running) {
+    if (document.hidden || !state.running || state.paused) {
       updatePerfDebug(now, true);
       return;
     }
@@ -9310,6 +9662,28 @@
     audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
     audioContext.resume?.();
     return audioContext;
+  }
+
+  function playChargeWarningTick(intensity = 0) {
+    try {
+      const context = ensureAudioContext();
+      const now = context.currentTime;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const amount = clamp(intensity, 0, 1);
+      oscillator.type = amount > 0.82 ? "triangle" : "sine";
+      oscillator.frequency.setValueAtTime(390 + amount * 250, now);
+      oscillator.frequency.exponentialRampToValueAtTime(455 + amount * 360, now + 0.055);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.012 + amount * 0.018, now + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.08);
+    } catch {
+      // Audio feedback is optional when the browser has not unlocked audio yet.
+    }
   }
 
   function soundUrl(fileName) {
@@ -9519,6 +9893,175 @@
     }, 1540);
   }
 
+  const settingsPatternLabels = {
+    WAVE_CENTER: "中央水波",
+    WAVE_TIDE: "潮汐水波",
+    ROTATE_TOP_TO_SIDE: "旋转分界",
+    ROTATE_SIDE_TO_DIAGONAL: "斜向分界",
+    ISLAND_PINK: "粉色孤岛",
+    ISLAND_BLUE: "蓝色孤岛",
+    FOLD: "折叠水面",
+    ORBIT: "环流水面",
+    BRAID: "交织水流",
+    PULSE_BLUE: "蓝底脉冲",
+    PULSE_PINK: "粉底脉冲",
+  };
+
+  function settingsPatternLabelForLevel(level) {
+    const patternId = backgroundPatternIdForLevel(level);
+    return settingsPatternLabels[patternId] || "高难水流";
+  }
+
+  function selectedSettingsLevel() {
+    return clamp(Math.round(Number(settingsLevelSelect?.value || displayDifficultyLevel())), 1, 30);
+  }
+
+  function updateSettingsStageMeta() {
+    if (!settingsStageMeta || !settingsJumpButton) return;
+    const level = selectedSettingsLevel();
+    settingsStageMeta.textContent = `Lv ${level} · ${settingsPatternLabelForLevel(level)}`;
+    settingsJumpButton.textContent = `进入 Lv ${level}`;
+  }
+
+  function syncSettingsPanel() {
+    if (!settingsPanel) return;
+    const playing = state.running;
+    if (settingsStatus) {
+      settingsStatus.textContent = playing ? (state.paused ? "游戏已暂停" : "游戏进行中") : "当前未开始";
+    }
+    if (settingsPauseIcon) {
+      settingsPauseIcon.textContent = playing && !state.paused ? "Ⅱ" : playing ? "▶" : "×";
+    }
+    if (settingsPauseLabel) {
+      settingsPauseLabel.textContent = playing && !state.paused ? "暂停游戏" : playing ? "继续游戏" : "关闭设置";
+    }
+    settingsButton?.classList.toggle("is-paused", playing && state.paused);
+    updateSettingsStageMeta();
+  }
+
+  function releasePointersForPause() {
+    if (state.dragPointerId !== null) {
+      releaseDragBubblePointer(state.dragPointerId);
+    }
+    if (state.activePointerId !== null) {
+      try {
+        canvas.releasePointerCapture?.(state.activePointerId);
+      } catch {
+        // The pointer may already have left the canvas.
+      }
+    }
+    state.activePointerId = null;
+    state.pointerHoldNextAt = 0;
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
+  }
+
+  function pauseGame() {
+    if (!state.running || state.paused) return false;
+    state.paused = true;
+    releasePointersForPause();
+    if (frameRequest) {
+      cancelAnimationFrame(frameRequest);
+      frameRequest = 0;
+    }
+    updateHud();
+    draw();
+    updatePerfDebug(performance.now(), true);
+    syncSettingsPanel();
+    return true;
+  }
+
+  function resumeGame() {
+    if (!state.running || !state.paused) return false;
+    state.paused = false;
+    lastFrameTime = performance.now();
+    state.lastTime = lastFrameTime;
+    updateHud();
+    syncSettingsPanel();
+    scheduleLoop();
+    return true;
+  }
+
+  function settingsAreOpen() {
+    return Boolean(settingsPanel?.classList.contains("open"));
+  }
+
+  function openSettings() {
+    if (!settingsPanel || settingsAreOpen() || (introRunning && !state.running)) return;
+    if (settingsLevelSelect) {
+      settingsLevelSelect.value = String(displayDifficultyLevel());
+    }
+    pauseGame();
+    settingsPanel.classList.add("open");
+    settingsPanel.setAttribute("aria-hidden", "false");
+    settingsScrim?.classList.add("open");
+    settingsScrim?.setAttribute("aria-hidden", "false");
+    settingsButton?.setAttribute("aria-expanded", "true");
+    settingsButton?.setAttribute("aria-label", "关闭设置");
+    phoneShell?.classList.add("settings-open");
+    syncSettingsPanel();
+  }
+
+  function closeSettings({ resume = true } = {}) {
+    if (!settingsPanel) return;
+    settingsPanel.classList.remove("open");
+    settingsPanel.setAttribute("aria-hidden", "true");
+    settingsScrim?.classList.remove("open");
+    settingsScrim?.setAttribute("aria-hidden", "true");
+    settingsButton?.setAttribute("aria-expanded", "false");
+    settingsButton?.setAttribute("aria-label", "打开设置");
+    phoneShell?.classList.remove("settings-open");
+    if (resume) resumeGame();
+    syncSettingsPanel();
+  }
+
+  function startAtSettingsLevel() {
+    const targetLevel = selectedSettingsLevel();
+    closeSettings({ resume: false });
+    resetGame({ startPaused: true });
+    jumpToDebugLevel(targetLevel);
+    resumeGame();
+  }
+
+  function initSettingsControls() {
+    if (!settingsButton || !settingsPanel || !settingsLevelSelect) return;
+    for (let level = 1; level <= 30; level += 1) {
+      const option = document.createElement("option");
+      option.value = String(level);
+      option.textContent = `Lv ${level} · ${settingsPatternLabelForLevel(level)}`;
+      settingsLevelSelect.append(option);
+    }
+    settingsLevelSelect.value = String(displayDifficultyLevel());
+    settingsLevelSelect.addEventListener("change", updateSettingsStageMeta);
+    settingsButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (settingsAreOpen()) closeSettings();
+      else openSettings();
+    });
+    settingsCloseButton?.addEventListener("click", () => closeSettings());
+    settingsScrim?.addEventListener("click", () => closeSettings());
+    settingsPauseButton?.addEventListener("click", () => {
+      if (!state.running) {
+        closeSettings({ resume: false });
+      } else if (state.paused) {
+        closeSettings({ resume: true });
+      } else {
+        pauseGame();
+      }
+    });
+    settingsJumpButton?.addEventListener("click", startAtSettingsLevel);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && settingsAreOpen()) {
+        event.preventDefault();
+        closeSettings();
+      }
+    });
+    syncSettingsPanel();
+  }
+
   function setBackgroundToLevel(level) {
     const flow = state.backgroundFlow;
     const layout = makeBackgroundLayout(level, Math.max(0, level * 2));
@@ -9683,14 +10226,14 @@
   canvas.addEventListener("pointercancel", handlePointerEnd);
   window.addEventListener("resize", () => {
     resize();
-    if (!state.running) {
+    if (!state.running || state.paused) {
       draw();
       updatePerfDebug(performance.now(), true);
     }
   });
   window.addEventListener("orientationchange", () => {
     resize();
-    if (!state.running) {
+    if (!state.running || state.paused) {
       draw();
       updatePerfDebug(performance.now(), true);
     }
@@ -9704,7 +10247,7 @@
       return;
     }
     lastFrameTime = performance.now();
-    if (state.running) {
+    if (state.running && !state.paused) {
       scheduleLoop();
     } else {
       draw();
@@ -9713,6 +10256,7 @@
   });
 
   resize();
+  initSettingsControls();
   initDebugControls();
   updateHud();
   draw();

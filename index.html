@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>泡泡补水</title>
-    <link rel="stylesheet" href="./styles.css?v=1.1.96" />
+    <link rel="stylesheet" href="./styles.css?v=1.2.1" />
   </head>
   <body>
     <main class="phone-shell" aria-label="泡泡补水游戏">
@@ -44,6 +44,51 @@
         <strong id="clearSkillValue">READY</strong>
       </button>
 
+      <button
+        id="settingsButton"
+        class="settings-button"
+        type="button"
+        aria-label="打开设置"
+        title="设置"
+        aria-controls="settingsPanel"
+        aria-expanded="false"
+      >
+        <span aria-hidden="true">&#9881;</span>
+      </button>
+      <div id="settingsScrim" class="settings-scrim" aria-hidden="true"></div>
+      <section
+        id="settingsPanel"
+        class="settings-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settingsTitle"
+        aria-hidden="true"
+      >
+        <header class="settings-header">
+          <div>
+            <span id="settingsStatus" class="settings-status">游戏已暂停</span>
+            <h2 id="settingsTitle">设置</h2>
+          </div>
+          <button id="settingsClose" class="settings-close" type="button" aria-label="关闭设置">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </header>
+
+        <div class="settings-stage">
+          <label for="settingsLevel">关卡选择</label>
+          <div class="settings-level-control">
+            <select id="settingsLevel" aria-label="选择关卡"></select>
+            <button id="settingsJump" type="button">进入</button>
+          </div>
+          <span id="settingsStageMeta" class="settings-stage-meta">Lv 1 · 中央水波</span>
+        </div>
+
+        <button id="settingsPause" class="settings-pause" type="button">
+          <span id="settingsPauseIcon" aria-hidden="true">&#9654;</span>
+          <strong id="settingsPauseLabel">继续游戏</strong>
+        </button>
+      </section>
+
       <section id="curtain" class="curtain">
         <div class="title-mark">泡泡补水</div>
         <p class="start-copy">泡泡进入同色背景时戳破它，连击把水槽续满。</p>
@@ -53,7 +98,7 @@
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./background-engine.js?v=1.1.96" defer></script>
-    <script src="./game.js?v=1.1.96" defer></script>
+    <script src="./background-engine.js?v=1.2.1" defer></script>
+    <script src="./game.js?v=1.2.1" defer></script>
   </body>
 </html>

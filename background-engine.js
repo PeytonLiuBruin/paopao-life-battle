@@ -134,6 +134,18 @@
       freq: 1.55,
       phase: 2.4,
     },
+    PULSE_BLUE: {
+      type: "pulse",
+      baseColorIndex: 0,
+      pulses: 4,
+      phaseOffset: 0,
+    },
+    PULSE_PINK: {
+      type: "pulse",
+      baseColorIndex: 1,
+      pulses: 4,
+      phaseOffset: 2,
+    },
   };
 
   const LEVEL_PATTERN_IDS = [
@@ -146,8 +158,10 @@
     "FOLD",
     "ORBIT",
     "BRAID",
+    "PULSE_BLUE",
+    "PULSE_PINK",
   ];
-  const HIGH_PATTERN_IDS = ["ISLAND_PINK", "FOLD", "ISLAND_BLUE", "ORBIT", "BRAID"];
+  const HIGH_PATTERN_IDS = ["ISLAND_PINK", "PULSE_BLUE", "FOLD", "ISLAND_BLUE", "PULSE_PINK", "ORBIT", "BRAID"];
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -160,6 +174,11 @@
 
   function ease01(value) {
     return smoothstep(0, 1, value);
+  }
+
+  function smootherstep(edge0, edge1, value) {
+    const t = clamp((value - edge0) / Math.max(0.0001, edge1 - edge0), 0, 1);
+    return t * t * t * (t * (t * 6 - 15) + 10);
   }
 
   function mix(a, b, t) {
@@ -207,7 +226,51 @@
     };
   }
 
+  function preparePulseState(local, pattern) {
+    const pulseCount = Math.max(1, pattern.pulses || 5);
+    const pulseFloat = clamp(local, 0, 0.999999) * pulseCount;
+    const beat = Math.min(pulseCount - 1, Math.floor(pulseFloat));
+    const phase = pulseFloat - beat;
+    const centerDeck = [
+      [0.5, 0.5],
+      [0.34, 0.42],
+      [0.66, 0.58],
+      [0.62, 0.34],
+      [0.38, 0.64],
+    ];
+    const center = centerDeck[(beat + (pattern.phaseOffset || 0)) % centerDeck.length];
+    const challenge = pulseCount <= 1 ? 0 : beat / (pulseCount - 1);
+    const previewEnd = mix(0.42, 0.27, challenge);
+    const sweepEnd = previewEnd + mix(0.52, 0.34, challenge);
+    const preview = smoothstep(0, previewEnd, phase);
+    const sweep = smootherstep(previewEnd, sweepEnd, phase);
+    const radius = phase < previewEnd ? mix(0.012, 0.045, preview) : mix(0.045, 1.22, sweep);
+    const visibility = smoothstep(0.025, 0.11, phase) * (1 - smoothstep(sweepEnd + 0.015, Math.min(0.995, sweepEnd + 0.075), phase));
+    const sweepThickness = mix(0.09, 0.062, challenge);
+    const thickness = phase < previewEnd
+      ? mix(0.009, 0.018, preview)
+      : mix(0.018, mix(sweepThickness, sweepThickness * 0.82, sweep), smoothstep(0, 0.24, sweep));
+    return {
+      type: "pulse",
+      beat,
+      phase,
+      centerX: center[0],
+      centerY: center[1],
+      radius,
+      thickness,
+      visibility,
+      previewEnd,
+      sweepEnd,
+      baseColorIndex: pattern.baseColorIndex,
+      ringColorIndex: 1 - pattern.baseColorIndex,
+      baseSign: pattern.baseColorIndex === 0 ? 1 : -1,
+    };
+  }
+
   function preparePatternState(local, flow, pattern) {
+    if (pattern.type === "pulse") {
+      return preparePulseState(local, pattern);
+    }
     if (pattern.type === "island") {
       const p = islandPosition(local, flow, pattern);
       const visible = 1 - smoothstep(0.96, 1, local);
@@ -310,14 +373,16 @@
     if (pattern.type === "wave" && nextPattern.type === "wave") transitionStart = 0.42;
     if (pattern.type !== "island" && nextPattern.type === "island") transitionStart = 0.94;
     if (pattern.type === "island") transitionStart = 0.82;
+    if (nextPattern.type === "pulse") transitionStart = 0.94;
+    if (pattern.type === "pulse") transitionStart = 0.96;
     return {
       info,
       local,
       flow,
-      current: preparePatternState(local, flow, pattern),
+      current: preparePatternState(pattern.type === "pulse" ? info.local : local, flow, pattern),
       next: preparePatternState(0, flow, nextPattern),
       warpPhase: flow * TAU,
-      warpStrength: pattern.type === "wave" ? 1.15 : 0.85,
+      warpStrength: pattern.type === "pulse" ? 0 : pattern.type === "wave" ? 1.15 : 0.85,
       transition: smoothstep(transitionStart, 0.995, info.local),
     };
   }
@@ -418,7 +483,19 @@
     );
   }
 
+  function pulsePatternField(x, y, prepared) {
+    const minDimension = Math.max(1, Math.min(width, height));
+    const dx = ((x - prepared.centerX) * width) / minDimension;
+    const dy = ((y - prepared.centerY) * height) / minDimension;
+    const distance = Math.hypot(dx, dy);
+    const ringDistance = Math.abs(distance - prepared.radius);
+    const ringMask =
+      (1 - smoothstep(prepared.thickness, prepared.thickness + 0.018, ringDistance)) * prepared.visibility;
+    return prepared.baseSign * (0.56 - ringMask * 1.34);
+  }
+
   function patternField(x, y, prepared) {
+    if (prepared.type === "pulse") return pulsePatternField(x, y, prepared);
     if (prepared.type === "island") return islandPatternField(x, y, prepared);
     if (prepared.type === "fold") return foldPatternField(x, y, prepared);
     if (prepared.type === "orbit") return orbitPatternField(x, y, prepared);
@@ -712,6 +789,7 @@
 
   function drawContours(ctx, t) {
     if (!contoursEnabled) return;
+    if (buildFrameState(t).current.type === "pulse") return;
     if (!Number.isFinite(contourRenderedTime) || Math.abs(contourRenderedTime - renderedTime) > 0.001) {
       collectContourSegments();
       contourRenderedTime = renderedTime;
@@ -720,6 +798,44 @@
     strokeSegments(ctx, "rgba(29, 35, 72, 0.22)", qualityScale < 0.7 ? 1.7 : 2);
     strokeSegments(ctx, "rgba(246, 253, 255, 0.44)", qualityScale < 0.7 ? 0.82 : 1);
     strokeSegments(ctx, "rgba(255, 190, 210, 0.16)", 0.45);
+  }
+
+  function drawPulseOverlay(ctx, t) {
+    const frameState = buildFrameState(t);
+    const pulse = frameState.current;
+    if (!pulse || pulse.type !== "pulse" || pulse.visibility <= 0.01) return;
+    const minDimension = Math.min(width, height);
+    const cx = pulse.centerX * width;
+    const cy = pulse.centerY * height;
+    const radius = pulse.radius * minDimension;
+    if (radius <= 0.5) return;
+    const fullWidth = (pulse.thickness + 0.012) * minDimension * 2;
+    const ringWidth = Math.max(2, Math.min(fullWidth, radius * 0.72));
+    const alpha = pulse.visibility * (1 - frameState.transition);
+    const ringRgb = pulse.ringColorIndex === 0 ? liquidPalette.blue : liquidPalette.pink;
+    const ringLight = pulse.ringColorIndex === 0 ? liquidPalette.blueLight : liquidPalette.pinkLight;
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.shadowColor = `rgba(${ringLight[0]}, ${ringLight[1]}, ${ringLight[2]}, ${0.22 * alpha})`;
+    ctx.shadowBlur = Math.min(18, 5 + ringWidth * 0.18);
+    ctx.strokeStyle = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.88 * alpha})`;
+    ctx.lineWidth = ringWidth + Math.min(3, radius * 0.14);
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, TAU);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    const edgeAlpha = 0.58 * alpha;
+    ctx.strokeStyle = `rgba(${ringLight[0]}, ${ringLight[1]}, ${ringLight[2]}, ${edgeAlpha})`;
+    ctx.lineWidth = qualityScale < 0.7 ? 1.15 : 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(0.5, radius - ringWidth * 0.5), 0, TAU);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + ringWidth * 0.5, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function setQuality(options = {}) {
@@ -755,6 +871,7 @@
     const frameTime = ensureFrame(t);
     ctx.drawImage(fieldCanvas, 0, 0, width, height);
     drawContours(ctx, frameTime);
+    drawPulseOverlay(ctx, frameTime);
   }
 
   function colorIndexAt(x, y, t) {
@@ -765,6 +882,30 @@
     return analyticMixAt(x, y, t);
   }
 
+  function pulseInfoAt(t) {
+    const info = levelInfo(Math.max(0, t));
+    const patternId = patternIdForLevel(info.level);
+    const pattern = PATTERNS[patternId];
+    if (!pattern || pattern.type !== "pulse") return null;
+    const pulse = preparePulseState(info.local, pattern);
+    return {
+      patternId,
+      level: info.level,
+      beat: pulse.beat,
+      beatKey: `${info.level}-${pulse.beat}`,
+      phase: pulse.phase,
+      centerX: pulse.centerX,
+      centerY: pulse.centerY,
+      radius: pulse.radius,
+      thickness: pulse.thickness,
+      visibility: pulse.visibility,
+      previewEnd: pulse.previewEnd,
+      sweepEnd: pulse.sweepEnd,
+      baseColorIndex: pulse.baseColorIndex,
+      ringColorIndex: pulse.ringColorIndex,
+    };
+  }
+
   window.PaopaoBackgroundEngine = {
     resize,
     setQuality,
@@ -773,5 +914,7 @@
     mixAt,
     fieldAt: analyticFieldAt,
     levelAt: (t) => levelInfo(t).level,
+    patternIdAt: (t) => patternIdForLevel(levelInfo(t).level),
+    pulseInfoAt,
   };
 })();
