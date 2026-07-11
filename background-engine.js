@@ -137,14 +137,14 @@
     PULSE_BLUE: {
       type: "pulse",
       baseColorIndex: 0,
-      pulses: 2,
+      pulses: 3,
       waveCount: 3,
       phaseOffset: 0,
     },
     PULSE_PINK: {
       type: "pulse",
       baseColorIndex: 1,
-      pulses: 2,
+      pulses: 3,
       waveCount: 3,
       phaseOffset: 2,
     },

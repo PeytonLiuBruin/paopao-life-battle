@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.3.0";
+  const buildVersion = "1.3.1";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
@@ -54,7 +54,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.3.0`;
+      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.3.1`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -264,6 +264,8 @@
     dragBubbleUid: null,
     pulseBeatKey: "",
     pulsePatternLevel: 0,
+    pulseSupportStep: 0,
+    nextPulseSupportAt: Number.POSITIVE_INFINITY,
     bombSpawnCursor: 0,
     difficultyTier: 0,
     difficultyFlash: 0,
@@ -276,6 +278,7 @@
     nextSpawnAt: 0,
     lastPlayableAt: 0,
     lastRhythmBridgeAt: -Infinity,
+    lastStageSustainAt: -Infinity,
     rhythmBeatIndex: -1,
     rhythmPulse: 0,
     rhythmDownbeat: false,
@@ -323,6 +326,7 @@
       duration: 9000,
     },
     activePointerId: null,
+    activePointers: new Map(),
     lastSwipeX: 0,
     lastSwipeY: 0,
     pointerHoldNextAt: 0,
@@ -827,6 +831,7 @@
     state.pointerTrail = [];
     state.difficultyBanners = [];
     state.activePointerId = null;
+    state.activePointers.clear();
     state.customHoldPointerId = null;
     state.customHoldBubbleUid = null;
     state.catHoldPointerId = null;
@@ -834,6 +839,8 @@
     state.pointerHoldNextAt = 0;
     state.pulseBeatKey = "";
     state.pulsePatternLevel = 0;
+    state.pulseSupportStep = 0;
+    state.nextPulseSupportAt = Number.POSITIVE_INFINITY;
   }
 
   function updatePerfDebug(now = performance.now(), force = false) {
@@ -872,14 +879,14 @@
 
   function bubbleCountForLevel(level) {
     const safeLevel = Math.max(1, level);
-    const steadyGrowth = 14 + (safeLevel - 1) * 4.1;
-    const midGameLift = smoothstep(3, 10, safeLevel) * 6;
-    const humanLimitLift = smoothstep(9, 20, safeLevel) * 11;
-    return Math.round(clamp(steadyGrowth + midGameLift + humanLimitLift, 14, 112));
+    const steadyGrowth = 16 + (safeLevel - 1) * 5.05;
+    const midGameLift = smoothstep(3, 10, safeLevel) * 8;
+    const humanLimitLift = smoothstep(8, 20, safeLevel) * 15;
+    return Math.round(clamp(steadyGrowth + midGameLift + humanLimitLift, 16, 132));
   }
 
   function activeBubbleLimit(level = displayDifficultyLevel()) {
-    const base = level <= 1 ? 10 : level <= 3 ? 12 : level <= 6 ? 15 : level <= 10 ? 18 : level <= 16 ? 21 : 24;
+    const base = level <= 1 ? 10 : level <= 3 ? 14 : level <= 6 ? 17 : level <= 10 ? 21 : level <= 16 ? 25 : 28;
     try {
       if (isIslandChoreoPattern(currentBackgroundPatternId())) {
         return Math.max(base, 12);
@@ -981,6 +988,7 @@
     state.rhythmBeatIndex = -1;
     state.rhythmPulse = 0;
     state.rhythmDownbeat = false;
+    state.lastStageSustainAt = Number.NEGATIVE_INFINITY;
     state.nextSpawnAt = Math.min(state.nextSpawnAt || state.elapsed + 140, state.elapsed + 180);
   }
 
@@ -1699,16 +1707,19 @@
     };
   }
 
-  function redDotHeartSrc(fillAmount) {
+  function redDotHeartSrc(fillAmount, recovering = false) {
     const amount = typeof fillAmount === "boolean" ? (fillAmount ? 1 : 0) : clamp(fillAmount, 0, 1);
     const step = Math.round(amount * 100);
-    if (heartSrcCache.has(step)) return heartSrcCache.get(step);
+    const cacheKey = `${recovering ? "charge" : "life"}-${step}`;
+    if (heartSrcCache.has(cacheKey)) return heartSrcCache.get(cacheKey);
     const quantized = step / 100;
     const fillY = 55 - quantized * 46;
     const fillHeight = quantized * 46;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><clipPath id="fill"><rect x="5" y="${fillY}" width="54" height="${fillHeight}" rx="3"/></clipPath></defs><circle cx="32" cy="32" r="23" fill="rgba(255,255,255,0.16)" stroke="rgba(255,255,255,0.62)" stroke-width="5"/><circle cx="32" cy="32" r="23" fill="#f43645" clip-path="url(#fill)"/><circle cx="24" cy="22" r="7" fill="rgba(255,255,255,${0.2 + quantized * 0.42})"/><circle cx="32" cy="32" r="20.5" fill="none" stroke="rgba(255,255,255,${0.12 + quantized * 0.18})" stroke-width="1.4"/></svg>`;
+    const fillColor = recovering ? "#94aab2" : "#f43645";
+    const innerStroke = recovering ? "rgba(224,241,246,0.38)" : `rgba(255,255,255,${0.12 + quantized * 0.18})`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><clipPath id="fill"><rect x="5" y="${fillY}" width="54" height="${fillHeight}" rx="3"/></clipPath></defs><circle cx="32" cy="32" r="23" fill="rgba(226,237,241,0.13)" stroke="rgba(255,255,255,0.58)" stroke-width="5"/><circle cx="32" cy="32" r="23" fill="${fillColor}" clip-path="url(#fill)"/><circle cx="24" cy="22" r="7" fill="rgba(255,255,255,${0.16 + quantized * 0.34})"/><circle cx="32" cy="32" r="20.5" fill="none" stroke="${innerStroke}" stroke-width="1.4"/></svg>`;
     const source = `data:image/svg+xml,${encodeURIComponent(svg)}`;
-    heartSrcCache.set(step, source);
+    heartSrcCache.set(cacheKey, source);
     return source;
   }
 
@@ -1745,7 +1756,7 @@
       const segmentProgress = isFull ? 1 : isNextLife ? lifeChargeProgress : 0;
       const justCompleted = isFull && index === fullLifeCount - 1 && state.elapsed < lifeGainUntil;
       const chargingNow = isNextLife && segmentProgress > 0 && state.elapsed < waterGainUntil;
-      heart.src = redDotHeartSrc(segmentProgress);
+      heart.src = redDotHeartSrc(segmentProgress, isNextLife);
       heart.classList.toggle("charging", justCompleted || chargingNow);
       heart.classList.toggle("recovering", isNextLife && segmentProgress > 0);
       heart.classList.toggle("near-ready", isNextLife && segmentProgress >= 0.72);
@@ -1772,7 +1783,7 @@
     comboChip.classList.toggle("ranked", Boolean(rank));
     comboChip.classList.toggle("expiring", state.combo > 1 && comboProgress() < 0.32);
     comboChip.classList.toggle("surge", state.combo >= 4 && state.comboPulse > 0.14);
-    comboChip.classList.toggle("milestone", state.combo >= 5 && state.combo % 5 === 0 && state.comboPulse > 0.2);
+    comboChip.classList.toggle("milestone", state.combo >= 4 && state.combo % 4 === 0 && state.comboPulse > 0.2);
     comboChip.textContent = openActive
       ? state.combo > 1
         ? `x${state.combo}`
@@ -1851,6 +1862,7 @@
     state.nextSpawnAt = 120;
     state.lastPlayableAt = 0;
     state.lastRhythmBridgeAt = -Infinity;
+    state.lastStageSustainAt = -Infinity;
     state.bubbleCounter = 0;
     state.customBubblePack = loadCustomBubblePack();
     state.customPackStatus = state.customBubblePack ? `PACK ${state.customBubblePack.name}` : "";
@@ -2054,6 +2066,7 @@
     if (navigator.vibrate) {
       navigator.vibrate([22, 38, 22]);
     }
+    releasePointersForPause();
     state.running = false;
     state.paused = false;
     closeSettings({ resume: false });
@@ -2256,15 +2269,29 @@
       (forcedSize !== "normal" && (forceSmall || (d > 0.58 && Math.random() < (d - 0.42) * 0.34)));
     const radiusKind = forcedSize === "large" ? "large" : smallWave ? "small" : "normal";
     const radius = options.radius ?? (isBleach ? radiusForDifficulty(d, "normal") * rand(0.9, 1.04) : radiusForDifficulty(d, radiusKind));
-    if (options.customPath?.mode?.includes("flow") && Number.isInteger(options.colorIndex)) {
+    if (options.customPath?.points?.length && Number.isInteger(options.colorIndex)) {
       options.customPath.colorIndex = options.colorIndex;
     }
-    if (
-      kind === "normal" &&
-      options.customPath?.mode?.includes("flow") &&
-      flowPathWouldOverlap(options.customPath, radius, options.delay ?? 0)
-    ) {
-      return false;
+    if (kind === "normal" && options.customPath?.points?.length) {
+      const pathColorIndex = options.colorIndex ?? options.customPath.colorIndex ?? -1;
+      const originalDelay = options.delay ?? 0;
+      const chainId = options.islandChainId ?? "";
+      if (flowPathWouldOverlap(options.customPath, radius, originalDelay, pathColorIndex, chainId)) {
+        let safeDelay = null;
+        const beatStep = rhythmBeatMs() / 2 / 1000;
+        for (let offsetIndex = 1; offsetIndex <= 6; offsetIndex += 1) {
+          const candidateDelay = originalDelay + beatStep * offsetIndex;
+          if (flowPathWouldOverlap(options.customPath, radius, candidateDelay, pathColorIndex, chainId)) continue;
+          const playable = isIslandChoreoPattern(currentBackgroundPatternId())
+            ? pathHasPlayableIslandPath(options.customPath, pathColorIndex, candidateDelay)
+            : pathHasPlayableStructuredPath(options.customPath, pathColorIndex, fairMatchDwell, candidateDelay);
+          if (!playable) continue;
+          safeDelay = candidateDelay;
+          break;
+        }
+        if (safeDelay === null) return false;
+        options.delay = safeDelay;
+      }
     }
     const margin = safeSpawnAxisMargin(edge, radius);
     const calmSmall = kind === "normal" && radiusKind === "small";
@@ -2380,6 +2407,7 @@
       isCharge,
       isDrag,
       isPulse: Boolean(options.isPulse),
+      isPulseSupport: Boolean(options.isPulseSupport),
       pulseBeatKey: options.pulseBeatKey ?? "",
       pulseAnchorX: options.pulseAnchorX ?? x,
       pulseAnchorY: options.pulseAnchorY ?? y,
@@ -2652,6 +2680,7 @@
   }
 
   function maxActiveChargeBubblesForLevel(level = displayDifficultyLevel()) {
+    if (isPulsePattern()) return level >= 11 ? 3 : 2;
     if (level <= 2) return 2;
     if (level <= 5) return 3;
     if (level <= 9) return 4;
@@ -2659,11 +2688,12 @@
   }
 
   function nextChargeBubbleDelay(level = displayDifficultyLevel()) {
-    if (level <= 1) return rand(11000, 16000);
-    if (level <= 2) return rand(6800, 10200);
-    if (level <= 5) return rand(5700, 8800);
-    if (level <= 9) return rand(4800, 7400);
-    return rand(4100, 6500);
+    if (isPulsePattern()) return rand(3600, 5200);
+    if (level <= 1) return rand(9600, 13200);
+    if (level <= 2) return rand(4800, 7200);
+    if (level <= 5) return rand(3600, 5600);
+    if (level <= 9) return rand(2900, 4500);
+    return rand(2400, 3800);
   }
 
   function chargePoint(xRatio, yRatio) {
@@ -2779,7 +2809,9 @@
     const pattern = pool[Math.floor(rand(0, pool.length))];
     const waveId = ++state.chargeWaveCounter;
     const peak = level >= 8 && waveId % 6 === 0;
-    const maxPerBeat = level <= 2 ? 1 : level <= 4 ? 2 : level <= 8 ? 3 : peak ? 4 : 3;
+    const maxPerBeat = isPulsePattern()
+      ? level >= 11 ? 2 : 1
+      : level <= 2 ? 1 : level <= 9 ? 2 : peak ? 4 : 3;
     const mirrorX = Math.random() < 0.5;
     const mirrorY = pattern === "diagonal" || pattern === "v" || pattern === "wave" ? Math.random() < 0.5 : false;
     const offsetX = rand(-0.018, 0.018);
@@ -3712,11 +3744,11 @@
             : flow.type === "sGroup"
               ? 520
               : 620;
-    const levelPace = 1 - smoothstep(8, 18, displayDifficultyLevel()) * 0.2;
+    const levelPace = 1 - smoothstep(6, 18, displayDifficultyLevel()) * 0.25;
     const flowInterval = ((base * rand(0.84, 1.14)) / spawnFlowRhythm(flow) - d * 90) * levelPace;
-    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.72, 0.98)), 165, 1120);
+    const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.68, 0.94)), 130, 980);
     const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 190 : 0;
-    const groupBreath = Math.min(290, Math.max(0, count - 1) * (displayDifficultyLevel() <= 3 ? 132 : 78));
+    const groupBreath = Math.min(220, Math.max(0, count - 1) * (displayDifficultyLevel() <= 3 ? 108 : 58));
     state.nextSpawnAt = nextRhythmTime(
       state.elapsed + interval + groupBreath + phraseRest,
       rhythmSpawnSubdivision(displayDifficultyLevel()),
@@ -4012,9 +4044,9 @@
     return points[points.length - 1];
   }
 
-  function flowPathWouldOverlap(path, radius, delaySeconds = 0) {
-    if (!path?.points?.length || !path.mode?.includes("flow")) return false;
-    const horizon = Math.min(4.8, Math.max(2.8, delaySeconds + path.duration * 0.54));
+  function flowPathWouldOverlap(path, radius, delaySeconds = 0, colorIndex = path?.colorIndex ?? -1, chainId = "") {
+    if (!path?.points?.length) return false;
+    const horizon = Math.min(6.4, Math.max(3.2, delaySeconds + path.duration * 0.62));
     for (const other of state.bubbles) {
       const otherPath = other.customPath;
       if (
@@ -4022,21 +4054,24 @@
         other.isCat ||
         other.isBleach ||
         other.isBomb ||
-        other.isClear ||
-        !otherPath?.points?.length ||
-        !otherPath.mode?.includes("flow")
+        other.isClear
       ) {
         continue;
       }
+      const sameChain = Boolean(chainId && other.islandChainId === chainId);
+      const sameColor = colorIndex >= 0 && colorIndex === other.colorIndex;
+      const thresholdScale = sameChain ? 0.68 : sameColor ? 0.72 : 1.08;
+      const threshold = (radius + other.baseRadius) * thresholdScale + (sameColor ? 2 : 7);
+      if (!otherPath?.points?.length) {
+        continue;
+      }
       const otherWait = Math.max(0, -(other.age ?? 0));
-      const sameColor = path.colorIndex >= 0 && path.colorIndex === other.colorIndex;
-      const threshold = (radius + other.baseRadius) * (sameColor ? 0.5 : 0.62);
-      for (let future = 0.36; future <= horizon; future += 0.42) {
+      for (let future = 0.24; future <= horizon; future += 0.3) {
         const newElapsed = future - delaySeconds;
         const otherElapsed = (otherPath.elapsed ?? 0) + future - otherWait;
         if (newElapsed < 0 || otherElapsed < 0 || newElapsed >= path.duration || otherElapsed >= otherPath.duration) continue;
-        const point = pointAtCustomPath(path, newElapsed / Math.max(0.001, path.duration));
-        const otherPoint = pointAtCustomPath(otherPath, otherElapsed / Math.max(0.001, otherPath.duration));
+        const point = pointAtCustomPathWithOffset(path, newElapsed / Math.max(0.001, path.duration));
+        const otherPoint = pointAtCustomPathWithOffset(otherPath, otherElapsed / Math.max(0.001, otherPath.duration));
         if (!point || !otherPoint) continue;
         const pointVisible = point.x + radius > 0 && point.x - radius < state.width && point.y + radius > 0 && point.y - radius < state.height;
         const otherVisible =
@@ -4448,7 +4483,13 @@
 
     const target = targetForArchetype(flow, region, start, colorIndex);
     const speed = speedForArchetype(flow.type, sizeKind, d) * (options.speedMultiplier ?? 1);
-    const customPath = options.customPath ?? buildRelaxFlowPath(flow, region, start, colorIndex, radius, speed, sizeKind, target);
+    let customPath = options.customPath ?? buildRelaxFlowPath(flow, region, start, colorIndex, radius, speed, sizeKind, target);
+    if (
+      customPath &&
+      (!Number.isFinite(customPath.totalLength) || customPath.totalLength < Math.max(state.width, state.height) * 0.24)
+    ) {
+      customPath = null;
+    }
     if (customPath) {
       customPath.protectedPath = true;
       customPath.completeFairPass = false;
@@ -4492,6 +4533,7 @@
       pathLockedMotion: Boolean(customPath),
       quietHint: Boolean(options.quietHint),
       delay: options.delay ?? 0,
+      ignoreStageBudget: Boolean(options.ignoreStageBudget),
     });
     if (spawned && sizeKind === "large") flow.usedLarge = true;
     return spawned;
@@ -5316,6 +5358,17 @@
     };
   }
 
+  function islandOppositePhraseInFlight(colorIndex) {
+    return state.bubbles.some((bubble) => {
+      if (!bubble?.islandChainId || !isStageTargetBubble(bubble) || bubble.colorIndex === colorIndex) return false;
+      if (bubble.age < -0.18) return true;
+      const path = bubble.customPath;
+      if (!path?.duration || bubble.pathComplete) return false;
+      const progress = clamp((path.elapsed ?? 0) / path.duration, 0, 1);
+      return progress < 0.84 || !bubble.wasReady;
+    });
+  }
+
   function islandTrainShape(routeType, available) {
     if (routeType === "orbitSolo") {
       if (available < 1) return null;
@@ -5625,7 +5678,7 @@
       if (didSpawn) spawned += 1;
     }
     if (spawned <= 0) return false;
-    state.nextSpawnAt = state.elapsed + longestDelay * 1000 + Math.min(1300, basePath.duration * 110) + rand(420, 620);
+    state.nextSpawnAt = state.elapsed + longestDelay * 1000 + Math.min(820, basePath.duration * 72) + rand(240, 360);
     return true;
   }
 
@@ -5652,10 +5705,10 @@
     }
 
     const load = islandChoreoLoad();
-    const phraseStillEntering = load.queued > 0 || load.entering > 1;
-    const phraseStillUnplayable = load.active >= 4 && load.notReady >= Math.max(2, Math.ceil(load.active * 0.42));
-    if (load.active >= 5 || phraseStillEntering || phraseStillUnplayable) {
-      state.nextSpawnAt = state.elapsed + clamp(load.delay + load.queued * 90, 420, 1180);
+    const phraseStillEntering = load.active >= 6 && load.entering > 3;
+    const phraseStillUnplayable = load.active >= 7 && load.notReady >= Math.max(4, Math.ceil(load.active * 0.56));
+    if (load.active >= 8 || phraseStillEntering || phraseStillUnplayable) {
+      state.nextSpawnAt = state.elapsed + clamp(load.delay * 0.72 + load.queued * 42, 280, 760);
       return true;
     }
     if (info.hold < 0.2) {
@@ -5716,6 +5769,11 @@
       }
     }
 
+    if (islandOppositePhraseInFlight(chainColorIndex)) {
+      state.nextSpawnAt = state.elapsed + 90;
+      return true;
+    }
+
     let spawned = 0;
 
     for (let index = 0; index < total; index += 1) {
@@ -5763,8 +5821,10 @@
     }
 
     if (spawned <= 0) return false;
-    const entryWindow = Math.min(1800, basePath.duration * 1000 * 0.13);
-    state.nextSpawnAt = state.elapsed + entryWindow + rand(380, 560);
+    const levelPace = displayDifficultyLevel();
+    const entryCap = levelPace >= 10 ? 680 : levelPace >= 6 ? 820 : 980;
+    const entryWindow = Math.min(entryCap, basePath.duration * 1000 * 0.085);
+    state.nextSpawnAt = state.elapsed + entryWindow + rand(levelPace >= 10 ? 150 : 190, levelPace >= 10 ? 240 : 310);
     return true;
   }
 
@@ -6059,10 +6119,11 @@
     const level = displayDifficultyLevel();
     const desiredCount = routeType === "sweepS" ? (level >= 3 ? 2 : 1) : level >= 3 ? 3 : 2;
     const count = Math.min(desiredCount, remainingStage, capacity);
+    const phraseColorIndex = runIndex % 2;
     let spawned = 0;
 
     for (let index = 0; index < count; index += 1) {
-      const colorIndex = (runIndex + index) % 2;
+      const colorIndex = phraseColorIndex;
       const sizeKind = routeType === "borderS" && index % 2 === 1 ? "small" : "normal";
       const radius = radiusForDifficulty(d, sizeKind) * rand(tide ? 0.92 : 0.9, tide ? 1.08 : 1.02);
       const speed =
@@ -6073,7 +6134,7 @@
             : rand(tide ? 42 + d * 6 : 38 + d * 5, tide ? 56 + d * 9 : 52 + d * 8);
       const customPath = buildWaveBoundaryChoreoPath(colorIndex, radius, speed, index, count, runIndex, patternId, routeType);
       if (!customPath?.points?.length) continue;
-      const delay = index * rand(routeType === "borderS" ? 0.46 : 0.36, routeType === "borderS" ? 0.68 : 0.56);
+      const delay = index * rand(routeType === "borderS" ? 0.62 : 0.54, routeType === "borderS" ? 0.84 : 0.76);
       customPath.completeFairPass = false;
       if (!pathHasPlayableStructuredPath(customPath, colorIndex, structuredPathMinMatch, delay)) continue;
       customPath.trustedStructuredPath = true;
@@ -6113,60 +6174,154 @@
     return true;
   }
 
-  function spawnRhythmBridge(flow, remainingStage) {
-    if (remainingStage <= 0 || bubbleCapacityRemaining() <= 0) return false;
-    const d = difficulty();
-    const region = pickFlowRegion(flow);
-    const radius = clamp(radiusForDifficulty(d, Math.random() < 0.58 ? "small" : "normal"), 24, 37);
-    const start = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow), 0.026);
-    const entryProbe = clampToReadablePlayfield(start, radius, 14);
-    const projectedTime = state.elapsed + 900;
-    const preferredColor = projectedBackgroundColorIndexAt(entryProbe.x, entryProbe.y, projectedTime);
-    const speed = rand(52 + d * 6, 66 + d * 9);
-    let colorIndex = preferredColor;
-    let customPath = null;
-
-    for (const candidateColor of [preferredColor, 1 - preferredColor]) {
-      const candidatePath = buildPredictableMatchPath(
-        region.edge,
-        start,
-        candidateColor,
-        radius,
-        speed,
-        state.spawnFlowIndex * 2.17 + state.bubbleCounter * 0.31,
-        null,
-        "rhythm-bridge",
-      );
-      if (!candidatePath?.points?.length) continue;
-      candidatePath.completeFairPass = false;
-      candidatePath.trustedStructuredPath = true;
-      if (!pathHasPlayableStructuredPath(candidatePath, candidateColor, structuredPathMinMatch, 0)) continue;
-      colorIndex = candidateColor;
-      customPath = candidatePath;
-      break;
+  function spawnRhythmBridge(flow, remainingStage, options = {}) {
+    const ignoreStageBudget = Boolean(options.ignoreStageBudget);
+    if ((!ignoreStageBudget && remainingStage <= 0) || bubbleCapacityRemaining() <= 0) return false;
+    if (options.urgent) {
+      const urgentOffset = (state.edgeCursor + state.bubbleCounter) % spawnRegions.length;
+      for (let attempt = 0; attempt < spawnRegions.length; attempt += 1) {
+        const urgentRegion = makeSpawnRegion(
+          spawnRegions[(urgentOffset + attempt * 2) % spawnRegions.length],
+          attempt * 0.37,
+        );
+        const urgentRadius = clamp(radiusForArchetype("small"), 24, 34);
+        const progressOffset = attempt * 0.047;
+        const urgentStart = pointFromSpawnRegion(
+          urgentRegion,
+          urgentRadius,
+          clamp(spawnFlowProgress(flow) + progressOffset, 0, 1),
+          0.012,
+        );
+        const urgentProbe = clampToReadablePlayfield(urgentStart, urgentRadius, 10);
+        const urgentColor = projectedBackgroundColorIndexAt(urgentProbe.x, urgentProbe.y, state.elapsed + 760);
+        if (spawnFlowBubble(flow, {
+          region: urgentRegion,
+          radius: urgentRadius,
+          colorIndex: urgentColor,
+          sizeKind: "small",
+          speedMultiplier: 1.32,
+          isStream: true,
+          streamPattern: "softS",
+          streamAmplitude: 0,
+          quietHint: options.quietHint ?? true,
+          ignoreStageBudget,
+          progressOffset,
+          startJitter: 0.012,
+        })) {
+          return true;
+        }
+      }
     }
-    if (!customPath) return false;
+    const d = difficulty();
+    const radius = clamp(radiusForDifficulty(d, Math.random() < 0.58 ? "small" : "normal"), 24, 37);
+    const speed = rand(52 + d * 6, 66 + d * 9);
+    const firstRegion = pickFlowRegion(flow);
+    const regionOffset = (state.edgeCursor + state.bubbleCounter) % spawnRegions.length;
+    const regionCandidates = [
+      firstRegion,
+      ...Array.from({ length: spawnRegions.length }, (_, index) => spawnRegions[(regionOffset + index) % spawnRegions.length]),
+    ];
+    const triedRegions = new Set();
 
-    const target = pointAtCustomPath(customPath, 0.1) ?? customPath.points[1];
-    return spawnBubble(radius <= 30, "normal", {
-      edge: region.edge,
-      x: start.x,
-      y: start.y,
-      colorIndex,
-      target,
-      velocity: aimedVelocity(start.x, start.y, target, speed, 0),
-      radius,
-      speed,
-      sizeKind: radius <= 30 ? "small" : "normal",
-      isStream: true,
-      streamPattern: "softS",
-      streamAmplitude: 0,
-      streamFrequency: 1,
-      customPath,
-      exitAfterPath: true,
-      pathLockedMotion: true,
-      quietHint: false,
-    });
+    for (let regionIndex = 0; regionIndex < regionCandidates.length; regionIndex += 1) {
+      const region = regionCandidates[regionIndex];
+      if (!region || triedRegions.has(region)) continue;
+      triedRegions.add(region);
+      const start = pointFromSpawnRegion(region, radius, spawnFlowProgress(flow) + regionIndex * 0.037, 0.026);
+      const entryProbe = clampToReadablePlayfield(start, radius, 14);
+      const projectedTime = state.elapsed + 680 + regionIndex * 70;
+      const preferredColor = projectedBackgroundColorIndexAt(entryProbe.x, entryProbe.y, projectedTime);
+
+      for (const candidateColor of [preferredColor, 1 - preferredColor]) {
+        const customPath = buildPredictableMatchPath(
+          region.edge,
+          start,
+          candidateColor,
+          radius,
+          speed,
+          state.spawnFlowIndex * 2.17 + state.bubbleCounter * 0.31 + regionIndex * 1.93,
+          null,
+          "rhythm-bridge",
+        );
+        if (!customPath?.points?.length) continue;
+        customPath.completeFairPass = false;
+        customPath.trustedStructuredPath = true;
+        if (options.urgent) {
+          customPath.duration = clamp(customPath.duration * 0.56, 5.2, 6.8);
+        }
+        const requiredMatch = options.urgent ? fairMatchDwell : structuredPathMinMatch;
+        if (!pathHasPlayableStructuredPath(customPath, candidateColor, requiredMatch, 0)) continue;
+        const target = pointAtCustomPath(customPath, 0.1) ?? customPath.points[1];
+        if (spawnBubble(radius <= 30, "normal", {
+          edge: region.edge,
+          x: start.x,
+          y: start.y,
+          colorIndex: candidateColor,
+          target,
+          velocity: aimedVelocity(start.x, start.y, target, speed, 0),
+          radius,
+          speed,
+          sizeKind: radius <= 30 ? "small" : "normal",
+          isStream: true,
+          streamPattern: "softS",
+          streamAmplitude: 0,
+          streamFrequency: 1,
+          customPath,
+          exitAfterPath: true,
+          pathLockedMotion: true,
+          quietHint: options.quietHint ?? false,
+          ignoreStageBudget,
+        })) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function activeStageTapTargetCount() {
+    return state.bubbles.reduce((count, bubble) => {
+      if (!isStageTargetBubble(bubble) || bubble.stageTransitionOut || bubble.age < -0.3) return count;
+      return count + 1;
+    }, 0);
+  }
+
+  function requestStageSustainIfCleared() {
+    if (stageRemainingBubbles() > 0 || stageElapsedMs() >= stageDurationMs - 420) return;
+    if (activeStageTapTargetCount() > 0) return;
+    state.nextSpawnAt = Math.min(
+      state.nextSpawnAt,
+      rhythmGridTimeAtOrAfter(state.elapsed + 70, 4, displayDifficultyLevel()),
+    );
+  }
+
+  function playableStageTargetCount() {
+    return state.bubbles.reduce((count, bubble) => {
+      if (!isStageTargetBubble(bubble) || bubble.age < 0 || bubble.stageTransitionOut) return count;
+      return count + (cachedBubbleHasMatchingPatch(bubble) ? 1 : 0);
+    }, 0);
+  }
+
+  function maybeSpawnCadenceLifeline() {
+    if (isPulsePattern() || pulseEntryHandoffActive()) return false;
+    const level = displayDifficultyLevel();
+    const remaining = stageRemainingBubbles();
+    if (remaining <= 0 || bubbleCapacityRemaining(level) <= 0 || stageElapsedMs() < 900) return false;
+    if (playableStageTargetCount() > 0) return false;
+    const silenceLimit = level <= 3 ? 1180 : level <= 7 ? 820 : level <= 12 ? 520 : 360;
+    const bridgeCooldown = level >= 13 ? 380 : level >= 8 ? 480 : 620;
+    if (state.elapsed - Math.max(state.stageStartAt, state.lastPlayableAt) < silenceLimit) return false;
+    if (state.elapsed - state.lastRhythmBridgeAt < bridgeCooldown) return false;
+    const flow = ensureSpawnFlow();
+    const desiredCount = level >= 9 && remaining >= 2 && bubbleCapacityRemaining(level) >= 2 ? 2 : 1;
+    let spawned = 0;
+    for (let index = 0; index < desiredCount; index += 1) {
+      if (spawnRhythmBridge(flow, remaining - spawned, { quietHint: true, urgent: true })) spawned += 1;
+    }
+    if (spawned <= 0) return false;
+    state.lastRhythmBridgeAt = state.elapsed;
+    state.nextSpawnAt = Math.min(state.nextSpawnAt, nextRhythmTime(state.elapsed + 120, 4, level));
+    return true;
   }
 
   function enterPulsePattern(info) {
@@ -6175,20 +6330,23 @@
       bubble.pulseCarryover = true;
     });
     state.chargeWave = null;
-    const chargeResumeAt = rhythmGridTimeAtOrAfter(
-      state.stageStartAt + stageDurationMs + rhythmBeatMs(info.level + 1) * 2,
-      1,
-      info.level + 1,
+    state.nextChargeAt = rhythmGridTimeAtOrAfter(
+      state.elapsed + rhythmBeatMs(info.level) * 1.35,
+      2,
+      info.level,
     );
-    state.nextChargeAt = Number.isFinite(state.nextChargeAt)
-      ? Math.max(state.nextChargeAt, chargeResumeAt)
-      : chargeResumeAt;
     state.nextDragAt = Math.max(
       state.nextDragAt,
       rhythmGridTimeAtOrAfter(state.stageStartAt + stageDurationMs + rhythmBeatMs(info.level + 1) * 3, 1, info.level + 1),
     );
     state.pulsePatternLevel = info.level;
     state.pulseBeatKey = "";
+    state.pulseSupportStep = 0;
+    state.nextPulseSupportAt = rhythmGridTimeAtOrAfter(
+      state.elapsed + rhythmBeatMs(info.level) * 0.72,
+      4,
+      info.level,
+    );
   }
 
   function pulseBubblePoint(info, physicalRadius, bubbleRadius, index, placed) {
@@ -6209,9 +6367,147 @@
     return null;
   }
 
+  function buildPulseSupportPath(info, radius, index, count, variant = 0) {
+    const sequence = Math.max(0, Math.floor(info.supportSequence ?? info.beat));
+    const horizontal = (sequence + Math.floor(variant / 7)) % 2 === 0;
+    const reverse = (index + sequence) % 2 === 1;
+    const laneDeck = [0.2, 0.35, 0.5, 0.65, 0.8];
+    const laneShiftDeck = [0, 0.035, -0.035, 0.07, -0.07, 0.105, -0.105];
+    const laneVariant = laneShiftDeck[variant % laneShiftDeck.length] + (variant >= 7 ? (index % 2 === 0 ? 0.018 : -0.018) : 0);
+    const lane = clamp(
+      laneDeck[(sequence * 2 + index * 2) % laneDeck.length] + laneVariant + Math.sin((sequence + 1) * 1.7 + variant) * 0.01,
+      0.17,
+      0.83,
+    );
+    const bend = (index % 2 === 0 ? 1 : -1) * (0.055 + (variant % 3) * 0.012);
+    const margin = Math.max(82, radius * 3.1);
+    let controls;
+    if (horizontal) {
+      const direction = reverse ? -1 : 1;
+      const startX = reverse ? state.width + margin : -margin;
+      const endX = reverse ? -margin : state.width + margin;
+      controls = [
+        { x: startX, y: state.height * lane },
+        { x: state.width * (reverse ? 0.88 : 0.12), y: state.height * lane },
+        { x: state.width * (reverse ? 0.68 : 0.32), y: state.height * clamp(lane + bend, 0.16, 0.84) },
+        { x: state.width * (reverse ? 0.4 : 0.6), y: state.height * clamp(lane - bend * 0.72, 0.16, 0.84) },
+        { x: state.width * (reverse ? 0.16 : 0.84), y: state.height * clamp(lane + bend * 0.3, 0.16, 0.84) },
+        { x: endX, y: state.height * clamp(lane + direction * bend * 0.16, 0.16, 0.84) },
+      ];
+    } else {
+      const direction = reverse ? -1 : 1;
+      const startY = reverse ? state.height + margin : -margin;
+      const endY = reverse ? -margin : state.height + margin;
+      controls = [
+        { x: state.width * lane, y: startY },
+        { x: state.width * lane, y: state.height * (reverse ? 0.88 : 0.12) },
+        { x: state.width * clamp(lane + bend, 0.16, 0.84), y: state.height * (reverse ? 0.68 : 0.32) },
+        { x: state.width * clamp(lane - bend * 0.72, 0.16, 0.84), y: state.height * (reverse ? 0.4 : 0.6) },
+        { x: state.width * clamp(lane + bend * 0.3, 0.16, 0.84), y: state.height * (reverse ? 0.16 : 0.84) },
+        { x: state.width * clamp(lane + direction * bend * 0.16, 0.16, 0.84), y: endY },
+      ];
+    }
+    const sampled = sampleCurvedCustomPath(controls, 0.84, {
+      minX: -margin,
+      maxX: state.width + margin,
+      minY: -margin,
+      maxY: state.height + margin,
+    });
+    const speed = rand(88 + info.level * 1.45, 102 + info.level * 1.8);
+    const path = makeMotionPathFromSampledPoints("pulse-support-flow", sampled, radius, speed, 4.8, 6.3);
+    path.protectedPath = true;
+    path.completeFairPass = false;
+    path.trustedStructuredPath = true;
+    path.colorIndex = info.baseColorIndex;
+    path.swayAmplitude = 0;
+    path.swayFrequency = 0;
+    return path;
+  }
+
+  function pulseSupportPathClear(path, radius) {
+    const blockers = state.bubbles.filter((bubble) => bubble.isPulse && !bubble.stageTransitionOut && bubble.age > -0.25);
+    if (!blockers.length) return true;
+    for (let sample = 2; sample < 40; sample += 1) {
+      const point = pointAtCustomPath(path, sample / 40);
+      if (!point || point.x < 0 || point.x > state.width || point.y < 0 || point.y > state.height) continue;
+      for (const blocker of blockers) {
+        const clearance = (radius + blocker.baseRadius) * 0.72 + 2;
+        if (Math.hypot(point.x - blocker.x, point.y - blocker.y) < clearance) return false;
+      }
+    }
+    return true;
+  }
+
+  function spawnPulseSupportBeat(info, desiredOverride = null, supportStep = info.beat) {
+    const level = displayDifficultyLevel();
+    const desired = desiredOverride ?? (level >= 11 ? (info.beat % 2 === 0 ? 3 : 2) : 2);
+    const count = Math.min(desired, stageRemainingBubbles(), bubbleCapacityRemaining(level));
+    let spawned = 0;
+    for (let index = 0; index < count; index += 1) {
+      const radius = clamp(23 + ((supportStep + index) % 3) * 1.8, 23, 28);
+      const delay = index * 0.12;
+      for (let variant = 0; variant < 16; variant += 1) {
+        const pathInfo = supportStep === info.beat ? info : { ...info, beat: supportStep, supportSequence: supportStep };
+        const customPath = buildPulseSupportPath(pathInfo, radius, index, count, variant);
+        if (!pathHasPlayableStructuredPath(customPath, info.baseColorIndex, fairMatchDwell, delay)) continue;
+        if (!pulseSupportPathClear(customPath, radius)) continue;
+        const start = customPath.points[0];
+        const target = pointAtCustomPath(customPath, 0.08) ?? customPath.points[1];
+        const speed = customPath.totalLength / Math.max(0.001, customPath.duration);
+        const didSpawn = spawnBubble(true, "normal", {
+          edge: pathEdgeFromPoint(start),
+          x: start.x,
+          y: start.y,
+          colorIndex: info.baseColorIndex,
+          target,
+          velocity: aimedVelocity(start.x, start.y, target, speed, 0),
+          radius,
+          speed,
+          sizeKind: "small",
+          isStream: true,
+          isPulseSupport: true,
+          streamPattern: "softS",
+          streamAmplitude: 0,
+          streamFrequency: 1,
+          customPath,
+          exitAfterPath: true,
+          pathLockedMotion: true,
+          delay,
+          quietHint: index > 0,
+        });
+        if (didSpawn) {
+          spawned += 1;
+          break;
+        }
+      }
+    }
+    return spawned;
+  }
+
+  function maybeSpawnPulseSupportRhythm(info = currentPulseInfo()) {
+    if (!state.running || !info || state.elapsed + 1 < state.nextPulseSupportAt) return false;
+    const level = displayDifficultyLevel();
+    if (stageRemainingBubbles() <= 0 || bubbleCapacityRemaining(level) <= 0) {
+      state.nextPulseSupportAt = state.elapsed + rhythmBeatMs(level) * 0.32;
+      return false;
+    }
+    const step = state.pulseSupportStep;
+    const accentEvery = level >= 16 ? 3 : 4;
+    const desired = level >= 11 && step % accentEvery === 0 ? 2 : 1;
+    const spawned = spawnPulseSupportBeat(info, desired, step + info.beat * 7 + 3);
+    state.pulseSupportStep += 1;
+    const intervalScale = level <= 10 ? 0.72 : level <= 14 ? 0.58 : 0.48;
+    state.nextPulseSupportAt = rhythmGridTimeAtOrAfter(
+      state.elapsed + rhythmBeatMs(level) * (spawned > 0 ? intervalScale : 0.3),
+      4,
+      level,
+    );
+    return spawned > 0;
+  }
+
   function spawnPulseBeat(info) {
     const level = displayDifficultyLevel();
-    const phraseCount = info.beat === 0 ? 2 : level >= 11 ? 3 : 2;
+    const phraseCount = level >= 11 ? (info.beat % 2 === 0 ? 4 : 3) : 3;
     const count = Math.min(phraseCount, stageRemainingBubbles());
     if (count <= 0) return false;
     const radiusSteps = count >= 4 ? [0.19, 0.36, 0.53, 0.7] : count === 2 ? [0.3, 0.62] : [0.22, 0.44, 0.66];
@@ -6248,6 +6544,7 @@
         spawned += 1;
       }
     }
+    spawned += spawnPulseSupportBeat(info);
     return spawned > 0;
   }
 
@@ -6340,7 +6637,22 @@
       resetStagePlan(level);
     }
     if (pulseEntryHandoffActive(level)) {
-      state.nextSpawnAt = state.stageStartAt + stageDurationMs + 120;
+      const stageTimeLeft = state.stageStartAt + stageDurationMs - state.elapsed;
+      const remainingStage = stageRemainingBubbles();
+      const handoffCooldown = level >= 8 ? 460 : 620;
+      if (
+        stageTimeLeft > 680 &&
+        activeStageTapTargetCount() < (level >= 8 ? 2 : 1) &&
+        state.elapsed - state.lastStageSustainAt >= handoffCooldown &&
+        spawnRhythmBridge(ensureSpawnFlow(), Math.max(1, remainingStage), {
+          ignoreStageBudget: remainingStage <= 0,
+          quietHint: true,
+          urgent: true,
+        })
+      ) {
+        state.lastStageSustainAt = state.elapsed;
+      }
+      state.nextSpawnAt = nextRhythmTime(state.elapsed + handoffCooldown, 4, level);
       return;
     }
     const flow = ensureSpawnFlow();
@@ -6353,7 +6665,21 @@
     }
 
     if (remainingStage <= 0) {
-      state.nextSpawnAt = Math.max(state.nextSpawnAt, state.elapsed + 180);
+      const stageTimeLeft = state.stageStartAt + stageDurationMs - state.elapsed;
+      const activeTargets = activeStageTapTargetCount();
+      const desiredActive = level >= 10 ? 3 : level >= 6 ? 2 : 1;
+      const sustainCooldown = level >= 10 ? 360 : level >= 6 ? 460 : 620;
+      if (
+        stageTimeLeft > 420 &&
+        activeTargets < desiredActive &&
+        state.elapsed - state.lastStageSustainAt >= sustainCooldown &&
+        spawnRhythmBridge(flow, 1, { ignoreStageBudget: true, quietHint: true, urgent: true })
+      ) {
+        state.lastStageSustainAt = state.elapsed;
+        state.nextSpawnAt = nextRhythmTime(state.elapsed + sustainCooldown, 4, level);
+        return;
+      }
+      state.nextSpawnAt = state.elapsed + 140;
       return;
     }
 
@@ -6363,13 +6689,13 @@
     }
 
     const playableGap = state.elapsed - Math.max(state.stageStartAt, state.lastPlayableAt || state.stageStartAt);
-    const bridgeThreshold = level <= 4 ? 2200 : level <= 8 ? 1750 : 1450;
-    const bridgeCooldown = level <= 8 ? 2600 : 2200;
+    const bridgeThreshold = level <= 4 ? 1800 : level <= 8 ? 1450 : 1120;
+    const bridgeCooldown = level <= 8 ? 2200 : 1760;
     if (
       level >= 3 &&
       playableGap >= bridgeThreshold &&
       state.elapsed - state.lastRhythmBridgeAt >= bridgeCooldown &&
-      spawnRhythmBridge(flow, remainingStage)
+      spawnRhythmBridge(flow, remainingStage, { urgent: true })
     ) {
       state.lastRhythmBridgeAt = state.elapsed;
       state.nextSpawnAt = state.elapsed + rand(280, 420);
@@ -6796,6 +7122,7 @@
     chargeClearSkillByBubble(bubble);
     registerCombo({ chargeSkill: false });
     recordStageCorrect(bubble);
+    requestStageSustainIfCleared();
     state.score += bubble.isWhite ? 1 : 1;
     addWater(regularCorrectWaterGain);
     state.ripples.push({
@@ -7229,6 +7556,7 @@
     chargeClearSkillByBubble(bubble);
     registerCombo();
     recordStageCorrect(bubble);
+    requestStageSustainIfCleared();
 
     if (bubble.isClear) {
       makeFloatText(bubble.x, bubble.y - bubble.radius, `x${state.combo} 清屏`, clearTone.light, 1.08);
@@ -7312,6 +7640,7 @@
     noteWrongAction();
     penalizeStageMistake(bubble, "wrong");
     state.bubbles.splice(index, 1);
+    requestStageSustainIfCleared();
     resetCombo();
     state.ripples.push({
       x: bubble.x,
@@ -7743,6 +8072,7 @@
   function applySoftWallBounce(bubble, dt, d) {
     decayWallSquash(bubble, dt);
     if (!bubble.hasEntered || bubble.customPath) return;
+    if (isStageTargetBubble(bubble) && bubble.fairPassComplete) return;
     if (bubble.isBleach && bubble.bleachEscaping) return;
 
     const radius = Math.max(12, bubble.radius || bubble.baseRadius || 24);
@@ -7775,9 +8105,18 @@
   }
 
   function updatePointerFeedback(dt) {
-    if (state.activePointerId !== null && state.elapsed >= state.pointerHoldNextAt) {
-      pushPointerFx("hold", state.lastSwipeX, state.lastSwipeY, 0.78);
-      state.pointerHoldNextAt = state.elapsed + 430;
+    state.activePointers.forEach((pointer) => {
+      if (state.elapsed < pointer.holdNextAt) return;
+      pushPointerFx("hold", pointer.x, pointer.y, 0.72);
+      pointer.holdNextAt = state.elapsed + 430;
+    });
+    if (state.activePointerId !== null) {
+      const active = state.activePointers.get(state.activePointerId);
+      if (active) {
+        state.lastSwipeX = active.x;
+        state.lastSwipeY = active.y;
+        state.pointerHoldNextAt = active.holdNextAt;
+      }
     }
     for (let index = state.pointerFx.length - 1; index >= 0; index -= 1) {
       const effect = state.pointerFx[index];
@@ -7874,13 +8213,26 @@
     return true;
   }
 
+  function canvasPointFromPointerEvent(event) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = state.width / Math.max(1, rect.width);
+    const scaleY = state.height / Math.max(1, rect.height);
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
+    };
+  }
+
   function handlePointerDown(event) {
     event.preventDefault();
     if (!state.running || state.paused) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    const { x, y } = canvasPointFromPointerEvent(event);
+    state.activePointers.set(event.pointerId, {
+      x,
+      y,
+      holdNextAt: state.elapsed + 280,
+    });
     state.activePointerId = event.pointerId;
     state.lastSwipeX = x;
     state.lastSwipeY = y;
@@ -7895,15 +8247,19 @@
 
   function handlePointerMove(event) {
     event.preventDefault();
-    if (!state.running || state.paused || state.activePointerId !== event.pointerId) return;
+    if (!state.running || state.paused) return;
+    const pointer = state.activePointers.get(event.pointerId);
+    if (!pointer) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    pushPointerTrail(state.lastSwipeX, state.lastSwipeY, x, y);
+    const { x, y } = canvasPointFromPointerEvent(event);
+    pushPointerTrail(pointer.x, pointer.y, x, y);
     if (moveDragBubblePointer(x, y, event.pointerId)) {
-      state.lastSwipeX = x;
-      state.lastSwipeY = y;
+      pointer.x = x;
+      pointer.y = y;
+      if (state.activePointerId === event.pointerId) {
+        state.lastSwipeX = x;
+        state.lastSwipeY = y;
+      }
       return;
     }
     if (state.catHoldPointerId === event.pointerId) {
@@ -7914,29 +8270,47 @@
       state.customHoldX = x;
       state.customHoldY = y;
     }
-    const dx = x - state.lastSwipeX;
-    const dy = y - state.lastSwipeY;
+    const dx = x - pointer.x;
+    const dy = y - pointer.y;
     const distance = Math.hypot(dx, dy);
     const steps = Math.max(1, Math.ceil(distance / 18));
 
     for (let step = 1; step <= steps; step += 1) {
       const t = step / steps;
-      tryPopAt(state.lastSwipeX + dx * t, state.lastSwipeY + dy * t, false);
+      tryPopAt(pointer.x + dx * t, pointer.y + dy * t, false, event.pointerId);
     }
 
-    state.lastSwipeX = x;
-    state.lastSwipeY = y;
+    pointer.x = x;
+    pointer.y = y;
+    if (state.activePointerId === event.pointerId) {
+      state.lastSwipeX = x;
+      state.lastSwipeY = y;
+    }
   }
 
   function handlePointerEnd(event) {
-    if (state.running && !state.paused && state.activePointerId === event.pointerId) {
-      pushPointerFx("release", state.lastSwipeX, state.lastSwipeY, 0.62);
+    const pointer = state.activePointers.get(event.pointerId);
+    if (state.running && !state.paused && pointer) {
+      const point = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+        ? canvasPointFromPointerEvent(event)
+        : pointer;
+      pushPointerFx("release", point.x, point.y, 0.58);
     }
     releaseDragBubblePointer(event.pointerId);
-    if (state.activePointerId === event.pointerId) {
-      state.activePointerId = null;
-      state.pointerHoldNextAt = 0;
+    state.activePointers.delete(event.pointerId);
+    try {
       canvas.releasePointerCapture?.(event.pointerId);
+    } catch {
+      // The pointer may already have left the canvas.
+    }
+    if (state.activePointerId === event.pointerId) {
+      const remaining = Array.from(state.activePointers.entries()).at(-1);
+      state.activePointerId = remaining?.[0] ?? null;
+      state.pointerHoldNextAt = remaining?.[1]?.holdNextAt ?? 0;
+      if (remaining) {
+        state.lastSwipeX = remaining[1].x;
+        state.lastSwipeY = remaining[1].y;
+      }
     }
     if (state.catHoldPointerId === event.pointerId) {
       state.catHoldPointerId = null;
@@ -7958,10 +8332,13 @@
     const pulseInfo = currentPulseInfo();
     if (pulseInfo) {
       maybeSpawnPulseBeat(pulseInfo);
+      maybeSpawnPulseSupportRhythm(pulseInfo);
+      maybeSpawnChargeBubble();
     } else {
       maybeActivateCatBubbleSystem();
       maybeSpawnChargeBubble();
       maybeSpawnDragBubble();
+      maybeSpawnCadenceLifeline();
     }
     const d = difficulty();
     const tier = difficultyTier(d);
@@ -8093,11 +8470,12 @@
         bubble.vy += (inward.y * currentSpeed - bubble.vy) * 0.12;
       }
 
+      const exitMargin = bubble.hasEntered ? bubble.radius * 1.02 : bubble.radius * 2;
       const outside =
-        bubble.x < -bubble.radius * 2 ||
-        bubble.x > state.width + bubble.radius * 2 ||
-        bubble.y < -bubble.radius * 2 ||
-        bubble.y > state.height + bubble.radius * 2;
+        bubble.x < -exitMargin ||
+        bubble.x > state.width + exitMargin ||
+        bubble.y < -exitMargin ||
+        bubble.y > state.height + exitMargin;
 
       if (outside && needsFairColorPass(bubble) && bubble.pathComplete) {
         penalizeStageMistake(bubble, "miss");
@@ -9383,53 +9761,57 @@
     ctx.restore();
   }
 
-  function drawPointerFeedback() {
+  function drawPointerFeedback(layer = "all") {
     ctx.save();
     ctx.globalCompositeOperation = "screen";
     ctx.lineCap = "round";
-    state.pointerTrail.forEach((trail) => {
-      const life = 1 - clamp(trail.age / trail.life, 0, 1);
-      const tone = trail.colorIndex === 0 ? palette[0] : palette[1];
-      ctx.shadowColor = colorWithAlpha(tone.light, 0.25 * life);
-      ctx.shadowBlur = 8;
-      ctx.strokeStyle = colorWithAlpha(tone.light, 0.2 * life);
-      ctx.lineWidth = trail.width * (0.55 + life * 0.45);
-      ctx.beginPath();
-      ctx.moveTo(trail.fromX, trail.fromY);
-      ctx.lineTo(trail.toX, trail.toY);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = colorWithAlpha("#ffffff", 0.32 * life);
-      ctx.lineWidth = Math.max(1, trail.width * 0.2);
-      ctx.stroke();
-    });
-
-    state.pointerFx.forEach((effect) => {
-      const progress = clamp(effect.age / effect.life, 0, 1);
-      const ease = 1 - Math.pow(1 - progress, 3);
-      const alpha = (1 - progress) * effect.power;
-      const isHold = effect.type === "hold";
-      const radius = isHold ? 11 + ease * 31 : 6 + ease * 27;
-      const glow = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, radius);
-      glow.addColorStop(0, `rgba(255,255,255,${0.1 * alpha})`);
-      glow.addColorStop(0.55, `rgba(191,239,250,${0.07 * alpha})`);
-      glow.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = `rgba(238,252,255,${(isHold ? 0.34 : 0.5) * alpha})`;
-      ctx.lineWidth = isHold ? 1.3 : 1.7;
-      ctx.beginPath();
-      ctx.arc(effect.x, effect.y, radius * (isHold ? 0.88 : 1), 0, Math.PI * 2);
-      ctx.stroke();
-      if (!isHold && progress < 0.48) {
-        ctx.fillStyle = `rgba(255,255,255,${0.62 * (1 - progress / 0.48)})`;
+    if (layer !== "fx") {
+      state.pointerTrail.forEach((trail) => {
+        const life = 1 - clamp(trail.age / trail.life, 0, 1);
+        const tone = trail.colorIndex === 0 ? palette[0] : palette[1];
+        ctx.shadowColor = colorWithAlpha(tone.light, 0.25 * life);
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = colorWithAlpha(tone.light, 0.2 * life);
+        ctx.lineWidth = trail.width * (0.55 + life * 0.45);
         ctx.beginPath();
-        ctx.arc(effect.x, effect.y, 2.4 + progress * 2, 0, Math.PI * 2);
+        ctx.moveTo(trail.fromX, trail.fromY);
+        ctx.lineTo(trail.toX, trail.toY);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = colorWithAlpha("#ffffff", 0.32 * life);
+        ctx.lineWidth = Math.max(1, trail.width * 0.2);
+        ctx.stroke();
+      });
+    }
+
+    if (layer !== "trail") {
+      state.pointerFx.forEach((effect) => {
+        const progress = clamp(effect.age / effect.life, 0, 1);
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const alpha = (1 - progress) * effect.power;
+        const isHold = effect.type === "hold";
+        const radius = isHold ? 10 + ease * 27 : 5 + ease * 22;
+        const glow = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, radius);
+        glow.addColorStop(0, `rgba(255,255,255,${0.1 * alpha})`);
+        glow.addColorStop(0.55, `rgba(191,239,250,${0.07 * alpha})`);
+        glow.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
         ctx.fill();
-      }
-    });
+        ctx.strokeStyle = `rgba(238,252,255,${(isHold ? 0.3 : 0.46) * alpha})`;
+        ctx.lineWidth = isHold ? 1.2 : 1.5;
+        ctx.beginPath();
+        ctx.arc(effect.x, effect.y, radius * (isHold ? 0.88 : 1), 0, Math.PI * 2);
+        ctx.stroke();
+        if (!isHold && progress < 0.42) {
+          ctx.fillStyle = `rgba(255,255,255,${0.58 * (1 - progress / 0.42)})`;
+          ctx.beginPath();
+          ctx.arc(effect.x, effect.y, 2.2 + progress * 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
     ctx.restore();
   }
 
@@ -9836,10 +10218,11 @@
     drawRhythmBreath();
     drawDifficultyBanners();
     drawWaterStressOverlay();
-    drawPointerFeedback();
+    drawPointerFeedback("trail");
     state.bubbles.forEach(drawBubble);
     drawMembraneSnaps();
     drawRipples();
+    drawPointerFeedback("fx");
     drawBlasts();
     drawParticles();
     drawFloaters();
@@ -10177,13 +10560,14 @@
     if (state.dragPointerId !== null) {
       releaseDragBubblePointer(state.dragPointerId);
     }
-    if (state.activePointerId !== null) {
+    state.activePointers.forEach((_, pointerId) => {
       try {
-        canvas.releasePointerCapture?.(state.activePointerId);
+        canvas.releasePointerCapture?.(pointerId);
       } catch {
         // The pointer may already have left the canvas.
       }
-    }
+    });
+    state.activePointers.clear();
     state.activePointerId = null;
     state.pointerHoldNextAt = 0;
     state.catHoldPointerId = null;
@@ -10353,9 +10737,14 @@
     state.chargeWave = null;
     state.dragPointerId = null;
     state.dragBubbleUid = null;
+    state.pulseBeatKey = "";
+    state.pulsePatternLevel = 0;
+    state.pulseSupportStep = 0;
+    state.nextPulseSupportAt = Number.POSITIVE_INFINITY;
     state.nextSpawnAt = state.elapsed + 120;
     state.lastPlayableAt = state.elapsed;
     state.lastRhythmBridgeAt = Number.NEGATIVE_INFINITY;
+    state.lastStageSustainAt = Number.NEGATIVE_INFINITY;
     state.openUntil = 0;
     resetBombComboTimer();
     resetStagePlan(targetLevel);
