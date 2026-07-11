@@ -137,13 +137,15 @@
     PULSE_BLUE: {
       type: "pulse",
       baseColorIndex: 0,
-      pulses: 4,
+      pulses: 2,
+      waveCount: 3,
       phaseOffset: 0,
     },
     PULSE_PINK: {
       type: "pulse",
       baseColorIndex: 1,
-      pulses: 4,
+      pulses: 2,
+      waveCount: 3,
       phaseOffset: 2,
     },
   };
@@ -183,6 +185,14 @@
 
   function mix(a, b, t) {
     return a + (b - a) * t;
+  }
+
+  function bpmForLevel(level) {
+    const safeLevel = Math.max(1, Number(level) || 1);
+    if (safeLevel <= 2) return 96 + (safeLevel - 1) * 4;
+    if (safeLevel <= 5) return 104 + (safeLevel - 3) * 4;
+    if (safeLevel <= 9) return 116 + (safeLevel - 6) * 3;
+    return Math.min(142, 128 + (safeLevel - 10) * 0.72);
   }
 
   function blob(x, y, cx, cy, radius, power) {
@@ -226,8 +236,8 @@
     };
   }
 
-  function preparePulseState(local, pattern) {
-    const pulseCount = Math.max(1, pattern.pulses || 5);
+  function preparePulseState(local, pattern, level = 10) {
+    const pulseCount = Math.max(1, pattern.pulses || 2);
     const pulseFloat = clamp(local, 0, 0.999999) * pulseCount;
     const beat = Math.min(pulseCount - 1, Math.floor(pulseFloat));
     const phase = pulseFloat - beat;
@@ -240,25 +250,50 @@
     ];
     const center = centerDeck[(beat + (pattern.phaseOffset || 0)) % centerDeck.length];
     const challenge = pulseCount <= 1 ? 0 : beat / (pulseCount - 1);
-    const previewEnd = mix(0.42, 0.27, challenge);
-    const sweepEnd = previewEnd + mix(0.52, 0.34, challenge);
+    const phraseSeconds = LEVEL_SECONDS / pulseCount;
+    const beatUnit = (60 / bpmForLevel(level)) / phraseSeconds;
+    const previewEnd = beatUnit * mix(5, 4.5, challenge);
     const preview = smoothstep(0, previewEnd, phase);
-    const sweep = smootherstep(previewEnd, sweepEnd, phase);
-    const radius = phase < previewEnd ? mix(0.012, 0.045, preview) : mix(0.045, 1.22, sweep);
-    const visibility = smoothstep(0.025, 0.11, phase) * (1 - smoothstep(sweepEnd + 0.015, Math.min(0.995, sweepEnd + 0.075), phase));
-    const sweepThickness = mix(0.09, 0.062, challenge);
-    const thickness = phase < previewEnd
-      ? mix(0.009, 0.018, preview)
-      : mix(0.018, mix(sweepThickness, sweepThickness * 0.82, sweep), smoothstep(0, 0.24, sweep));
+    const waveCount = Math.max(1, pattern.waveCount || 3);
+    const waveGap = beatUnit * mix(1.5, 1.4, challenge);
+    const waveDuration = beatUnit * mix(8.25, 7.75, challenge);
+    const thickness = mix(0.086, 0.076, challenge);
+    const waves = Array.from({ length: waveCount }, (_, waveIndex) => {
+      const start = previewEnd + waveIndex * waveGap;
+      const end = start + waveDuration;
+      const sweep = smootherstep(start, end, phase);
+      const radius = mix(0.04, 1.24, sweep);
+      const fadeIn = smoothstep(start, start + 0.026, phase);
+      const fadeOut = 1 - smoothstep(end, Math.min(0.995, end + 0.045), phase);
+      return {
+        index: waveIndex,
+        start,
+        end,
+        radius,
+        thickness: thickness * mix(1, 0.9, waveIndex / Math.max(1, waveCount - 1)),
+        visibility: fadeIn * fadeOut,
+      };
+    });
+    const sweepEnd = waves[waves.length - 1].end;
+    const activeWave = waves.reduce(
+      (best, wave) => (wave.visibility > best.visibility ? wave : best),
+      waves[0],
+    );
+    const previewVisibility =
+      smoothstep(0.02, 0.09, phase) * (1 - smoothstep(previewEnd - 0.055, previewEnd + 0.025, phase));
+    const previewRadius = mix(0.012, 0.042, preview);
     return {
       type: "pulse",
       beat,
       phase,
       centerX: center[0],
       centerY: center[1],
-      radius,
-      thickness,
-      visibility,
+      radius: activeWave.radius,
+      thickness: activeWave.thickness,
+      visibility: Math.max(previewVisibility, ...waves.map((wave) => wave.visibility)),
+      previewRadius,
+      previewVisibility,
+      waves,
       previewEnd,
       sweepEnd,
       baseColorIndex: pattern.baseColorIndex,
@@ -267,9 +302,9 @@
     };
   }
 
-  function preparePatternState(local, flow, pattern) {
+  function preparePatternState(local, flow, pattern, level = 1) {
     if (pattern.type === "pulse") {
-      return preparePulseState(local, pattern);
+      return preparePulseState(local, pattern, level);
     }
     if (pattern.type === "island") {
       const p = islandPosition(local, flow, pattern);
@@ -373,14 +408,14 @@
     if (pattern.type === "wave" && nextPattern.type === "wave") transitionStart = 0.42;
     if (pattern.type !== "island" && nextPattern.type === "island") transitionStart = 0.94;
     if (pattern.type === "island") transitionStart = 0.82;
-    if (nextPattern.type === "pulse") transitionStart = 0.94;
-    if (pattern.type === "pulse") transitionStart = 0.96;
+    if (nextPattern.type === "pulse") transitionStart = 0.66;
+    if (pattern.type === "pulse") transitionStart = 0.88;
     return {
       info,
       local,
       flow,
-      current: preparePatternState(pattern.type === "pulse" ? info.local : local, flow, pattern),
-      next: preparePatternState(0, flow, nextPattern),
+      current: preparePatternState(pattern.type === "pulse" ? info.local : local, flow, pattern, info.level),
+      next: preparePatternState(0, flow, nextPattern, info.level + 1),
       warpPhase: flow * TAU,
       warpStrength: pattern.type === "pulse" ? 0 : pattern.type === "wave" ? 1.15 : 0.85,
       transition: smoothstep(transitionStart, 0.995, info.local),
@@ -488,9 +523,12 @@
     const dx = ((x - prepared.centerX) * width) / minDimension;
     const dy = ((y - prepared.centerY) * height) / minDimension;
     const distance = Math.hypot(dx, dy);
-    const ringDistance = Math.abs(distance - prepared.radius);
-    const ringMask =
-      (1 - smoothstep(prepared.thickness, prepared.thickness + 0.018, ringDistance)) * prepared.visibility;
+    let ringMask = 0;
+    prepared.waves.forEach((wave) => {
+      const ringDistance = Math.abs(distance - wave.radius);
+      const mask = (1 - smoothstep(wave.thickness * 0.9, wave.thickness + 0.018, ringDistance)) * wave.visibility;
+      ringMask = Math.max(ringMask, mask);
+    });
     return prepared.baseSign * (0.56 - ringMask * 1.34);
   }
 
@@ -508,6 +546,18 @@
     const current = patternField(warped.x, warped.y, frameState.current);
     if (frameState.transition <= 0) return current;
     return mix(current, patternField(warped.x, warped.y, frameState.next), frameState.transition);
+  }
+
+  function visualPatternField(x, y, prepared) {
+    if (prepared.type === "pulse") return prepared.baseSign * 0.56;
+    return patternField(x, y, prepared);
+  }
+
+  function visualLiquidField(x, y, frameState) {
+    const warped = flowWarp(x, y, frameState.warpPhase, frameState.warpStrength);
+    const current = visualPatternField(warped.x, warped.y, frameState.current);
+    if (frameState.transition <= 0) return current;
+    return mix(current, visualPatternField(warped.x, warped.y, frameState.next), frameState.transition);
   }
 
   function resize(nextWidth, nextHeight) {
@@ -605,8 +655,9 @@
       const ny = nyByY[y];
       for (let x = 0; x < lowWidth; x += 1) {
         const field = liquidField(nxByX[x], ny, frameState);
+        const visualField = visualLiquidField(nxByX[x], ny, frameState);
         values[y * lowWidth + x] = field;
-        const color = shadePixel(field, x, y, band);
+        const color = shadePixel(visualField, x, y, band);
         data[offset] = color[0];
         data[offset + 1] = color[1];
         data[offset + 2] = color[2];
@@ -800,41 +851,58 @@
     strokeSegments(ctx, "rgba(255, 190, 210, 0.16)", 0.45);
   }
 
-  function drawPulseOverlay(ctx, t) {
-    const frameState = buildFrameState(t);
+  function drawPulseBackground(ctx, frameState) {
     const pulse = frameState.current;
-    if (!pulse || pulse.type !== "pulse" || pulse.visibility <= 0.01) return;
+    if (!pulse || pulse.type !== "pulse") return;
     const minDimension = Math.min(width, height);
     const cx = pulse.centerX * width;
     const cy = pulse.centerY * height;
-    const radius = pulse.radius * minDimension;
-    if (radius <= 0.5) return;
-    const fullWidth = (pulse.thickness + 0.012) * minDimension * 2;
-    const ringWidth = Math.max(2, Math.min(fullWidth, radius * 0.72));
-    const alpha = pulse.visibility * (1 - frameState.transition);
+    const baseLight = pulse.baseColorIndex === 0 ? liquidPalette.blueLight : liquidPalette.pinkLight;
     const ringRgb = pulse.ringColorIndex === 0 ? liquidPalette.blue : liquidPalette.pink;
-    const ringLight = pulse.ringColorIndex === 0 ? liquidPalette.blueLight : liquidPalette.pinkLight;
+    const functionalAlpha = 1 - frameState.transition;
 
     ctx.save();
-    ctx.lineCap = "round";
-    ctx.shadowColor = `rgba(${ringLight[0]}, ${ringLight[1]}, ${ringLight[2]}, ${0.22 * alpha})`;
-    ctx.shadowBlur = Math.min(18, 5 + ringWidth * 0.18);
-    ctx.strokeStyle = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.88 * alpha})`;
-    ctx.lineWidth = ringWidth + Math.min(3, radius * 0.14);
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, TAU);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    ctx.imageSmoothingEnabled = true;
+    const centerGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, minDimension * 0.42);
+    centerGlow.addColorStop(0, `rgba(${baseLight[0]}, ${baseLight[1]}, ${baseLight[2]}, 0.16)`);
+    centerGlow.addColorStop(1, `rgba(${baseLight[0]}, ${baseLight[1]}, ${baseLight[2]}, 0)`);
+    ctx.fillStyle = centerGlow;
+    ctx.fillRect(0, 0, width, height);
 
-    const edgeAlpha = 0.58 * alpha;
-    ctx.strokeStyle = `rgba(${ringLight[0]}, ${ringLight[1]}, ${ringLight[2]}, ${edgeAlpha})`;
-    ctx.lineWidth = qualityScale < 0.7 ? 1.15 : 1.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.max(0.5, radius - ringWidth * 0.5), 0, TAU);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius + ringWidth * 0.5, 0, TAU);
-    ctx.stroke();
+    ctx.lineCap = "round";
+    if (pulse.previewVisibility > 0.01) {
+      const previewRadius = Math.max(2, pulse.previewRadius * minDimension);
+      const previewAlpha = pulse.previewVisibility * functionalAlpha;
+      ctx.shadowColor = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.24 * previewAlpha})`;
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.52 * previewAlpha})`;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(cx, cy, previewRadius, 0, TAU);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
+    pulse.waves.forEach((wave) => {
+      const alpha = wave.visibility * functionalAlpha;
+      const radius = wave.radius * minDimension;
+      if (alpha <= 0.008 || radius <= 0.5) return;
+      const ringWidth = Math.max(3, wave.thickness * minDimension * 2);
+      ctx.shadowColor = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.18 * alpha})`;
+      ctx.shadowBlur = Math.min(20, 6 + ringWidth * 0.2);
+      ctx.strokeStyle = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.14 * alpha})`;
+      ctx.lineWidth = ringWidth + 18;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, TAU);
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = `rgba(${ringRgb[0]}, ${ringRgb[1]}, ${ringRgb[2]}, ${0.82 * alpha})`;
+      ctx.lineWidth = ringWidth;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, TAU);
+      ctx.stroke();
+    });
     ctx.restore();
   }
 
@@ -869,9 +937,13 @@
       resize(nextWidth, nextHeight);
     }
     const frameTime = ensureFrame(t);
+    const frameState = buildFrameState(frameTime);
     ctx.drawImage(fieldCanvas, 0, 0, width, height);
+    if (frameState.current.type === "pulse") {
+      drawPulseBackground(ctx, frameState);
+      return;
+    }
     drawContours(ctx, frameTime);
-    drawPulseOverlay(ctx, frameTime);
   }
 
   function colorIndexAt(x, y, t) {
@@ -887,7 +959,7 @@
     const patternId = patternIdForLevel(info.level);
     const pattern = PATTERNS[patternId];
     if (!pattern || pattern.type !== "pulse") return null;
-    const pulse = preparePulseState(info.local, pattern);
+    const pulse = preparePulseState(info.local, pattern, info.level);
     return {
       patternId,
       level: info.level,
@@ -899,6 +971,9 @@
       radius: pulse.radius,
       thickness: pulse.thickness,
       visibility: pulse.visibility,
+      previewRadius: pulse.previewRadius,
+      previewVisibility: pulse.previewVisibility,
+      waves: pulse.waves.map((wave) => ({ ...wave })),
       previewEnd: pulse.previewEnd,
       sweepEnd: pulse.sweepEnd,
       baseColorIndex: pulse.baseColorIndex,

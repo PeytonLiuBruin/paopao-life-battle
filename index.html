@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>泡泡补水</title>
-    <link rel="stylesheet" href="./styles.css?v=1.2.1" />
+    <link rel="stylesheet" href="./styles.css?v=1.3.0" />
   </head>
   <body>
     <main class="phone-shell" aria-label="泡泡补水游戏">
@@ -16,18 +16,19 @@
 
       <section class="hud" aria-label="游戏状态">
         <span id="difficultyLevel" class="difficulty-level">Lv 1</span>
-        <div class="score-block water-block">
-          <div class="water-topline">
-            <span class="caption">水槽</span>
-            <strong id="waterValue" class="water-value">100%</strong>
-          </div>
-          <div id="heartMeter" class="heart-meter" aria-hidden="true">
-          <img class="heart-bubble" alt="" />
-          <img class="heart-bubble" alt="" />
-          <img class="heart-bubble" alt="" />
-          </div>
-          <div class="water-meter" aria-hidden="true">
-            <span id="waterFill"></span>
+        <div class="score-block water-block life-block">
+          <div
+            id="heartMeter"
+            class="heart-meter"
+            role="progressbar"
+            aria-label="生命充能"
+            aria-valuemin="0"
+            aria-valuemax="3"
+            aria-valuenow="3"
+          >
+            <img class="heart-bubble" alt="" />
+            <img class="heart-bubble" alt="" />
+            <img class="heart-bubble" alt="" />
           </div>
           <div id="comboChip" class="combo-chip" aria-live="polite"></div>
         </div>
@@ -91,14 +92,14 @@
 
       <section id="curtain" class="curtain">
         <div class="title-mark">泡泡补水</div>
-        <p class="start-copy">泡泡进入同色背景时戳破它，连击把水槽续满。</p>
+        <p class="start-copy">泡泡进入同色背景时戳破它，连续命中为下一颗生命充能。</p>
         <button id="startButton" class="primary-button" type="button">开始</button>
         <div id="endStats" class="end-stats"></div>
       </section>
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./background-engine.js?v=1.2.1" defer></script>
-    <script src="./game.js?v=1.2.1" defer></script>
+    <script src="./background-engine.js?v=1.3.0" defer></script>
+    <script src="./game.js?v=1.3.0" defer></script>
   </body>
 </html>

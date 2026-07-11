@@ -4,15 +4,14 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.2.1";
+  const buildVersion = "1.3.0";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const titleMark = document.querySelector(".title-mark");
   const startTransition = document.getElementById("startTransition");
   const endStats = document.getElementById("endStats");
-  const waterFill = document.getElementById("waterFill");
-  const waterValue = document.getElementById("waterValue");
   const waterBlock = document.querySelector(".water-block");
+  const heartMeter = document.getElementById("heartMeter");
   const heartBubbles = Array.from(document.querySelectorAll(".heart-bubble"));
   const comboChip = document.getElementById("comboChip");
   const scoreEl = document.getElementById("score");
@@ -55,7 +54,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.2.1`;
+      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.3.0`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -72,6 +71,8 @@
   const maxBlasts = 4;
   const maxFloaters = 10;
   const maxHints = 10;
+  const maxMembraneSnaps = 14;
+  const pulseContactGraceMs = 150;
   const debugUpdateMs = 500;
   const backgroundVisualScale = 0.8;
   const performanceProfiles = [
@@ -172,7 +173,6 @@
   const whiteTone = makeWhiteTone();
   const bombTone = makeBombTone();
   const boundaryTone = "#c9b7d7";
-  const waterPressureCap = 132;
   const bombCooldownMs = 60000;
   const comboBaseWindow = 2350;
   const comboMinWindow = 1450;
@@ -197,7 +197,7 @@
   const dragBubbleFadeSeconds = 0.78;
   const dragBubbleSuccessWater = regularCorrectWaterGain;
   const correctWaterGain = regularCorrectWaterGain;
-  const gameOverWaterThreshold = 0;
+  const gameOverWaterThreshold = heartWater;
   const customPackStorageKey = "paopao.customBubblePack.v1";
   const localLeaderboardStorageKey = "paopao.localLeaderboard.v1";
   const localLeaderboardLimit = 80;
@@ -232,9 +232,6 @@
     correctBubbleCount: 0,
     poppedCount: 0,
     water: 100,
-    waterPressure: 0,
-    hiddenLeak: 0,
-    hiddenLeakActive: false,
     wrongStreak: 0,
     lastUsefulActionAt: 0,
     combo: 0,
@@ -279,6 +276,9 @@
     nextSpawnAt: 0,
     lastPlayableAt: 0,
     lastRhythmBridgeAt: -Infinity,
+    rhythmBeatIndex: -1,
+    rhythmPulse: 0,
+    rhythmDownbeat: false,
     bubbleCounter: 0,
     customBubblePack: null,
     customPackStatus: "",
@@ -307,6 +307,7 @@
     blasts: [],
     floaters: [],
     hints: [],
+    membraneSnaps: [],
     pointerFx: [],
     pointerTrail: [],
     spawnFlow: null,
@@ -351,13 +352,12 @@
   let perfLastTime = 0;
   let perfLastUpdate = 0;
   let lastHudWater = null;
+  let lastFullLifeCount = heartCount;
+  let lifeGainUntil = 0;
   let waterGainUntil = 0;
-  let waterDrainUntil = 0;
   let waterShockUntil = 0;
   let waterCriticalUntil = 0;
-  let lastWaterBand = "safe";
   const heartSrcCache = new Map();
-  let waterLowVibrationArmed = true;
   let performanceTier = initialPerformanceTier();
   let initialTier = performanceTier;
   let performanceWorkMs = targetFrameMs * 0.35;
@@ -766,6 +766,7 @@
     trimArray(state.blasts, effectLimit("blasts"));
     trimArray(state.floaters, effectLimit("floaters"));
     trimArray(state.hints, effectLimit("hints"));
+    trimArray(state.membraneSnaps, Math.max(6, Math.round(maxMembraneSnaps * currentPerformanceProfile().effectChance)));
     trimArray(state.pointerFx, 20);
     trimArray(state.pointerTrail, 30);
   }
@@ -821,6 +822,7 @@
     state.blasts = [];
     state.floaters = [];
     state.hints = [];
+    state.membraneSnaps = [];
     state.pointerFx = [];
     state.pointerTrail = [];
     state.difficultyBanners = [];
@@ -890,6 +892,7 @@
 
   function bubbleCapacityWeight(bubble) {
     if (!bubble) return 0;
+    if (bubble.stageTransitionOut) return 0;
     if (bubble.isCharge) return bubble.age < 0 ? 0.2 : 0.55;
     if (bubble.isDrag) return 0.7;
     if ((bubble.islandChainId || bubble.pathLockedMotion) && bubble.age < 0) return 1;
@@ -904,19 +907,6 @@
 
   function bubbleCapacityRemaining(level = displayDifficultyLevel()) {
     return Math.max(0, Math.floor(activeBubbleLimit(level) - bubbleCapacityPressure()));
-  }
-
-  function levelWaterDrainRate(level) {
-    const p = clamp((level - 1) / 29, 0, 1);
-    return clamp(
-      0.34 +
-        p * 0.56 +
-        smoothstep(4, 10, level) * 0.24 +
-        smoothstep(9, 16, level) * 0.3 +
-        smoothstep(16, 30, level) * 0.7,
-      0.34,
-      2.14,
-    );
   }
 
   function averageBubbleMissPenaltyForLevel(level) {
@@ -958,14 +948,8 @@
     const totalBubbles = bubbleCountForLevel(level);
     const correctRate = targetCorrectRateForLevel(level);
     const targetBubbles = Math.max(1, Math.round(totalBubbles * correctRate));
-    const naturalDrainBudget = levelWaterDrainRate(level) * (stageDurationMs / 1000) * 1.06;
     const baseMissPenalty = averageBubbleMissPenaltyForLevel(level);
-    const rewardCap = clamp(2.35 - smoothstep(4, 15, level) * 0.72, 1.42, 2.35);
-    const baseCorrectWater = clamp(
-      (naturalDrainBudget / totalBubbles + (1 - correctRate) * baseMissPenalty) / correctRate,
-      0.16,
-      rewardCap,
-    );
+    const baseCorrectWater = regularCorrectWaterGain;
     const baseWrongPenalty = baseMissPenalty * (1.58 + smoothstep(3, 12, level) * 0.28);
     const totalWater = baseCorrectWater * targetBubbles;
     return {
@@ -994,12 +978,55 @@
     state.stageWrongPops = 0;
     state.spawnFlow = null;
     state.spawnFlowIndex = 0;
-    state.waterPressure = 0;
+    state.rhythmBeatIndex = -1;
+    state.rhythmPulse = 0;
+    state.rhythmDownbeat = false;
     state.nextSpawnAt = Math.min(state.nextSpawnAt || state.elapsed + 140, state.elapsed + 180);
   }
 
   function stageElapsedMs() {
     return Math.max(0, state.elapsed - state.stageStartAt);
+  }
+
+  function rhythmBpmForLevel(level = displayDifficultyLevel()) {
+    const safeLevel = Math.max(1, Number(level) || 1);
+    if (safeLevel <= 2) return 96 + (safeLevel - 1) * 4;
+    if (safeLevel <= 5) return 104 + (safeLevel - 3) * 4;
+    if (safeLevel <= 9) return 116 + (safeLevel - 6) * 3;
+    return Math.min(142, 128 + (safeLevel - 10) * 0.72);
+  }
+
+  function rhythmBeatMs(level = displayDifficultyLevel()) {
+    return 60000 / rhythmBpmForLevel(level);
+  }
+
+  function rhythmSpawnSubdivision(level = displayDifficultyLevel()) {
+    if (level <= 2) return 2;
+    return level <= 12 ? 4 : 8;
+  }
+
+  function rhythmGridTimeAtOrAfter(time, division = 1, level = displayDifficultyLevel()) {
+    if (!Number.isFinite(time)) return time;
+    const step = rhythmBeatMs(level) / Math.max(1, division);
+    const origin = state.stageStartAt;
+    const gridIndex = Math.max(0, Math.ceil((time - origin - 0.001) / step));
+    return origin + gridIndex * step;
+  }
+
+  function nextRhythmTime(time, division = rhythmSpawnSubdivision(), level = displayDifficultyLevel()) {
+    return rhythmGridTimeAtOrAfter(Math.max(time, state.elapsed + 24), division, level);
+  }
+
+  function updateRhythmClock(dt) {
+    const beatMs = rhythmBeatMs();
+    const beatIndex = Math.max(0, Math.floor(stageElapsedMs() / beatMs));
+    if (beatIndex !== state.rhythmBeatIndex) {
+      state.rhythmBeatIndex = beatIndex;
+      state.rhythmDownbeat = beatIndex % 4 === 0;
+      state.rhythmPulse = state.rhythmDownbeat ? 1 : 0.52;
+    } else {
+      state.rhythmPulse = Math.max(0, state.rhythmPulse - dt * (state.rhythmDownbeat ? 3.5 : 5.2));
+    }
   }
 
   function stageRemainingBubbles() {
@@ -1672,22 +1699,6 @@
     };
   }
 
-  function waterBandFor(value) {
-    if (value <= 8) return "critical";
-    if (value <= 18) return "danger";
-    if (value <= 32) return "low";
-    if (value <= 48) return "warn";
-    return "safe";
-  }
-
-  function waterBandRank(band) {
-    if (band === "critical") return 4;
-    if (band === "danger") return 3;
-    if (band === "low") return 2;
-    if (band === "warn") return 1;
-    return 0;
-  }
-
   function redDotHeartSrc(fillAmount) {
     const amount = typeof fillAmount === "boolean" ? (fillAmount ? 1 : 0) : clamp(fillAmount, 0, 1);
     const step = Math.round(amount * 100);
@@ -1702,58 +1713,56 @@
   }
 
   function updateHud() {
-    const water = Math.round(Math.max(0, Math.min(100, state.water)));
     const exactWater = Math.max(0, Math.min(100, state.water));
     const openActive = state.openUntil > state.elapsed && state.running;
+    const previousFullLifeCount = lastFullLifeCount;
     if (lastHudWater !== null) {
       const diff = exactWater - lastHudWater;
       if (diff > 0.05) {
         waterGainUntil = state.elapsed + clamp(420 + diff * 42, 420, 820);
       } else if (diff < -0.012) {
         const drop = Math.abs(diff);
-        waterDrainUntil = state.elapsed + clamp(340 + drop * 48, 360, 860);
         if (drop >= 0.34) {
           waterShockUntil = state.elapsed + clamp(240 + drop * 44, 280, 720);
         }
       }
     }
-    const waterBand = waterBandFor(water);
-    const bandRank = waterBandRank(waterBand);
-    const previousBandRank = waterBandRank(lastWaterBand);
-    if (state.running && exactWater < 30 && waterLowVibrationArmed) {
-      waterLowVibrationArmed = false;
-      waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 520);
-      if (navigator.vibrate) {
-        navigator.vibrate(20);
-      }
-    } else if (exactWater > 36) {
-      waterLowVibrationArmed = true;
+    const fullLifeCount = clamp(Math.floor((exactWater + 0.001) / heartWater), 0, heartCount);
+    const lifeChargeProgress =
+      fullLifeCount >= heartCount ? 1 : clamp((exactWater - fullLifeCount * heartWater) / heartWater, 0, 1);
+    if (state.running && fullLifeCount === 1 && previousFullLifeCount > 1) {
+      waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 720);
+      navigator.vibrate?.([18, 34, 18]);
     }
-    if (state.running && bandRank > previousBandRank) {
-      waterCriticalUntil = state.elapsed + (waterBand === "critical" ? 980 : waterBand === "danger" ? 720 : 440);
-      if ((waterBand === "danger" || waterBand === "critical") && navigator.vibrate) {
-        navigator.vibrate(waterBand === "critical" ? [18, 36, 18] : 18);
-      }
+    if (fullLifeCount > previousFullLifeCount) {
+      lifeGainUntil = state.elapsed + 620;
     }
-    lastWaterBand = waterBand;
+    lastFullLifeCount = fullLifeCount;
     lastHudWater = exactWater;
     heartBubbles.forEach((heart, index) => {
-      const segmentProgress = clamp((exactWater - index * heartWater) / heartWater, 0, 1);
+      const isFull = index < fullLifeCount;
+      const isNextLife = fullLifeCount < heartCount && index === fullLifeCount;
+      const segmentProgress = isFull ? 1 : isNextLife ? lifeChargeProgress : 0;
+      const justCompleted = isFull && index === fullLifeCount - 1 && state.elapsed < lifeGainUntil;
+      const chargingNow = isNextLife && segmentProgress > 0 && state.elapsed < waterGainUntil;
       heart.src = redDotHeartSrc(segmentProgress);
-      heart.classList.toggle("charging", segmentProgress > 0.001 && segmentProgress < 0.999 && state.elapsed < waterGainUntil);
-      heart.style.setProperty("--heart-fill", segmentProgress.toFixed(3));
+      heart.classList.toggle("charging", justCompleted || chargingNow);
+      heart.classList.toggle("recovering", isNextLife && segmentProgress > 0);
+      heart.classList.toggle("near-ready", isNextLife && segmentProgress >= 0.72);
+      heart.style.setProperty("--heart-fill", segmentProgress.toFixed(4));
     });
-    waterFill.style.width = `${exactWater}%`;
-    waterValue.textContent = `${Math.abs(exactWater - Math.round(exactWater)) < 0.05 ? Math.round(exactWater) : exactWater.toFixed(1)}%`;
-    waterBlock.classList.toggle("warn", water <= 48);
-    waterBlock.classList.toggle("low", water <= 32);
-    waterBlock.classList.toggle("danger", water <= 18);
-    waterBlock.classList.toggle("critical", water <= 8);
+    heartMeter.setAttribute("aria-valuenow", (exactWater / heartWater).toFixed(2));
+    heartMeter.setAttribute(
+      "aria-valuetext",
+      fullLifeCount >= heartCount
+        ? "三颗生命已满"
+        : `${fullLifeCount} 颗完整生命，下一颗已充能 ${Math.round(lifeChargeProgress * 100)}%`,
+    );
+    waterBlock.classList.toggle("one-life", fullLifeCount === 1);
     waterBlock.classList.toggle("pulse", state.comboPulse > 0.16);
     waterBlock.classList.toggle("open", openActive);
     waterBlock.classList.toggle("combo-hot", state.combo >= 5);
     waterBlock.classList.toggle("gain", state.running && state.elapsed < waterGainUntil);
-    waterBlock.classList.toggle("drain", state.running && state.elapsed < waterDrainUntil && state.elapsed >= waterGainUntil);
     waterBlock.classList.toggle("shock", state.running && state.elapsed < waterShockUntil);
     waterBlock.classList.toggle("critical-flash", state.running && state.elapsed < waterCriticalUntil);
     comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
@@ -1767,7 +1776,7 @@
     comboChip.textContent = openActive
       ? state.combo > 1
         ? `x${state.combo}`
-        : "续水"
+        : "爆发"
       : state.combo > 1
         ? `x${state.combo}`
         : "";
@@ -1796,15 +1805,11 @@
     state.poppedCount = 0;
     state.water = 100;
     lastHudWater = null;
+    lastFullLifeCount = heartCount;
+    lifeGainUntil = 0;
     waterGainUntil = 0;
-    waterDrainUntil = 0;
     waterShockUntil = 0;
     waterCriticalUntil = 0;
-    lastWaterBand = "safe";
-    waterLowVibrationArmed = true;
-    state.waterPressure = 0;
-    state.hiddenLeak = 0;
-    state.hiddenLeakActive = false;
     state.wrongStreak = 0;
     state.lastUsefulActionAt = 0;
     resetCombo({ recovery: false });
@@ -1907,6 +1912,7 @@
     const percentile = boardData.percentile;
     const totalCount = boardData.totalCount;
     const leaderboard = boardData.leaderboard;
+    const aheadRecord = rank > 1 ? boardData.records[rank - 2] ?? null : null;
 
     const root = document.createElement("div");
     root.className = "result-screen";
@@ -1931,6 +1937,28 @@
     levelNumber.textContent = String(level);
     levelLine.append(levelLabel, levelNumber);
 
+    const chase = document.createElement("div");
+    chase.className = "result-chase";
+    const chaseMain = document.createElement("strong");
+    const chaseSub = document.createElement("span");
+    if (aheadRecord) {
+      if (aheadRecord.level > level) {
+        const timeGap = Math.max(1000, aheadRecord.elapsed - state.elapsed + 1000);
+        chaseMain.textContent = `再坚持 ${formatTime(timeGap)}`;
+      } else {
+        const bubbleGap = Math.max(1, aheadRecord.hitCount - hitCount + 1);
+        chaseMain.textContent = `再击破 ${bubbleGap} 个泡泡`;
+      }
+      chaseSub.textContent = `即可升至第 ${Math.max(1, rank - 1)} 名`;
+    } else if (totalCount > 1) {
+      chaseMain.textContent = "刷新本机纪录";
+      chaseSub.textContent = `下一目标 Level ${level + 1}`;
+    } else {
+      chaseMain.textContent = "目标已建立";
+      chaseSub.textContent = `下一局冲击 Level ${level + 1}`;
+    }
+    chase.append(chaseMain, chaseSub);
+
     const metrics = document.createElement("div");
     metrics.className = "result-metrics";
     [
@@ -1951,7 +1979,7 @@
       row.append(iconEl, labelEl, valueEl);
       metrics.append(row);
     });
-    summary.append(eyebrow, levelLine, metrics);
+    summary.append(eyebrow, levelLine, chase, metrics);
 
     const board = document.createElement("section");
     board.className = "result-panel result-board";
@@ -2011,8 +2039,8 @@
     const retryButton = document.createElement("button");
     retryButton.className = "result-action result-retry";
     retryButton.type = "button";
-    retryButton.textContent = "再来一局";
-    retryButton.addEventListener("click", playStartTransition);
+    retryButton.textContent = "立即再来一局";
+    retryButton.addEventListener("click", () => playStartTransition({ quick: true }));
     actions.append(homeButton, retryButton);
 
     root.append(halo, summary, board, actions);
@@ -2023,7 +2051,6 @@
     if (!state.running) return;
     waterShockUntil = Math.max(waterShockUntil, state.elapsed + 720);
     waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 1100);
-    lastWaterBand = "critical";
     if (navigator.vibrate) {
       navigator.vibrate([22, 38, 22]);
     }
@@ -2047,7 +2074,7 @@
   }
 
   function isWaterGameOver() {
-    return state.water <= gameOverWaterThreshold;
+    return state.water < gameOverWaterThreshold - 0.001;
   }
 
   function difficulty() {
@@ -2085,90 +2112,13 @@
     pushDifficultyBanner(tier + 1);
   }
 
-  function requiredCorrectRate() {
-    return state.stagePlan?.correctRate ?? targetCorrectRateForLevel(displayDifficultyLevel());
-  }
-
-  function baseWaterDrainRate() {
-    const level = displayDifficultyLevel();
-    const p = clamp((level - 1) / 18, 0, 1);
-    const stageTension = smoothstep(0.55, 1, stageCompletion()) * (0.08 + p * 0.2);
-    const tempoPressure =
-      smoothstep(5, 9, level) * 0.26 +
-      smoothstep(9, 14, level) * 0.62 +
-      smoothstep(14, 21, level) * 0.42 +
-      smoothstep(21, 28, level) * 0.5;
-    const overtime = smoothstep(24, 31, level) * 0.75 + smoothstep(31, 38, level) * 1.05;
-    return clamp(levelWaterDrainRate(level) + stageTension + tempoPressure + overtime, 0.34, 5.8);
-  }
-
-  function waterPressureHorizon() {
-    return 7.8 - clamp((displayDifficultyLevel() - 1) / 18, 0, 1) * 2.2;
-  }
-
-  function waterDrainRate() {
-    const pressureRate = state.waterPressure / waterPressureHorizon();
-    return baseWaterDrainRate() + pressureRate * requiredCorrectRate() * 0.18 + hiddenLeakDrainRate();
-  }
-
-  function hiddenLeakWrongLimit() {
-    const level = displayDifficultyLevel();
-    if (level >= 9) return 2;
-    if (level >= 4) return 3;
-    return 4;
-  }
-
-  function hiddenLeakIdleLimit() {
-    const level = displayDifficultyLevel();
-    return 9000 - smoothstep(1, 8, level) * 2600 - smoothstep(8, 16, level) * 1300;
-  }
-
-  function hiddenLeakDrainRate() {
-    if (!state.hiddenLeakActive && state.hiddenLeak <= 0) return 0;
-    const level = displayDifficultyLevel();
-    const p = clamp((level - 1) / 14, 0, 1);
-    return state.hiddenLeak * (1.55 + p * 1.05 + smoothstep(5, 12, level) * 0.55);
-  }
-
   function noteUsefulAction() {
     state.lastUsefulActionAt = state.elapsed;
     state.wrongStreak = 0;
-    state.hiddenLeak = 0;
-    state.hiddenLeakActive = false;
   }
 
   function noteWrongAction() {
     state.wrongStreak += 1;
-    if (state.wrongStreak >= hiddenLeakWrongLimit()) {
-      state.hiddenLeakActive = true;
-      state.hiddenLeak = Math.max(state.hiddenLeak, clamp(0.46 + (state.wrongStreak - hiddenLeakWrongLimit()) * 0.18, 0, 1));
-    }
-  }
-
-  function updateHiddenLeak(dt) {
-    if (!state.running) return;
-    const idleOver = state.elapsed - state.lastUsefulActionAt - hiddenLeakIdleLimit();
-    if (idleOver > 0) {
-      state.hiddenLeakActive = true;
-      state.hiddenLeak = Math.max(state.hiddenLeak, clamp(idleOver / 4200, 0.18, 1));
-    }
-    if (!state.hiddenLeakActive) {
-      state.hiddenLeak = Math.max(0, state.hiddenLeak - dt * 2.6);
-      return;
-    }
-    state.hiddenLeak = clamp(state.hiddenLeak + dt * 0.18, 0, 1);
-  }
-
-  function drainWater(dt) {
-    const pressureRate = state.waterPressure / waterPressureHorizon();
-    state.waterPressure = Math.max(0, state.waterPressure - pressureRate * dt);
-    const openingEase = 0.58 + smoothstep(2, 10, state.elapsed / 1000) * 0.42;
-    state.water = Math.max(0, state.water - waterDrainRate() * openingEase * dt);
-  }
-
-  function formatWaterGain(value) {
-    const rounded = Math.round(value * 10) / 10;
-    return Math.abs(rounded - Math.round(rounded)) < 0.05 ? String(Math.round(rounded)) : rounded.toFixed(1);
   }
 
   function addWater(amount, options = {}) {
@@ -2176,14 +2126,6 @@
     const before = state.water;
     state.water = Math.min(100, state.water + applied);
     return state.water - before;
-  }
-
-  function relieveWaterPressureOnCorrect(appliedWaterGain, bubble) {
-    if (state.waterPressure <= 0 || !isStageTargetBubble(bubble)) return;
-    const levelHelp = smoothstep(5, 14, displayDifficultyLevel());
-    const recoveryHelp = state.elapsed < state.comboRecoveryUntil ? 1.45 : 1;
-    const relief = (0.08 + appliedWaterGain * 0.1 + levelHelp * 0.14) * recoveryHelp;
-    state.waterPressure = Math.max(0, state.waterPressure - relief);
   }
 
   function waterOpportunityValue(bubble) {
@@ -2441,6 +2383,14 @@
       pulseBeatKey: options.pulseBeatKey ?? "",
       pulseAnchorX: options.pulseAnchorX ?? x,
       pulseAnchorY: options.pulseAnchorY ?? y,
+      pulseVisualProgress: options.pulseVisualProgress ?? 0,
+      pulseContact: 0,
+      pulseLastContactAt: Number.NEGATIVE_INFINITY,
+      stageTransitionOut: false,
+      stageTransitionStartedAt: 0,
+      stageTransitionDuration: 0,
+      transitionAlpha: 1,
+      pulseCarryover: false,
       chargeWarningSeconds: options.chargeWarningSeconds ?? chargeBubbleWarningSeconds,
       chargeFuseSeconds: options.chargeFuseSeconds ?? rand(chargeBubbleFuseMinSeconds, chargeBubbleFuseMaxSeconds),
       chargeExplodeAt: options.chargeExplodeAt ?? 0,
@@ -2466,6 +2416,8 @@
       dragLastPointerY: y,
       dragGrabX: x,
       dragGrabY: y,
+      dragGrabOffsetX: 0,
+      dragGrabOffsetY: 0,
       dragTravel: 0,
       dragIntentAt: 0,
       dragAnchorX: x,
@@ -2679,11 +2631,12 @@
   }
 
   function maybeActivateCatBubbleSystem() {
+    if (pulseEntryHandoffActive()) return;
     if (displayDifficultyLevel() < catBubbleMinLevel) return;
     if (state.water > 75 || hasActiveCatBubble()) return;
     if (state.elapsed - (state.lastCatBubbleAt ?? -Infinity) < catBubbleCooldownMs) return;
     if (state.elapsed < (state.nextCatBubbleRollAt ?? 0)) return;
-    state.nextCatBubbleRollAt = state.elapsed + catBubbleRollIntervalMs;
+    state.nextCatBubbleRollAt = nextRhythmTime(state.elapsed + catBubbleRollIntervalMs, 1);
     const chance = state.water <= 25 ? 0.25 : 0.1;
     if (Math.random() < chance) {
       spawnCatBubble(state.water <= 25 ? "critical" : "low");
@@ -2844,6 +2797,8 @@
     if (level <= 2) beats = beats.slice(0, Math.random() < 0.72 ? 1 : 2);
     if (level <= 4 && beats.length > 3) beats = beats.slice(0, 3);
     state.chargeLastPattern = pattern;
+    const baseBeatMs = rhythmBeatMs(level);
+    const phraseBeatMs = baseBeatMs * (level <= 2 ? 2 : level <= 5 ? 1.5 : level <= 9 ? 1 : 0.75);
     return {
       id: waveId,
       level,
@@ -2851,8 +2806,8 @@
       peak,
       beats,
       beatIndex: 0,
-      beatMs: level <= 2 ? rand(980, 1190) : level <= 5 ? rand(820, 1040) : level <= 8 ? rand(720, 920) : rand(650, 850),
-      nextBeatAt: state.elapsed + rand(190, 380),
+      beatMs: phraseBeatMs,
+      nextBeatAt: nextRhythmTime(state.elapsed + baseBeatMs * 0.45, 2, level),
       retries: 0,
       spawned: 0,
     };
@@ -2944,6 +2899,10 @@
   function maybeSpawnChargeBubble() {
     if (!state.running) return;
     const level = displayDifficultyLevel();
+    if (pulseEntryHandoffActive(level)) {
+      state.chargeWave = null;
+      return;
+    }
     if (level < 2) {
       state.chargeWave = null;
       return;
@@ -2951,8 +2910,13 @@
 
     if (!state.chargeWave) {
       if (state.elapsed < state.nextChargeAt) return;
+      const alignedStartAt = rhythmGridTimeAtOrAfter(state.nextChargeAt, 1, level);
+      if (state.elapsed + 1 < alignedStartAt) {
+        state.nextChargeAt = alignedStartAt;
+        return;
+      }
       if (activeChargeBubbleCount() > 0) {
-        state.nextChargeAt = state.elapsed + rand(900, 1500);
+        state.nextChargeAt = nextRhythmTime(state.elapsed + rhythmBeatMs(level) * 2, 1, level);
         return;
       }
       state.chargeWave = createChargeWave(level);
@@ -2963,21 +2927,25 @@
     const wave = state.chargeWave;
     if (Math.abs(level - wave.level) > 1) {
       state.chargeWave = null;
-      state.nextChargeAt = state.elapsed + rand(2200, 3600);
+      state.nextChargeAt = nextRhythmTime(state.elapsed + rand(2200, 3600), 1, level);
       return;
     }
     if (state.elapsed < wave.nextBeatAt) return;
     const beat = wave.beats[wave.beatIndex];
     if (!beat) {
       state.chargeWave = null;
-      state.nextChargeAt = state.elapsed + nextChargeBubbleDelay(level) + (wave.peak ? 1800 : 0);
+      state.nextChargeAt = nextRhythmTime(
+        state.elapsed + nextChargeBubbleDelay(level) + (wave.peak ? rhythmBeatMs(level) * 3 : 0),
+        1,
+        level,
+      );
       return;
     }
 
     if (beat.pause) {
       wave.beatIndex += 1;
       wave.retries = 0;
-      wave.nextBeatAt = state.elapsed + wave.beatMs * 1.55;
+      wave.nextBeatAt = nextRhythmTime(state.elapsed + wave.beatMs * 1.5, 2, level);
       return;
     }
 
@@ -2999,14 +2967,14 @@
 
     if (spawned <= 0 && wave.retries < 3) {
       wave.retries += 1;
-      wave.nextBeatAt = state.elapsed + rand(260, 380);
+      wave.nextBeatAt = nextRhythmTime(state.elapsed + rhythmBeatMs(level) * 0.5, 4, level);
       return;
     }
 
     wave.spawned += spawned;
     wave.beatIndex += 1;
     wave.retries = 0;
-    wave.nextBeatAt = state.elapsed + wave.beatMs * rand(0.92, 1.08);
+    wave.nextBeatAt = nextRhythmTime(state.elapsed + wave.beatMs, 4, level);
   }
 
   function activeDragBubbleCount() {
@@ -3168,21 +3136,27 @@
 
   function maybeSpawnDragBubble() {
     const level = displayDifficultyLevel();
+    if (pulseEntryHandoffActive(level)) return;
     if (!state.running || level < dragBubbleMinLevel || state.elapsed < state.nextDragAt) return;
+    const alignedStartAt = rhythmGridTimeAtOrAfter(state.nextDragAt, 1, level);
+    if (state.elapsed + 1 < alignedStartAt) {
+      state.nextDragAt = alignedStartAt;
+      return;
+    }
     if (activeDragBubbleCount() > 0) {
-      state.nextDragAt = state.elapsed + 850;
+      state.nextDragAt = nextRhythmTime(state.elapsed + rhythmBeatMs(level) * 2, 1, level);
       return;
     }
     const sceneCount = state.bubbles.reduce((count, bubble) => count + (bubble.age >= -0.45 ? 1 : 0), 0);
     const chargePressure = activeChargeBubbleCount() >= Math.max(2, maxActiveChargeBubblesForLevel(level) - 1);
     if (chargePressure || sceneCount > activeBubbleLimit(level) + 2) {
-      state.nextDragAt = state.elapsed + rand(620, 980);
+      state.nextDragAt = nextRhythmTime(state.elapsed + rhythmBeatMs(level) * 2, 1, level);
       return;
     }
     if (spawnDragBubble()) {
-      state.nextDragAt = state.elapsed + nextDragBubbleDelay(level);
+      state.nextDragAt = nextRhythmTime(state.elapsed + nextDragBubbleDelay(level), 1, level);
     } else {
-      state.nextDragAt = state.elapsed + rand(900, 1400);
+      state.nextDragAt = nextRhythmTime(state.elapsed + rhythmBeatMs(level) * 2, 1, level);
     }
   }
 
@@ -3206,7 +3180,7 @@
     if (state.dragPointerId !== null) return false;
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
-      if (!bubble.isDrag || bubble.dragResolved || bubble.age < 0.14 || bubble.dragFade > 0.78) continue;
+      if (!bubble.isDrag || bubble.dragResolved || bubble.stageTransitionOut || bubble.age < 0.14 || bubble.dragFade > 0.78) continue;
       if (Math.hypot(x - bubble.x, y - bubble.y) > bubble.baseRadius * 1.28 + 8) continue;
       state.dragPointerId = pointerId;
       state.dragBubbleUid = bubble.uid;
@@ -3217,6 +3191,8 @@
       bubble.dragLastPointerY = y;
       bubble.dragGrabX = x;
       bubble.dragGrabY = y;
+      bubble.dragGrabOffsetX = bubble.x - x;
+      bubble.dragGrabOffsetY = bubble.y - y;
       bubble.dragTravel = 0;
       bubble.dragIntentAt = 0;
       bubble.dragAnchorX = bubble.x;
@@ -3266,6 +3242,8 @@
     if (bubble.dragResolved) return;
     bubble.dragResolved = true;
     bubble.dragActive = false;
+    const tone = palette[bubble.dragTargetColorIndex] ?? openTone;
+    makeMembraneSnap(bubble, bubble.dragPointerX || bubble.x, bubble.dragPointerY || bubble.y, tone, 1.18);
     state.bubbles.splice(index, 1);
     state.dragBubbleUid = null;
     noteUsefulAction();
@@ -3274,9 +3252,8 @@
     registerCombo();
     const waterGain = dragBubbleSuccessWater;
     addWater(waterGain);
-    const tone = palette[bubble.dragTargetColorIndex] ?? openTone;
     makePunctureSplash(bubble, bubble.x, bubble.y, tone, Math.round(16 + bubble.baseRadius * 0.28), false, false);
-    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.76, `x${state.combo} +${formatWaterGain(waterGain)}`, tone.light, 0.9, {
+    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.76, `x${state.combo}`, tone.light, 0.9, {
       life: 0.52,
       vy: -24,
       stroke: "rgba(18, 39, 52, 0.44)",
@@ -3309,7 +3286,7 @@
       color: colorWithAlpha("#e9faff", 0.56),
       power: 0.42,
     });
-    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.7, `-${formatWaterGain(penalty)}`, "#f2fbff", 0.72, {
+    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.7, "-1心", "#f2fbff", 0.72, {
       life: 0.44,
       vy: -18,
       stroke: "rgba(21, 42, 54, 0.42)",
@@ -3332,15 +3309,19 @@
     const dragging = bubble.dragActive && state.dragPointerId !== null && state.dragBubbleUid === bubble.uid;
     const idleX = bubble.dragAnchorX + Math.sin(bubble.age * 1.25 + bubble.skinPhase) * 3.2;
     const idleY = bubble.dragAnchorY + Math.cos(bubble.age * 1.08 + bubble.skinPhase * 0.7) * 2.8;
-    const targetX = dragging ? bubble.dragPointerX : idleX;
-    const targetY = dragging ? bubble.dragPointerY : idleY;
-    const stiffness = dragging ? 42 : 10;
+    const targetX = dragging
+      ? clamp(bubble.dragPointerX + (bubble.dragGrabOffsetX || 0), bubble.baseRadius * 0.66, state.width - bubble.baseRadius * 0.66)
+      : idleX;
+    const targetY = dragging
+      ? clamp(bubble.dragPointerY + (bubble.dragGrabOffsetY || 0), bubble.baseRadius * 0.66, state.height - bubble.baseRadius * 0.66)
+      : idleY;
+    const stiffness = dragging ? 36 : 10;
     bubble.vx += (targetX - bubble.x) * stiffness * dt;
     bubble.vy += (targetY - bubble.y) * stiffness * dt;
-    const damping = Math.exp(-(dragging ? 9.4 : 5.6) * dt);
+    const damping = Math.exp(-(dragging ? 8.6 : 5.6) * dt);
     bubble.vx *= damping;
     bubble.vy *= damping;
-    const maxSpeed = dragging ? 760 : 48;
+    const maxSpeed = dragging ? 640 : 48;
     const speed = Math.hypot(bubble.vx, bubble.vy);
     if (speed > maxSpeed) {
       const scale = maxSpeed / speed;
@@ -3641,15 +3622,18 @@
         : Math.random() < (level <= 1 ? 0.18 : level < 4 ? 0.52 : 0.58)
           ? spawnRegions[(primaryIndex + Math.floor(rand(3, spawnRegions.length - 1))) % spawnRegions.length]
           : null;
+    const phraseBars =
+      level <= 1
+        ? 2
+        : type === "machine" || type === "crossArc" || type === "sGroup"
+          ? 1
+          : (state.spawnFlowIndex + level) % 3 === 0
+            ? 1
+            : 2;
     state.spawnFlowIndex += 1;
     return {
       startAt: state.elapsed,
-      duration:
-        level <= 1
-          ? rand(3400, 5200)
-          : type === "machine" || type === "crossArc" || type === "sGroup"
-            ? rand(1900, 3100)
-            : rand(2400, 4300) - d * 280,
+      duration: rhythmBeatMs(level) * 4 * phraseBars,
       primary: makeSpawnRegion(primaryBase),
       secondary: secondaryBase ? makeSpawnRegion(secondaryBase, 1.4) : null,
       type,
@@ -3702,9 +3686,12 @@
     const pulse = Math.sin(progress * Math.PI);
     const peak = Math.exp(-Math.pow((progress - flow.peak) / 0.18, 2));
     const level = displayDifficultyLevel();
-    const barSeconds = clamp(3.5 - (level - 1) * 0.07, 2.45, 3.5);
-    const barPosition = ((stageElapsedMs() / 1000) % barSeconds) / barSeconds;
-    const accent = barPosition < 0.18 ? 0.18 : barPosition > 0.82 ? -0.12 : 0.06;
+    const beatFloat = stageElapsedMs() / rhythmBeatMs(level);
+    const beatInBar = ((beatFloat % 4) + 4) % 4;
+    const beatIndex = Math.floor(beatInBar);
+    const beatPhase = beatInBar - beatIndex;
+    const beatAttack = 1 - smoothstep(0.04, 0.3, beatPhase);
+    const accent = beatAttack * (beatIndex === 0 ? 0.27 : beatIndex === 2 ? 0.16 : 0.08) - (beatPhase > 0.78 ? 0.05 : 0);
     return clamp(0.56 + pulse * 0.66 + peak * 0.4 + accent, 0.44, 1.78);
   }
 
@@ -3730,7 +3717,10 @@
     const interval = clamp(Math.min(flowInterval, budgetInterval * rand(0.72, 0.98)), 165, 1120);
     const phraseRest = flow.usedBurst && (flow.type === "machine" || flow.type === "crossArc" || flow.type === "sGroup") ? 190 : 0;
     const groupBreath = Math.min(290, Math.max(0, count - 1) * (displayDifficultyLevel() <= 3 ? 132 : 78));
-    state.nextSpawnAt = state.elapsed + interval + groupBreath + phraseRest;
+    state.nextSpawnAt = nextRhythmTime(
+      state.elapsed + interval + groupBreath + phraseRest,
+      rhythmSpawnSubdivision(displayDifficultyLevel()),
+    );
   }
 
   function pickFlowRegion(flow) {
@@ -4770,6 +4760,16 @@
 
   function isPulsePattern(patternId = currentBackgroundPatternId()) {
     return patternId === "PULSE_BLUE" || patternId === "PULSE_PINK";
+  }
+
+  function pulseEntryHandoffLeadMs(level = displayDifficultyLevel()) {
+    return clamp(rhythmBeatMs(level) * 14, 6400, 7200);
+  }
+
+  function pulseEntryHandoffActive(level = displayDifficultyLevel()) {
+    if (isPulsePattern(backgroundPatternIdForLevel(level))) return false;
+    if (!isPulsePattern(backgroundPatternIdForLevel(level + 1))) return false;
+    return stageElapsedMs() >= stageDurationMs - pulseEntryHandoffLeadMs(level);
   }
 
   function currentBackgroundCycleInfo() {
@@ -6170,16 +6170,25 @@
   }
 
   function enterPulsePattern(info) {
-    state.bubbles.length = 0;
-    state.dragPointerId = null;
-    state.dragBubbleUid = null;
-    state.customHoldPointerId = null;
-    state.customHoldBubbleUid = null;
-    state.catHoldPointerId = null;
-    state.catHoldBubbleId = null;
+    state.bubbles.forEach((bubble) => {
+      if (bubble.isPulse) return;
+      bubble.pulseCarryover = true;
+    });
+    state.chargeWave = null;
+    const chargeResumeAt = rhythmGridTimeAtOrAfter(
+      state.stageStartAt + stageDurationMs + rhythmBeatMs(info.level + 1) * 2,
+      1,
+      info.level + 1,
+    );
+    state.nextChargeAt = Number.isFinite(state.nextChargeAt)
+      ? Math.max(state.nextChargeAt, chargeResumeAt)
+      : chargeResumeAt;
+    state.nextDragAt = Math.max(
+      state.nextDragAt,
+      rhythmGridTimeAtOrAfter(state.stageStartAt + stageDurationMs + rhythmBeatMs(info.level + 1) * 3, 1, info.level + 1),
+    );
     state.pulsePatternLevel = info.level;
     state.pulseBeatKey = "";
-    resetCombo();
   }
 
   function pulseBubblePoint(info, physicalRadius, bubbleRadius, index, placed) {
@@ -6202,7 +6211,8 @@
 
   function spawnPulseBeat(info) {
     const level = displayDifficultyLevel();
-    const count = Math.min(level <= 4 ? 2 : level >= 18 ? 4 : 3, stageRemainingBubbles(), bubbleCapacityRemaining(level));
+    const phraseCount = info.beat === 0 ? 2 : level >= 11 ? 3 : 2;
+    const count = Math.min(phraseCount, stageRemainingBubbles());
     if (count <= 0) return false;
     const radiusSteps = count >= 4 ? [0.19, 0.36, 0.53, 0.7] : count === 2 ? [0.3, 0.62] : [0.22, 0.44, 0.66];
     const placed = [];
@@ -6218,6 +6228,7 @@
         target: point,
         velocity: { vx: 0, vy: 0 },
         radius: bubbleRadius,
+        initialRadius: bubbleRadius * 0.18,
         speed: 0,
         colorIndex: info.ringColorIndex,
         sizeKind: bubbleRadius <= 29 ? "small" : "normal",
@@ -6228,7 +6239,9 @@
         fairPassComplete: false,
         allowFreePath: true,
         quietHint: true,
-        spawnRevealSeconds: 0.28,
+        spawnRevealSeconds: 0,
+        ignoreCapacity: true,
+        pulseVisualProgress: 0.05,
       });
       if (didSpawn) {
         placed.push(point);
@@ -6243,25 +6256,77 @@
     if (state.pulsePatternLevel !== info.level) {
       enterPulsePattern(info);
     }
-    if (state.pulseBeatKey === info.beatKey || info.phase > 0.24) return false;
+    if (state.pulseBeatKey === info.beatKey || info.phase > Math.min(0.16, info.previewEnd * 0.72)) return false;
     state.pulseBeatKey = info.beatKey;
     return spawnPulseBeat(info);
   }
 
+  function pulseBubbleInHitWindow(bubble, info = currentPulseInfo()) {
+    if (!bubble?.isPulse || !info || info.beatKey !== bubble.pulseBeatKey) return false;
+    const minDimension = Math.max(1, Math.min(state.width, state.height));
+    const centerX = info.centerX * state.width;
+    const centerY = info.centerY * state.height;
+    const bubbleDistance = Math.hypot(bubble.x - centerX, bubble.y - centerY) / minDimension;
+    const bubbleAllowance = ((bubble.baseRadius ?? bubble.radius) * 0.62 + 8) / minDimension;
+    const directlyTouching = info.waves.some(
+      (wave) =>
+        wave.visibility > 0.1 &&
+        Math.abs(bubbleDistance - wave.radius) <= wave.thickness + bubbleAllowance,
+    );
+    return directlyTouching || state.elapsed - (bubble.pulseLastContactAt ?? Number.NEGATIVE_INFINITY) <= pulseContactGraceMs;
+  }
+
+  function updateStageTransitionBubble(bubble, index, dt) {
+    const duration = Math.max(180, bubble.stageTransitionDuration || 620);
+    const progress = clamp((state.elapsed - bubble.stageTransitionStartedAt) / duration, 0, 1);
+    bubble.transitionAlpha = 1 - smoothstep(0.04, 1, progress);
+    bubble.x += bubble.vx * dt * 0.18;
+    bubble.y += bubble.vy * dt * 0.18;
+    bubble.wobble += bubble.wobbleSpeed * dt * 0.16;
+    if (progress >= 1) {
+      state.bubbles.splice(index, 1);
+      return true;
+    }
+    return false;
+  }
+
   function updatePulseBubble(bubble, index, dt) {
     const info = currentPulseInfo();
-    if (!info || info.beatKey !== bubble.pulseBeatKey || info.phase >= Math.min(0.98, info.sweepEnd + 0.08)) {
+    if (!info || info.beatKey !== bubble.pulseBeatKey || info.phase >= Math.min(0.97, info.sweepEnd + 0.045)) {
       penalizeStageMistake(bubble, "miss");
       state.bubbles.splice(index, 1);
       return true;
     }
-    bubble.x = bubble.pulseAnchorX + Math.sin(bubble.age * 1.8 + bubble.skinPhase) * 1.6;
-    bubble.y = bubble.pulseAnchorY + Math.cos(bubble.age * 1.55 + bubble.skinPhase) * 1.35;
+    const minDimension = Math.max(1, Math.min(state.width, state.height));
+    const centerX = info.centerX * state.width;
+    const centerY = info.centerY * state.height;
+    const radialDistance = Math.hypot(bubble.pulseAnchorX - centerX, bubble.pulseAnchorY - centerY) / minDimension;
+    let contact = 0;
+    info.waves.forEach((wave) => {
+      const distance = Math.abs(radialDistance - wave.radius);
+      const touchWidth = wave.thickness + (bubble.baseRadius / minDimension) * 0.52;
+      const waveContact = (1 - smoothstep(touchWidth * 0.6, touchWidth * 1.35, distance)) * wave.visibility;
+      contact = Math.max(contact, waveContact);
+    });
+    const grow = smoothstep(0.01, Math.max(0.08, info.previewEnd * 0.9), info.phase);
+    const breath = Math.sin(state.visualTime / 144 + bubble.skinPhase) * (0.005 + contact * 0.018);
+    const shake = Math.pow(contact, 1.45) * (1.4 + bubble.baseRadius * 0.045);
+    bubble.x = bubble.pulseAnchorX + Math.sin(state.visualTime * 0.094 + bubble.skinPhase) * shake;
+    bubble.y = bubble.pulseAnchorY + Math.cos(state.visualTime * 0.117 + bubble.skinPhase * 1.4) * shake * 0.72;
     bubble.vx = 0;
     bubble.vy = 0;
-    bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 3.4 + bubble.skinPhase) * 0.018);
-    bubble.wobble += bubble.wobbleSpeed * dt * 0.28;
-    if (cachedBubbleHasMatchingPatch(bubble)) {
+    bubble.radius = bubble.baseRadius * (0.18 + grow * 0.82 + breath + contact * 0.055);
+    bubble.pulseContact = contact;
+    if (contact > 0.08) {
+      bubble.pulseLastContactAt = state.elapsed;
+    }
+    bubble.pulseVisualProgress = clamp(0.08 + grow * 0.48 + contact * 0.44, 0, 1);
+    bubble.wobble += bubble.wobbleSpeed * dt * contact * 0.68;
+    if (contact > 0.46 && state.elapsed - lastChargeTickAt >= rhythmBeatMs() * 0.48) {
+      playChargeWarningTick(0.16 + contact * 0.32);
+      lastChargeTickAt = state.elapsed;
+    }
+    if (pulseBubbleInHitWindow(bubble)) {
       bubble.wasReady = true;
       state.lastPlayableAt = state.elapsed;
     }
@@ -6273,6 +6338,10 @@
     const level = displayDifficultyLevel();
     if (!state.stagePlan || state.stagePlan.level !== level) {
       resetStagePlan(level);
+    }
+    if (pulseEntryHandoffActive(level)) {
+      state.nextSpawnAt = state.stageStartAt + stageDurationMs + 120;
+      return;
     }
     const flow = ensureSpawnFlow();
     const remainingStage = stageRemainingBubbles();
@@ -6594,6 +6663,7 @@
     if (bubble.chargeResolved) return;
     clearCustomHoldForBubble(bubble);
     bubble.chargeResolved = true;
+    makeMembraneSnap(bubble, hitX, hitY, whiteTone, 1.35);
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
     state.score += 2;
@@ -6799,8 +6869,8 @@
 
   function comboFeedbackAt(x, y, color) {
     if (state.combo < 3) return;
-    const milestone = state.combo >= 5 && state.combo % 5 === 0;
-    const mega = state.combo >= 10 && state.combo % 10 === 0;
+    const milestone = state.combo >= 4 && state.combo % 4 === 0;
+    const mega = state.combo >= 8 && state.combo % 8 === 0;
     const strong = state.combo >= 8;
     if (!milestone && !mega && !allowDecorativeEffect(0.55)) return;
     const power = mega ? 1.26 : milestone ? 0.98 : strong ? 0.72 : 0.5;
@@ -6828,7 +6898,10 @@
       const rank = comboRank() || "B";
       const text = `${rank} x${state.combo}!`;
       makeComboFloatText(x, y - 30, text, rank, mega ? 1.12 : 1);
-      state.flash = Math.max(state.flash, mega ? 0.2 : 0.14);
+      state.flash = Math.max(state.flash, mega ? 0.1 : 0.045);
+      if (mega) {
+        playPop("small", 0.055, 0.48);
+      }
     } else if (state.combo === 3) {
       const rank = comboRank();
       makeComboFloatText(x, y - 22, `${rank} x${state.combo}`, rank, 0.86);
@@ -6844,8 +6917,8 @@
 
   function vibratePop(base = 12) {
     if (!navigator.vibrate) return;
-    if (state.combo >= 10 && state.combo % 5 === 0) {
-      navigator.vibrate([10, 18, 12]);
+    if (state.combo >= 8 && state.combo % 8 === 0) {
+      navigator.vibrate([8, 14, 10]);
       return;
     }
     const duration = Math.round(base + Math.min(14, Math.max(0, state.combo - 2) * 1.35));
@@ -6880,6 +6953,30 @@
       const particleColor = i % 3 === 0 ? color.light : palette[0].light;
       makeParticle(originX, originY, particleColor, speed, angle, life, isSuper && i % 4 === 0);
     }
+  }
+
+  function makeMembraneSnap(bubble, hitX, hitY, color, power = 1) {
+    if (!bubble || !color) return;
+    const limit = Math.max(6, Math.round(maxMembraneSnaps * currentPerformanceProfile().effectChance));
+    if (state.membraneSnaps.length >= limit) {
+      state.membraneSnaps.splice(0, state.membraneSnaps.length - limit + 1);
+    }
+    const dx = hitX - bubble.x;
+    const dy = hitY - bubble.y;
+    const distance = Math.hypot(dx, dy);
+    const fallbackAngle = Number.isFinite(bubble.skinPhase) ? bubble.skinPhase : -Math.PI * 0.5;
+    state.membraneSnaps.push({
+      x: bubble.x,
+      y: bubble.y,
+      radius: Math.max(8, bubble.radius || bubble.baseRadius || 24),
+      angle: distance > 2 ? Math.atan2(dy, dx) : fallbackAngle,
+      color: color.color ?? color.light ?? "#ffffff",
+      light: color.light ?? "#ffffff",
+      deep: color.deep ?? color.color ?? "#79b8ca",
+      age: 0,
+      life: clamp(0.135 + power * 0.028, 0.14, 0.2),
+      power: clamp(power, 0.55, 1.4),
+    });
   }
 
   function finishCatBubble(bubble, reason = "tap") {
@@ -7056,6 +7153,7 @@
   function hitBleachBubble(bubble, index, hitX, hitY) {
     if (state.elapsed < (bubble.bleachHitCooldownUntil ?? 0)) return;
     bubble.bleachHitCooldownUntil = state.elapsed + 140;
+    makeMembraneSnap(bubble, hitX, hitY, whiteTone, 0.74);
     bubble.bleachHits = Math.min((bubble.bleachHits ?? 0) + 1, bubble.bleachRequiredHits ?? bleachRequiredHits);
     registerCombo();
 
@@ -7125,6 +7223,7 @@
     }
 
     clearCustomHoldForBubble(bubble);
+    makeMembraneSnap(bubble, hitX, hitY, color, bubble.isSuper ? 1.35 : isSmall ? 0.76 : 1);
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
     chargeClearSkillByBubble(bubble);
@@ -7170,7 +7269,6 @@
 
     state.score += scoreGain;
     const appliedWaterGain = addWater(waterGain);
-    relieveWaterPressureOnCorrect(appliedWaterGain, bubble);
     state.flash = Math.max(state.flash, bubble.isSuper ? 0.46 : isSmall ? 0.16 : 0.28);
     makeFloatText(
       bubble.x,
@@ -7180,14 +7278,26 @@
         : appliedWaterGain <= 0
           ? "MAX"
           : state.combo > 1
-            ? `x${state.combo} +${formatWaterGain(appliedWaterGain)}`
-            : `+${formatWaterGain(appliedWaterGain)}`,
+            ? `x${state.combo}`
+            : "+",
       isOpen ? openTone.light : color.light,
       Math.min(1.34, 0.96 + state.combo * 0.012),
     );
 
     const amount = bubble.isSuper ? 46 : isSmall ? 9 + Math.round(bubble.radius * 0.16) : Math.round(16 + bubble.radius * 0.55);
     makePunctureSplash(bubble, hitX, hitY, color, amount, isSmall, bubble.isSuper);
+    if (bubble.isPulse) {
+      state.ripples.push({
+        x: bubble.x,
+        y: bubble.y,
+        radius: bubble.radius * 0.72,
+        age: 0,
+        life: 0.34,
+        color: color.light,
+        power: 0.88,
+      });
+      state.flash = Math.max(state.flash, 0.24);
+    }
     comboFeedbackAt(bubble.x, bubble.y, color);
     if (bubble.isSuper) {
       activateOpenMode(bubble.x, bubble.y);
@@ -7264,6 +7374,9 @@
   }
 
   function canPopBubble(bubble, hitX = bubble.x, hitY = bubble.y) {
+    if (bubble.isPulse) {
+      return pulseBubbleInHitWindow(bubble);
+    }
     if (
       state.openUntil > state.elapsed ||
       bubble.isSuper ||
@@ -7284,6 +7397,7 @@
 
   function bubbleHasMatchingPatch(bubble) {
     if (!isStageTargetBubble(bubble)) return false;
+    if (bubble.isPulse) return pulseBubbleInHitWindow(bubble);
     const r = bubble.radius * 0.58;
     const points = [
       { x: bubble.x, y: bubble.y },
@@ -7690,7 +7804,7 @@
   function tryPopPriorityChargeAt(x, y, isTap) {
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
-      if (!bubble.isCharge || bubble.chargeResolved || bubble.age < 0) continue;
+      if (!bubble.isCharge || bubble.chargeResolved || bubble.stageTransitionOut || bubble.age < 0) continue;
       const hitRadius = bubble.radius + (isTap ? 9 : 15);
       if ((x - bubble.x) ** 2 + (y - bubble.y) ** 2 > hitRadius * hitRadius) continue;
       const progress = chargeInteractionProgress(bubble);
@@ -7701,49 +7815,63 @@
     return false;
   }
 
-  function tryPopAt(x, y, isTap, pointerId = null) {
-    if (tryPopPriorityChargeAt(x, y, isTap)) return true;
-    for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
-      const bubble = state.bubbles[i];
-      if (bubble.age < 0) {
-        continue;
-      }
+  function bubbleInputPriority(bubble) {
+    if (bubble.isDrag) return 920;
+    if (bubble.isPulse) return 880;
+    if (bubble.isCat) return 840;
+    if (bubble.isBleach || bubble.isClear || bubble.isBomb || bubble.isSuper) return 790;
+    if (bubble.isWhite || customBubbleNeedsClear(bubble)) return 740;
+    return 500;
+  }
+
+  function bubbleInputCandidateAt(x, y, isTap) {
+    let best = null;
+    const latePrecision = smoothstep(0.48, 1, difficulty());
+    for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
+      const bubble = state.bubbles[index];
+      if (bubble.age < 0 || bubble.stageTransitionOut || bubble.isCharge) continue;
       const dx = x - bubble.x;
       const dy = y - bubble.y;
-      const latePrecision = smoothstep(0.48, 1, difficulty());
       const hitPadding = isTap ? 9 - latePrecision * 2.2 : 15 - latePrecision * 3.4;
       const stageTarget = isStageTargetBubble(bubble);
       const minTargetHitRadius = stageTarget ? (isCalmSmallBubble(bubble) ? 28 : 32) : 0;
       const hitRadius = Math.max(bubble.radius + hitPadding, minTargetHitRadius + (isTap ? 0 : 4));
-      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-        if (bubble.isDrag) {
-          return true;
-        }
-        if (bubble.isCharge) {
-          return true;
-        }
-        if (bubble.isCat) {
-          if (isTap) {
-            hitCatBubble(bubble, pointerId, x, y);
-          }
-          return true;
-        }
-        if (canPopBubble(bubble, x, y)) {
-          if (customBubbleNeedsClear(bubble)) {
-            if (isTap) {
-              hitCustomBubble(bubble, pointerId, x, y);
-            }
-          } else {
-            popBubble(bubble, i, x, y);
-          }
-        } else {
-          missBubble(bubble, i, isTap);
-        }
-        return true;
+      const distanceSquared = dx * dx + dy * dy;
+      if (distanceSquared > hitRadius * hitRadius) continue;
+      const normalizedDistance = Math.sqrt(distanceSquared) / Math.max(1, hitRadius);
+      const correctBoost = !bubble.isDrag && canPopBubble(bubble, x, y) ? 72 : 0;
+      const score = bubbleInputPriority(bubble) + correctBoost - normalizedDistance * 96 + index * 0.001;
+      if (!best || score > best.score) {
+        best = { bubble, index, score };
       }
     }
+    return best;
+  }
 
-    return false;
+  function tryPopAt(x, y, isTap, pointerId = null) {
+    if (tryPopPriorityChargeAt(x, y, isTap)) return true;
+    const candidate = bubbleInputCandidateAt(x, y, isTap);
+    if (!candidate) return false;
+    const { bubble, index } = candidate;
+    if (bubble.isDrag) return true;
+    if (bubble.isCat) {
+      if (isTap) {
+        hitCatBubble(bubble, pointerId, x, y);
+      }
+      return true;
+    }
+    if (canPopBubble(bubble, x, y)) {
+      if (customBubbleNeedsClear(bubble)) {
+        if (isTap) {
+          hitCustomBubble(bubble, pointerId, x, y);
+        }
+      } else {
+        popBubble(bubble, index, x, y);
+      }
+    } else {
+      missBubble(bubble, index, isTap);
+    }
+    return true;
   }
 
   function handlePointerDown(event) {
@@ -7826,6 +7954,7 @@
     state.elapsed += dt * 1000;
     updateBackgroundFlow(dt);
     maybeAdvanceStage();
+    updateRhythmClock(dt);
     const pulseInfo = currentPulseInfo();
     if (pulseInfo) {
       maybeSpawnPulseBeat(pulseInfo);
@@ -7839,8 +7968,6 @@
     if (tier > state.difficultyTier) {
       triggerDifficultyUp(tier);
     }
-    updateHiddenLeak(dt);
-    drainWater(dt);
     updatePointerFeedback(dt);
     state.flash = Math.max(0, state.flash - dt * 1.9);
     state.mistakeFlash = Math.max(0, state.mistakeFlash - dt * 4.2);
@@ -7860,10 +7987,15 @@
     let spawnStepsThisFrame = 0;
     while (state.elapsed >= state.nextSpawnAt && spawnStepsThisFrame < 1) {
       spawnWave();
+      if (!isPulsePattern()) {
+        state.nextSpawnAt = nextRhythmTime(state.nextSpawnAt, rhythmSpawnSubdivision());
+      }
       spawnStepsThisFrame += 1;
     }
     if (state.elapsed >= state.nextSpawnAt) {
-      state.nextSpawnAt = state.elapsed + 90;
+      state.nextSpawnAt = isPulsePattern()
+        ? state.elapsed + 120
+        : nextRhythmTime(state.elapsed + 90, rhythmSpawnSubdivision());
     }
     maybeAdvanceStage();
     if (!pulseInfo) {
@@ -7876,6 +8008,10 @@
       const bubble = state.bubbles[i];
       bubble.age += dt;
       if (bubble.age < 0) {
+        continue;
+      }
+      if (bubble.stageTransitionOut) {
+        updateStageTransitionBubble(bubble, i, dt);
         continue;
       }
       if (bubble.isPulse) {
@@ -8025,6 +8161,14 @@
       particle.y += particle.vy * dt;
       if (particle.age >= particle.life) {
         state.particles.splice(i, 1);
+      }
+    }
+
+    for (let i = state.membraneSnaps.length - 1; i >= 0; i -= 1) {
+      const snap = state.membraneSnaps[i];
+      snap.age += dt;
+      if (snap.age >= snap.life) {
+        state.membraneSnaps.splice(i, 1);
       }
     }
 
@@ -8580,13 +8724,18 @@
     return true;
   }
 
-  function drawChargeBubbleTexture(bubble, x, y, r, alpha = 1) {
+  function drawChargeBubbleTexture(bubble, x, y, r, alpha = 1, visualProgress = null, visualTone = null) {
     const warningSeconds = bubble.chargeWarningSeconds ?? chargeBubbleWarningSeconds;
     const fuseSeconds = bubble.chargeFuseSeconds ?? chargeBubbleFuseMaxSeconds;
-    const warning = bubble.age < warningSeconds;
+    const warning = visualProgress === null && bubble.age < warningSeconds;
     const activeAge = Math.max(0, bubble.age - warningSeconds);
-    const progress = warning ? 0 : clamp(activeAge / Math.max(0.001, fuseSeconds), 0, 1);
+    const progress = visualProgress === null
+      ? warning ? 0 : clamp(activeAge / Math.max(0.001, fuseSeconds), 0, 1)
+      : clamp(visualProgress, 0, 1);
     const pulse = 0.5 + Math.sin(state.visualTime / (warning ? 86 : 120)) * 0.5;
+    const tintLight = visualTone?.light ?? "#e8faff";
+    const tintColor = visualTone?.color ?? "#84dafe";
+    const tintDeep = visualTone?.deep ?? "#619ed0";
 
     ctx.save();
     ctx.translate(x, y);
@@ -8648,7 +8797,7 @@
     ctx.globalCompositeOperation = "screen";
     const aura = ctx.createRadialGradient(0, 0, r * 0.35, 0, 0, r * 1.34);
     aura.addColorStop(0, `rgba(255, 255, 255, ${0.14 + progress * 0.08})`);
-    aura.addColorStop(0.58, `rgba(142, 224, 255, ${0.08 + danger * 0.1})`);
+    aura.addColorStop(0.58, colorWithAlpha(visualTone ? tintLight : "#8ee0ff", 0.08 + danger * 0.1));
     aura.addColorStop(1, "rgba(255, 255, 255, 0)");
     ctx.fillStyle = aura;
     ctx.beginPath();
@@ -8656,14 +8805,14 @@
     ctx.fill();
     ctx.restore();
 
-    ctx.shadowColor = `rgba(225, 248, 255, ${0.34 + danger * 0.18})`;
+    ctx.shadowColor = colorWithAlpha(visualTone ? tintLight : "#e1f8ff", 0.34 + danger * 0.18);
     ctx.shadowBlur = r * (0.36 + danger * 0.24);
     const body = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, r * 0.08, r * 0.14, r * 1.05);
     body.addColorStop(0, "rgba(255, 255, 255, 0.96)");
-    body.addColorStop(0.22, `rgba(232, 250, 255, ${0.48 + progress * 0.08})`);
-    body.addColorStop(0.52, `rgba(132, 218, 255, ${0.18 + progress * 0.1})`);
-    body.addColorStop(0.76, `rgba(255, 176, 223, ${0.08 + danger * 0.2})`);
-    body.addColorStop(1, `rgba(255, 255, 255, ${0.12 + danger * 0.08})`);
+    body.addColorStop(0.2, colorWithAlpha(tintLight, visualTone ? 0.78 : 0.48 + progress * 0.08));
+    body.addColorStop(0.52, colorWithAlpha(tintColor, visualTone ? 0.62 + progress * 0.1 : 0.18 + progress * 0.1));
+    body.addColorStop(0.78, colorWithAlpha(visualTone ? tintDeep : "#ffb0df", visualTone ? 0.42 + danger * 0.12 : 0.08 + danger * 0.2));
+    body.addColorStop(1, colorWithAlpha(visualTone ? tintLight : "#ffffff", visualTone ? 0.24 + danger * 0.08 : 0.12 + danger * 0.08));
     ctx.fillStyle = body;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -8672,7 +8821,7 @@
     ctx.shadowBlur = 0;
     ctx.lineCap = "round";
     ctx.lineWidth = Math.max(1, r * 0.045);
-    ctx.strokeStyle = `rgba(255, 255, 255, ${0.34 + progress * 0.12})`;
+    ctx.strokeStyle = colorWithAlpha(visualTone ? tintLight : "#ffffff", visualTone ? 0.5 + progress * 0.1 : 0.34 + progress * 0.12);
     ctx.beginPath();
     ctx.arc(0, 0, r * 0.98, 0, Math.PI * 2);
     ctx.stroke();
@@ -8681,8 +8830,8 @@
     ctx.globalCompositeOperation = "screen";
     const inner = ctx.createRadialGradient(r * 0.12, r * 0.08, r * 0.08, r * 0.08, r * 0.12, r * 0.84);
     inner.addColorStop(0, `rgba(255, 255, 255, ${0.12 + danger * 0.1})`);
-    inner.addColorStop(0.48, `rgba(97, 204, 255, ${0.12 + progress * 0.1})`);
-    inner.addColorStop(0.75, `rgba(255, 128, 209, ${0.04 + danger * 0.22})`);
+    inner.addColorStop(0.48, colorWithAlpha(visualTone ? tintColor : "#61ccff", visualTone ? 0.24 + progress * 0.12 : 0.12 + progress * 0.1));
+    inner.addColorStop(0.75, colorWithAlpha(visualTone ? tintDeep : "#ff80d1", visualTone ? 0.12 + danger * 0.18 : 0.04 + danger * 0.22));
     inner.addColorStop(1, "rgba(255, 255, 255, 0)");
     ctx.fillStyle = inner;
     ctx.beginPath();
@@ -8694,7 +8843,7 @@
     ctx.beginPath();
     ctx.ellipse(-r * 0.14, -r * 0.16, r * 0.68, r * 0.44, -0.46, Math.PI * 1.04, Math.PI * 1.88);
     ctx.stroke();
-    ctx.strokeStyle = `rgba(150, 226, 255, ${0.16 + danger * 0.12})`;
+    ctx.strokeStyle = colorWithAlpha(visualTone ? tintLight : "#96e2ff", 0.16 + danger * 0.12);
     ctx.beginPath();
     ctx.ellipse(r * 0.16, r * 0.22, r * 0.52, r * 0.22, -0.28, Math.PI * 0.08, Math.PI * 0.82);
     ctx.stroke();
@@ -8712,14 +8861,14 @@
     if (danger > 0.02) {
       const warningPulse = 0.5 + Math.sin(state.visualTime / (74 - danger * 28)) * 0.5;
       ctx.globalCompositeOperation = "screen";
-      ctx.strokeStyle = `rgba(255, 238, 248, ${(0.18 + warningPulse * 0.3) * danger})`;
+      ctx.strokeStyle = colorWithAlpha(visualTone ? tintLight : "#ffeef8", (0.18 + warningPulse * 0.3) * danger);
       ctx.lineWidth = Math.max(1.4, r * (0.035 + finalWarning * 0.035));
       ctx.beginPath();
       ctx.arc(0, 0, r * (1.06 + warningPulse * 0.08), 0, Math.PI * 2);
       ctx.stroke();
       for (let index = 0; index < 4; index += 1) {
         const angle = state.visualTime * 0.0024 + index * Math.PI * 0.5;
-        ctx.strokeStyle = `rgba(255,255,255,${(0.18 + finalWarning * 0.52) * danger})`;
+        ctx.strokeStyle = colorWithAlpha(visualTone ? tintLight : "#ffffff", (0.18 + finalWarning * 0.52) * danger);
         ctx.lineWidth = Math.max(1.2, r * 0.026);
         ctx.beginPath();
         ctx.arc(0, 0, r * 1.17, angle, angle + 0.28 + finalWarning * 0.16);
@@ -8733,6 +8882,29 @@
       }
     }
 
+    ctx.restore();
+    return true;
+  }
+
+  function drawPulseChargeBubbleTexture(bubble, x, y, r, alpha = 1) {
+    const progress = clamp(bubble.pulseVisualProgress ?? 0, 0, 1);
+    const contact = clamp(bubble.pulseContact ?? 0, 0, 1);
+    const tone = backgroundPalette[bubble.colorIndex] ?? palette[bubble.colorIndex] ?? openTone;
+    drawChargeBubbleTexture(bubble, x, y, r, alpha, progress, tone);
+
+    if (contact <= 0.08) return true;
+    const shimmer = 0.5 + Math.sin(state.visualTime / 82 + bubble.skinPhase) * 0.5;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha *= alpha * contact;
+    ctx.shadowColor = colorWithAlpha(tone.light, 0.46);
+    ctx.shadowBlur = Math.min(18, r * 0.42);
+    ctx.strokeStyle = colorWithAlpha(tone.color, 0.38 + shimmer * 0.2);
+    ctx.lineWidth = Math.max(1.8, r * 0.065);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * (1.02 + shimmer * 0.045), 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
     return true;
   }
@@ -9022,13 +9194,15 @@
     if (revealAmount <= 0.01) return;
     const revealScale = revealDuration > 0 ? 0.34 + revealAmount * 0.66 : 1;
     const revealAlpha = revealDuration > 0 ? clamp(revealAmount, 0, 1) : 1;
+    const transitionAlpha = bubble.stageTransitionOut ? clamp(bubble.transitionAlpha ?? 1, 0, 1) : 1;
+    if (transitionAlpha <= 0.01) return;
     const r = bubble.radius * revealScale;
     const whiteLeft = bubble.isWhite && bubble.whiteUntil > 0 ? Math.max(0, bubble.whiteUntil - state.elapsed) : 0;
     const whiteProgress = bubble.isWhite && bubble.whiteUntil > 0 ? clamp(whiteLeft / decolorDuration, 0, 1) : 1;
     const whiteWarning = bubble.isWhite && bubble.whiteUntil > 0 ? 1 - smoothstep(0, decolorWarningMs, whiteLeft) : 0;
     const whiteBlink = whiteWarning * (0.5 + Math.sin(state.visualTime / 82) * 0.5);
     const whiteAlpha = bubble.isWhite ? clamp(0.94 + whiteProgress * 0.05 - whiteBlink * 0.16, 0.76, 1) : 1;
-    const drawAlpha = whiteAlpha * revealAlpha;
+    const drawAlpha = whiteAlpha * revealAlpha * transitionAlpha;
 
     if (bubble.isDrag) {
       drawDragBubbleTexture(bubble, x, y, r, drawAlpha);
@@ -9056,7 +9230,7 @@
     }
 
     ctx.save();
-    ctx.globalAlpha *= revealAlpha;
+    ctx.globalAlpha *= revealAlpha * transitionAlpha;
     ctx.translate(x, y);
     const squash = bubble.wallSquash ?? 0;
     const squashLength = Math.hypot(bubble.wallSquashNx || 0, bubble.wallSquashNy || 0);
@@ -9097,11 +9271,12 @@
       ctx.restore();
     }
 
-    const chargeTextured = bubble.isCharge && drawChargeBubbleTexture(bubble, x, y, r, whiteAlpha);
-    const catTextured = !chargeTextured && bubble.isCat && drawCatBubbleTexture(bubble, x, y, r, whiteAlpha);
+    const pulseChargeTextured = bubble.isPulse && drawPulseChargeBubbleTexture(bubble, x, y, r, whiteAlpha);
+    const chargeTextured = !pulseChargeTextured && bubble.isCharge && drawChargeBubbleTexture(bubble, x, y, r, whiteAlpha);
+    const catTextured = !pulseChargeTextured && !chargeTextured && bubble.isCat && drawCatBubbleTexture(bubble, x, y, r, whiteAlpha);
     const bombTextured = !catTextured && bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
     const bleachTextured = !catTextured && !bombTextured && bubble.isBleach && drawBleachTexture(bubble, x, y, r, whiteAlpha);
-    if (!chargeTextured && !catTextured && !bombTextured && !bleachTextured) {
+    if (!pulseChargeTextured && !chargeTextured && !catTextured && !bombTextured && !bleachTextured) {
       if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
         const body = ctx.createRadialGradient(x - r * 0.36, y - r * 0.42, r * 0.08, x, y, r);
         body.addColorStop(0, "#ffffff");
@@ -9311,6 +9486,49 @@
     });
   }
 
+  function drawMembraneSnaps() {
+    state.membraneSnaps.forEach((snap) => {
+      const t = clamp(snap.age / Math.max(0.001, snap.life), 0, 1);
+      const fade = 1 - smoothstep(0.5, 1, t);
+      const release = smoothstep(0, 0.72, t);
+      const rebound = Math.sin(Math.min(1, t * 1.28) * Math.PI) * 0.055 * snap.power;
+      const radius = snap.radius * (1 + release * 0.16);
+      const normalScale = 0.82 + release * 0.22 + rebound;
+      const tangentScale = 1.09 - release * 0.07 - rebound * 0.35;
+
+      ctx.save();
+      ctx.translate(snap.x, snap.y);
+      ctx.rotate(snap.angle);
+      ctx.scale(normalScale, tangentScale);
+      ctx.globalAlpha = fade * (0.56 + snap.power * 0.12);
+      const membrane = ctx.createRadialGradient(-radius * 0.3, -radius * 0.36, radius * 0.08, 0, 0, radius);
+      membrane.addColorStop(0, colorWithAlpha(snap.light, 0.54));
+      membrane.addColorStop(0.38, colorWithAlpha(snap.color, 0.25));
+      membrane.addColorStop(0.82, colorWithAlpha(snap.deep, 0.13));
+      membrane.addColorStop(1, colorWithAlpha(snap.light, 0.05));
+      ctx.fillStyle = membrane;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, radius, radius * 0.96, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = fade * (0.68 + snap.power * 0.08);
+      ctx.strokeStyle = colorWithAlpha(snap.light, 0.82);
+      ctx.lineWidth = Math.max(1.2, radius * 0.045);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 0.98, 0.54, Math.PI * 2 - 0.54);
+      ctx.stroke();
+
+      ctx.globalAlpha = fade * 0.42;
+      ctx.fillStyle = colorWithAlpha(snap.light, 0.88);
+      ctx.beginPath();
+      ctx.ellipse(radius * 0.72, 0, radius * (0.11 + (1 - release) * 0.05), radius * 0.28, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
   function drawRipples() {
     state.ripples.forEach((ripple) => {
       const t = ripple.age / ripple.life;
@@ -9478,6 +9696,19 @@
     ctx.restore();
   }
 
+  function drawRhythmBreath() {
+    if (isPulsePattern()) return;
+    const pulse = clamp(state.rhythmPulse, 0, 1);
+    if (pulse <= 0.015) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = pulse * (state.rhythmDownbeat ? 0.075 : 0.028);
+    ctx.strokeStyle = "rgba(232, 251, 255, 0.92)";
+    ctx.lineWidth = 1.2 + pulse * 2.8;
+    ctx.strokeRect(3, 3, Math.max(0, state.width - 6), Math.max(0, state.height - 6));
+    ctx.restore();
+  }
+
   function drawMistakeFlash() {
     if (state.mistakeFlash <= 0) return;
     const alpha = state.mistakeFlash * 0.16;
@@ -9602,10 +9833,12 @@
 
   function draw() {
     drawBackground();
+    drawRhythmBreath();
     drawDifficultyBanners();
     drawWaterStressOverlay();
     drawPointerFeedback();
     state.bubbles.forEach(drawBubble);
+    drawMembraneSnaps();
     drawRipples();
     drawBlasts();
     drawParticles();
@@ -9819,12 +10052,12 @@
     return 1 + Math.min(0.095, Math.max(0, popPitchStreak - 1) * 0.012);
   }
 
-  function playPop(kind = "regular", delayOffset = 0) {
+  function playPop(kind = "regular", delayOffset = 0, volumeScale = 1) {
     try {
       const group = soundGroupForKind(kind);
       const fileName = chooseSoundFile(group);
       const playbackRate = nextPopPlaybackRate(delayOffset);
-      const volume = group === "small" ? 0.78 : group === "big" ? 0.88 : 0.82;
+      const volume = (group === "small" ? 0.78 : group === "big" ? 0.88 : 0.82) * clamp(volumeScale, 0.2, 1.2);
       playSoundBuffer(fileName, { playbackRate, volume, delayOffset });
     } catch {
       audioContext = null;
@@ -9870,8 +10103,9 @@
     }
   }
 
-  function playStartTransition() {
+  function playStartTransition(options = {}) {
     if (introRunning) return;
+    const quick = Boolean(options?.quick);
     introRunning = true;
     startButton.disabled = true;
     endStats.textContent = "";
@@ -9883,14 +10117,14 @@
     preloadGameSounds();
     playIntroSound();
 
-    window.setTimeout(resetGame, 620);
+    window.setTimeout(resetGame, quick ? 360 : 620);
     window.setTimeout(() => {
       curtain.classList.remove("starting");
       startTransition.classList.remove("active");
       startTransition.replaceChildren();
       startButton.disabled = false;
       introRunning = false;
-    }, 1540);
+    }, quick ? 980 : 1540);
   }
 
   const settingsPatternLabels = {
@@ -10103,18 +10337,14 @@
     state.comboRecoveryPower = 0;
     state.elapsed = Math.max(0, (targetLevel - 1) * stageDurationMs);
     state.water = 100;
-    state.waterPressure = 0;
-    state.hiddenLeak = 0;
-    state.hiddenLeakActive = false;
     state.wrongStreak = 0;
     state.lastUsefulActionAt = state.elapsed;
     lastHudWater = null;
+    lastFullLifeCount = heartCount;
+    lifeGainUntil = 0;
     waterGainUntil = 0;
-    waterDrainUntil = 0;
     waterShockUntil = 0;
     waterCriticalUntil = 0;
-    lastWaterBand = "safe";
-    waterLowVibrationArmed = true;
     state.difficultyTier = Math.max(0, targetLevel - 1);
     state.nextPowerAt = state.elapsed + 26000;
     state.nextBombAt = state.elapsed;

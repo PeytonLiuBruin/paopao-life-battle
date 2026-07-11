@@ -121,11 +121,12 @@ body {
   top: 0;
   left: 0;
   gap: 3px;
-  width: min(60vw, 274px);
+  width: max-content;
+  max-width: min(58vw, 252px);
   padding: 0;
   opacity: 0.82;
-  grid-template-columns: 1fr minmax(54px, auto);
-  grid-template-rows: auto auto auto;
+  grid-template-columns: max-content;
+  grid-template-rows: auto auto;
   align-items: center;
   column-gap: 8px;
   transition:
@@ -147,7 +148,7 @@ body {
   grid-row: 1;
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   min-width: 0;
   height: clamp(32px, 7.6vw, 42px);
 }
@@ -169,6 +170,26 @@ body {
   filter:
     drop-shadow(0 2px 5px rgba(15, 33, 43, 0.24))
     drop-shadow(0 0 7px rgba(255, 189, 211, 0.52));
+}
+
+.heart-bubble.recovering {
+  filter:
+    drop-shadow(0 2px 5px rgba(15, 33, 43, 0.24))
+    drop-shadow(0 0 5px rgba(255, 185, 208, 0.3));
+}
+
+.heart-bubble.near-ready {
+  filter:
+    drop-shadow(0 2px 5px rgba(15, 33, 43, 0.24))
+    drop-shadow(0 0 8px rgba(255, 192, 214, 0.58));
+}
+
+.water-block.one-life .heart-meter {
+  animation: one-life-breathe 980ms ease-in-out infinite;
+}
+
+.water-block.shock .heart-meter {
+  animation: life-hit 420ms cubic-bezier(0.14, 1.18, 0.24, 1);
 }
 
 .water-block .caption {
@@ -669,8 +690,8 @@ body {
 
 .combo-chip {
   --combo-left: 0;
-  grid-column: 1 / span 2;
-  grid-row: 3;
+  grid-column: 1;
+  grid-row: 2;
   justify-self: start;
   margin-left: 4px;
   position: relative;
@@ -1339,6 +1360,33 @@ body {
     0 16px 26px rgba(0, 92, 205, 0.3);
 }
 
+.result-chase {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  margin: 2px 8px 10px;
+  padding: 8px 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.62);
+  border-bottom: 1px solid rgba(66, 158, 225, 0.16);
+  text-align: center;
+}
+
+.result-chase strong {
+  color: #ef9416;
+  font-size: 17px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.result-chase span {
+  color: #1761c7;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .result-metrics {
   display: grid;
   gap: 8px;
@@ -1879,6 +1927,35 @@ body {
   }
 }
 
+@keyframes one-life-breathe {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(255, 189, 211, 0));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 7px rgba(255, 189, 211, 0.42));
+  }
+}
+
+@keyframes life-hit {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+
+  28% {
+    transform: translateX(-3px) scale(0.94, 1.06);
+  }
+
+  56% {
+    transform: translateX(2px) scale(1.04, 0.96);
+  }
+
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
 @keyframes water-fill-pop {
   0% {
     transform: scaleX(1) scaleY(1);
@@ -2021,7 +2098,8 @@ body {
   }
 
   .water-block {
-    width: min(58vw, 220px);
+    width: max-content;
+    max-width: min(58vw, 220px);
     column-gap: 6px;
   }
 
@@ -2192,6 +2270,19 @@ body {
     font-size: clamp(64px, 19vw, 88px);
   }
 
+  .result-chase {
+    margin: 0 6px 7px;
+    padding: 6px 3px;
+  }
+
+  .result-chase strong {
+    font-size: 15px;
+  }
+
+  .result-chase span {
+    font-size: 12px;
+  }
+
   .result-metric {
     min-height: 42px;
     grid-template-columns: 36px minmax(0, 1fr) auto;
@@ -2258,69 +2349,114 @@ body {
 
 @media (max-width: 360px), (max-height: 640px) {
   .curtain.result-mode {
-    gap: 7px;
-    padding: calc(10px + var(--safe-top)) 10px calc(10px + var(--safe-bottom));
+    gap: 4px;
+    padding: calc(5px + var(--safe-top)) 8px calc(6px + var(--safe-bottom));
   }
 
   .curtain.result-mode .title-mark {
     width: min(100%, 330px);
-    min-height: 58px;
-    font-size: clamp(32px, 9.4vw, 48px);
+    min-height: 46px;
+    padding: 5px 18px 7px;
+    font-size: clamp(29px, 8.8vw, 42px);
   }
 
-  .result-summary {
-    padding: 13px 11px 11px;
-  }
-
-  .result-level {
-    min-height: 64px;
-  }
-
-  .result-level strong {
-    font-size: clamp(56px, 18vw, 76px);
-  }
-
-  .result-metrics {
-    gap: 6px;
-  }
-
-  .result-metric {
-    min-height: 38px;
-    gap: 7px;
-  }
-
-  .result-metric b {
-    font-size: 16px;
-  }
-
-  .result-metric strong {
-    font-size: 20px;
-  }
-
-  .result-board {
-    padding: 11px 8px 12px;
-  }
-
-  .result-rank-list {
+  .result-screen {
     gap: 5px;
   }
 
+  .result-summary {
+    padding: 9px 9px 8px;
+    border-radius: 24px;
+  }
+
+  .result-eyebrow,
+  .result-board-title strong {
+    font-size: 16px;
+  }
+
+  .result-level {
+    min-height: 54px;
+  }
+
+  .result-level span {
+    font-size: clamp(28px, 9vw, 42px);
+  }
+
+  .result-level strong {
+    font-size: clamp(48px, 16vw, 66px);
+  }
+
+  .result-chase {
+    gap: 4px;
+    margin: 0 4px 3px;
+    padding: 3px 2px;
+  }
+
+  .result-chase strong {
+    font-size: 14px;
+  }
+
+  .result-chase span {
+    font-size: 11px;
+  }
+
+  .result-metrics {
+    gap: 4px;
+  }
+
+  .result-metric {
+    min-height: 34px;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 3px 9px 3px 4px;
+  }
+
+  .result-icon {
+    width: 26px;
+  }
+
+  .result-metric b {
+    font-size: 15px;
+  }
+
+  .result-metric strong {
+    font-size: 18px;
+  }
+
+  .result-board {
+    padding: 8px 6px;
+    border-radius: 24px;
+  }
+
+  .result-board-title {
+    margin-bottom: 5px;
+  }
+
+  .result-board-title span {
+    font-size: 11px;
+  }
+
+  .result-rank-list {
+    gap: 4px;
+  }
+
   .result-rank-card {
-    min-height: 92px;
-    padding: 7px 3px 8px;
-    border-radius: 16px;
+    min-height: 80px;
+    padding: 5px 2px 6px;
+    border-radius: 14px;
   }
 
   .result-rank-card.is-me {
-    min-height: 112px;
+    min-height: 98px;
+    transform: translateY(-4px);
   }
 
   .result-avatar {
-    width: 36px;
+    width: 32px;
   }
 
   .tone-me .result-avatar {
-    width: 48px;
+    width: 42px;
   }
 
   .result-rank-card span:not(.result-avatar) {
@@ -2332,19 +2468,19 @@ body {
   }
 
   .result-rank-card.is-me span:not(.result-avatar) {
-    font-size: 18px;
-  }
-
-  .result-rank-card.is-me strong {
     font-size: 17px;
   }
 
+  .result-rank-card.is-me strong {
+    font-size: 16px;
+  }
+
   .result-actions {
-    gap: 10px;
+    gap: 8px;
   }
 
   .result-action {
-    min-height: 46px;
-    font-size: 18px;
+    min-height: 42px;
+    font-size: 17px;
   }
 }
