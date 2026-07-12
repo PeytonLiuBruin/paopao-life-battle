@@ -4,12 +4,42 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.3.1";
+  const buildVersion = "1.4.4";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
+  const tutorialButton = document.getElementById("tutorialButton");
+  const tutorialOverlay = document.getElementById("tutorialOverlay");
+  const tutorialCloseButton = document.getElementById("tutorialClose");
+  const tutorialFrame = document.getElementById("tutorialFrame");
+  const tutorialProgress = document.getElementById("tutorialProgress");
+  const tutorialKicker = document.getElementById("tutorialKicker");
+  const tutorialTitle = document.getElementById("tutorialTitle");
+  const tutorialCopy = document.getElementById("tutorialCopy");
+  const tutorialTip = document.getElementById("tutorialTip");
+  const tutorialVisualLabel = document.getElementById("tutorialVisualLabel");
+  const tutorialComplete = document.getElementById("tutorialComplete");
+  const tutorialControls = document.getElementById("tutorialControls");
+  const tutorialDots = document.getElementById("tutorialDots");
+  const tutorialPrevButton = document.getElementById("tutorialPrev");
+  const tutorialNextButton = document.getElementById("tutorialNext");
+  const tutorialStartButton = document.getElementById("tutorialStart");
+  const tutorialLive = document.getElementById("tutorialLive");
+  const tutorialLiveProgress = document.getElementById("tutorialLiveProgress");
+  const tutorialLiveTitle = document.getElementById("tutorialLiveTitle");
+  const tutorialLiveHint = document.getElementById("tutorialLiveHint");
+  const tutorialLiveFeedback = document.getElementById("tutorialLiveFeedback");
+  const tutorialLiveExitButton = document.getElementById("tutorialLiveExit");
+  const tutorialResultCue = document.getElementById("tutorialResultCue");
+  const tutorialResultTitle = document.getElementById("tutorialResultTitle");
+  const tutorialResultText = document.getElementById("tutorialResultText");
   const titleMark = document.querySelector(".title-mark");
   const startTransition = document.getElementById("startTransition");
   const endStats = document.getElementById("endStats");
+  const rewardedAd = document.getElementById("rewardedAd");
+  const rewardedAdMedia = document.getElementById("rewardedAdMedia");
+  const rewardedAdWait = document.getElementById("rewardedAdWait");
+  const rewardedAdSkip = document.getElementById("rewardedAdSkip");
+  const rewardedAdProgress = document.getElementById("rewardedAdProgress");
   const waterBlock = document.querySelector(".water-block");
   const heartMeter = document.getElementById("heartMeter");
   const heartBubbles = Array.from(document.querySelectorAll(".heart-bubble"));
@@ -54,7 +84,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.3.1`;
+      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.4`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -225,6 +255,7 @@
     dpr: 1,
     running: false,
     paused: false,
+    tutorialMode: false,
     lastTime: 0,
     visualTime: 0,
     elapsed: 0,
@@ -232,6 +263,10 @@
     correctBubbleCount: 0,
     poppedCount: 0,
     water: 100,
+    reviveUsed: false,
+    invulnerableUntil: 0,
+    runRecordId: "",
+    runCreatedAt: 0,
     wrongStreak: 0,
     lastUsefulActionAt: 0,
     combo: 0,
@@ -308,6 +343,7 @@
     particles: [],
     ripples: [],
     blasts: [],
+    clearBursts: [],
     floaters: [],
     hints: [],
     membraneSnaps: [],
@@ -338,6 +374,10 @@
     small: ["bubble_pop_small_1.mp3"],
     regular: ["bubble_pop_regular_1.mp3", "bubble_pop_regular_2.mp3", "bubble_pop_regular_3.mp3", "bubble_pop_regular_4.mp3"],
     big: ["bubble_pop_big_1.mp3", "bubble_pop_big_2.mp3"],
+    levelUp: ["level_up.mp3"],
+    cat: ["meow.mp3", "meow_2.mp3"],
+    lifeMinus: ["life_minus.mp3"],
+    decolor: ["decolor.mp3"],
   };
   const soundBuffers = new Map();
   const soundLoaders = new Map();
@@ -348,7 +388,25 @@
   let popPitchStreak = 0;
   let lastPopSoundAt = Number.NEGATIVE_INFINITY;
   let lastChargeTickAt = Number.NEGATIVE_INFINITY;
+  const rewardedAdDurationMs = 10000;
+  const rewardedAdSkipDelayMs = 5000;
+  const reviveInvulnerabilityMs = 3000;
+  const rewardedAdAssets = ["dance.gif", "cat_add.gif"];
+  let rewardedAdTimer = 0;
+  let rewardedAdStartedAt = 0;
+  let rewardedAdActive = false;
   let introRunning = false;
+  let tutorialStepIndex = 0;
+  const tutorialRun = {
+    active: false,
+    practicing: false,
+    targets: [],
+    expectedPops: 0,
+    poppedBaseline: 0,
+    expectedMistake: false,
+    waterBaseline: 100,
+    transitionTimer: 0,
+  };
   let frameRequest = 0;
   let lastFrameTime = 0;
   let perfFrames = 0;
@@ -768,6 +826,7 @@
     trimArray(state.particles, effectLimit("particles"));
     trimArray(state.ripples, effectLimit("ripples"));
     trimArray(state.blasts, effectLimit("blasts"));
+    trimArray(state.clearBursts, 20);
     trimArray(state.floaters, effectLimit("floaters"));
     trimArray(state.hints, effectLimit("hints"));
     trimArray(state.membraneSnaps, Math.max(6, Math.round(maxMembraneSnaps * currentPerformanceProfile().effectChance)));
@@ -824,6 +883,7 @@
     state.particles = [];
     state.ripples = [];
     state.blasts = [];
+    state.clearBursts = [];
     state.floaters = [];
     state.hints = [];
     state.membraneSnaps = [];
@@ -1536,9 +1596,10 @@
   }
 
   function currentLocalLeaderboardRecord(stats) {
-    const createdAt = Date.now();
+    const createdAt = state.runCreatedAt || Date.now();
+    const id = state.runRecordId || `run-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
     return {
-      id: `run-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+      id,
       createdAt,
       level: displayDifficultyLevel(),
       hitCount: state.correctBubbleCount,
@@ -1593,7 +1654,8 @@
 
   function saveLocalLeaderboardResult(stats) {
     const currentRecord = currentLocalLeaderboardRecord(stats);
-    const rankedRecords = [currentRecord, ...loadLocalLeaderboardRecords()].sort(compareLocalLeaderboardRecords);
+    const previousRecords = loadLocalLeaderboardRecords().filter((record) => record.id !== currentRecord.id);
+    const rankedRecords = [currentRecord, ...previousRecords].sort(compareLocalLeaderboardRecords);
     try {
       window.localStorage.setItem(
         localLeaderboardStorageKey,
@@ -1627,12 +1689,6 @@
   function chargeClearSkillByBubble(bubble) {
     if (state.clearSkillUses <= 0) return;
     chargeClearSkill(clearSkillChargeForBubble(bubble));
-  }
-
-  function chargeClearSkillByBubbles(bubbles) {
-    if (!bubbles?.length || state.clearSkillUses <= 0) return;
-    const amount = bubbles.reduce((sum, bubble) => sum + clearSkillChargeForBubble(bubble), 0);
-    chargeClearSkill(amount);
   }
 
   function registerCombo({ chargeSkill = true } = {}) {
@@ -1748,6 +1804,9 @@
     if (fullLifeCount > previousFullLifeCount) {
       lifeGainUntil = state.elapsed + 620;
     }
+    if (state.running && fullLifeCount < previousFullLifeCount) {
+      playEventSound("lifeMinus", { volume: 0.9 });
+    }
     lastFullLifeCount = fullLifeCount;
     lastHudWater = exactWater;
     heartBubbles.forEach((heart, index) => {
@@ -1792,9 +1851,9 @@
         ? `x${state.combo}`
         : "";
     scoreEl.textContent = String(state.correctBubbleCount);
-    timeEl.textContent = formatTime(state.elapsed);
+    timeEl.textContent = state.tutorialMode ? "练习" : formatTime(state.elapsed);
     if (difficultyEl) {
-      difficultyEl.textContent = `Lv ${displayDifficultyLevel()}`;
+      difficultyEl.textContent = state.tutorialMode ? `教程 ${tutorialStepIndex + 1}/${tutorialSlides.length}` : `Lv ${displayDifficultyLevel()}`;
     }
     const skillReady = state.clearSkillCharge >= 1 && state.clearSkillUses < clearSkillMaxUses;
     clearSkillButton.style.setProperty("--clear-charge", state.clearSkillCharge.toFixed(3));
@@ -1807,14 +1866,20 @@
 
   function resetGame(options = {}) {
     const startPaused = Boolean(options?.startPaused);
+    resetRewardedAdOverlay();
     state.running = true;
     state.paused = startPaused;
+    state.tutorialMode = false;
     state.lastTime = performance.now();
     state.elapsed = 0;
     state.score = 0;
     state.correctBubbleCount = 0;
     state.poppedCount = 0;
     state.water = 100;
+    state.reviveUsed = false;
+    state.invulnerableUntil = 0;
+    state.runCreatedAt = Date.now();
+    state.runRecordId = `run-${state.runCreatedAt}-${Math.random().toString(36).slice(2, 8)}`;
     lastHudWater = null;
     lastFullLifeCount = heartCount;
     lifeGainUntil = 0;
@@ -1912,6 +1977,18 @@
     scheduleLoop();
   }
 
+  function resultGradeForRun(level, hitCount, bestCombo, elapsedMs) {
+    const seconds = Math.max(1, elapsedMs / 1000);
+    const rhythmRate = hitCount / seconds;
+    const performance = level * 1.15 + Math.min(6, rhythmRate * 1.15) + Math.min(5, bestCombo / 12);
+    if (performance >= 24) return "SSS";
+    if (performance >= 18) return "SS";
+    if (performance >= 12) return "S";
+    if (performance >= 8) return "A";
+    if (performance >= 5) return "B";
+    return "C";
+  }
+
   function buildResultScreen(stats, localBoard) {
     const level = displayDifficultyLevel();
     const hitCount = state.correctBubbleCount;
@@ -1925,9 +2002,11 @@
     const totalCount = boardData.totalCount;
     const leaderboard = boardData.leaderboard;
     const aheadRecord = rank > 1 ? boardData.records[rank - 2] ?? null : null;
+    const grade = resultGradeForRun(level, hitCount, state.bestCombo, state.elapsed);
 
     const root = document.createElement("div");
     root.className = "result-screen";
+    root.dataset.grade = grade;
 
     const halo = document.createElement("div");
     halo.className = "result-halo";
@@ -1937,10 +2016,22 @@
     summary.className = "result-panel result-summary";
     summary.setAttribute("aria-label", "挑战数据");
 
+    const summaryTop = document.createElement("div");
+    summaryTop.className = "result-summary-top";
     const eyebrow = document.createElement("div");
     eyebrow.className = "result-eyebrow";
-    eyebrow.textContent = "当前到达";
+    eyebrow.textContent = rank === 1 ? "本局最佳表现" : "本局表现";
+    const gradeBadge = document.createElement("div");
+    gradeBadge.className = "result-grade";
+    const gradeLabel = document.createElement("span");
+    gradeLabel.textContent = "节奏评级";
+    const gradeValue = document.createElement("strong");
+    gradeValue.textContent = grade;
+    gradeBadge.append(gradeLabel, gradeValue);
+    summaryTop.append(eyebrow, gradeBadge);
 
+    const hero = document.createElement("div");
+    hero.className = "result-hero";
     const levelLine = document.createElement("div");
     levelLine.className = "result-level";
     const levelLabel = document.createElement("span");
@@ -1948,6 +2039,14 @@
     const levelNumber = document.createElement("strong");
     levelNumber.textContent = String(level);
     levelLine.append(levelLabel, levelNumber);
+    const runRank = document.createElement("div");
+    runRank.className = "result-run-rank";
+    const runRankValue = document.createElement("strong");
+    runRankValue.textContent = `#${rank}`;
+    const runRankLabel = document.createElement("span");
+    runRankLabel.textContent = rank === 1 ? (totalCount <= 1 ? "首局记录" : "本地最佳") : "本地排名";
+    runRank.append(runRankValue, runRankLabel);
+    hero.append(levelLine, runRank);
 
     const chase = document.createElement("div");
     chase.className = "result-chase";
@@ -1977,7 +2076,6 @@
       ["timer", "存活时间", formatTime(state.elapsed)],
       ["target", "命中泡泡", String(hitCount)],
       ["bolt", "最高连击", String(state.bestCombo)],
-      ["rank", "本地排名", `第${rank}名`],
     ].forEach(([icon, label, value]) => {
       const row = document.createElement("div");
       row.className = "result-metric";
@@ -1991,7 +2089,7 @@
       row.append(iconEl, labelEl, valueEl);
       metrics.append(row);
     });
-    summary.append(eyebrow, levelLine, chase, metrics);
+    summary.append(summaryTop, hero, chase, metrics);
 
     const board = document.createElement("section");
     board.className = "result-panel result-board";
@@ -2014,6 +2112,7 @@
 
     const rankList = document.createElement("div");
     rankList.className = "result-rank-list";
+    if (leaderboard.length <= 1) rankList.classList.add("is-single");
     rankList.style.setProperty("--rank-count", String(Math.max(1, leaderboard.length)));
     leaderboard.forEach((item) => {
       const card = document.createElement("article");
@@ -2035,14 +2134,29 @@
 
     const actions = document.createElement("div");
     actions.className = "result-actions";
+    if (!state.reviveUsed) {
+      actions.classList.add("has-revive");
+      const reviveButton = document.createElement("button");
+      reviveButton.className = "result-action result-revive";
+      reviveButton.type = "button";
+      const reviveLabel = document.createElement("strong");
+      reviveLabel.textContent = "看广告 原地复活";
+      const reviveDetail = document.createElement("span");
+      reviveDetail.textContent = "恢复 1 颗生命 · 3 秒无敌";
+      reviveButton.append(reviveLabel, reviveDetail);
+      reviveButton.addEventListener("click", () => startRewardedReviveAd(reviveButton));
+      actions.append(reviveButton);
+    }
     const homeButton = document.createElement("button");
     homeButton.className = "result-action result-home";
     homeButton.type = "button";
-    homeButton.textContent = "返回主页";
+    const homeLabel = document.createElement("strong");
+    homeLabel.textContent = "返回主页";
+    homeButton.append(homeLabel);
     homeButton.addEventListener("click", () => {
       curtain.classList.remove("result-mode");
       titleMark.textContent = "泡泡补水";
-      startButton.textContent = "开始";
+      setStartButtonHome();
       endStats.textContent = "";
       clearRuntimeEffects();
       updateHud();
@@ -2051,12 +2165,107 @@
     const retryButton = document.createElement("button");
     retryButton.className = "result-action result-retry";
     retryButton.type = "button";
-    retryButton.textContent = "立即再来一局";
+    const retryLabel = document.createElement("strong");
+    retryLabel.textContent = "再来一局";
+    const retryGoal = document.createElement("span");
+    retryGoal.textContent = `冲击 Level ${level + 1}`;
+    retryButton.append(retryLabel, retryGoal);
     retryButton.addEventListener("click", () => playStartTransition({ quick: true }));
     actions.append(homeButton, retryButton);
 
     root.append(halo, summary, board, actions);
     return root;
+  }
+
+  function resetRewardedAdOverlay() {
+    if (rewardedAdTimer) {
+      window.clearInterval(rewardedAdTimer);
+      rewardedAdTimer = 0;
+    }
+    rewardedAdActive = false;
+    rewardedAdStartedAt = 0;
+    if (rewardedAd) {
+      rewardedAd.hidden = true;
+      rewardedAd.setAttribute("aria-hidden", "true");
+    }
+    if (rewardedAdSkip) rewardedAdSkip.hidden = true;
+    if (rewardedAdWait) {
+      rewardedAdWait.hidden = false;
+      rewardedAdWait.textContent = "5";
+    }
+    if (rewardedAdProgress) rewardedAdProgress.style.transform = "scaleX(0)";
+    rewardedAdMedia?.removeAttribute("src");
+  }
+
+  function updateRewardedAd() {
+    if (!rewardedAdActive) return;
+    const elapsed = Math.max(0, performance.now() - rewardedAdStartedAt);
+    const progress = clamp(elapsed / rewardedAdDurationMs, 0, 1);
+    if (rewardedAdProgress) rewardedAdProgress.style.transform = `scaleX(${progress.toFixed(4)})`;
+    if (elapsed >= rewardedAdSkipDelayMs) {
+      if (rewardedAdWait) rewardedAdWait.hidden = true;
+      if (rewardedAdSkip) rewardedAdSkip.hidden = false;
+    } else if (rewardedAdWait) {
+      rewardedAdWait.textContent = String(Math.max(1, Math.ceil((rewardedAdSkipDelayMs - elapsed) / 1000)));
+    }
+    if (elapsed >= rewardedAdDurationMs) finishRewardedReviveAd();
+  }
+
+  function startRewardedReviveAd(button = null) {
+    if (!rewardedAd || rewardedAdActive || state.running || state.reviveUsed) return false;
+    state.reviveUsed = true;
+    if (button) button.disabled = true;
+    rewardedAdActive = true;
+    rewardedAdStartedAt = performance.now();
+    rewardedAd.hidden = false;
+    rewardedAd.setAttribute("aria-hidden", "false");
+    if (rewardedAdSkip) rewardedAdSkip.hidden = true;
+    if (rewardedAdWait) {
+      rewardedAdWait.hidden = false;
+      rewardedAdWait.textContent = "5";
+    }
+    if (rewardedAdProgress) rewardedAdProgress.style.transform = "scaleX(0)";
+    if (rewardedAdMedia) {
+      const adAsset = rewardedAdAssets[Math.floor(Math.random() * rewardedAdAssets.length)];
+      rewardedAdMedia.removeAttribute("src");
+      void rewardedAdMedia.offsetWidth;
+      rewardedAdMedia.dataset.asset = adAsset;
+      rewardedAdMedia.src = `./assets/ads/${adAsset}?v=${buildVersion}&play=${Date.now()}`;
+    }
+    rewardedAdTimer = window.setInterval(updateRewardedAd, 100);
+    updateRewardedAd();
+    return true;
+  }
+
+  function finishRewardedReviveAd() {
+    if (!rewardedAdActive) return false;
+    resetRewardedAdOverlay();
+    curtain.classList.remove("result-mode");
+    curtain.classList.add("hidden");
+    endStats.textContent = "";
+    if (titleMark) titleMark.textContent = "泡泡补水";
+    state.water = heartWater;
+    state.invulnerableUntil = state.elapsed + reviveInvulnerabilityMs;
+    state.running = true;
+    state.paused = false;
+    state.mistakeFlash = 0;
+    state.flash = Math.max(state.flash, 0.18);
+    waterShockUntil = 0;
+    waterCriticalUntil = 0;
+    lastHudWater = 0;
+    lastFullLifeCount = 0;
+    lastFrameTime = performance.now();
+    state.lastTime = lastFrameTime;
+    makeFloatText(state.width * 0.5, state.height * 0.56, "复活", "#d8fffb", 1.08, {
+      life: 0.72,
+      vy: -20,
+      stroke: "rgba(13, 62, 76, 0.56)",
+      shadow: "rgba(118, 255, 238, 0.24)",
+    });
+    updateHud();
+    draw();
+    scheduleLoop();
+    return true;
   }
 
   function endGame() {
@@ -2074,6 +2283,7 @@
     state.dragBubbleUid = null;
     curtain.classList.add("result-mode");
     curtain.classList.remove("hidden");
+    curtain.scrollTop = 0;
     if (titleMark) {
       titleMark.textContent = "挑战结束";
     }
@@ -2081,13 +2291,14 @@
     const stats = scoreBreakdown();
     const localBoard = saveLocalLeaderboardResult(stats);
     endStats.replaceChildren(buildResultScreen(stats, localBoard));
+    curtain.scrollTop = 0;
     updateHud();
     draw();
     updatePerfDebug(performance.now(), true);
   }
 
   function isWaterGameOver() {
-    return state.water < gameOverWaterThreshold - 0.001;
+    return !isReviveInvulnerable() && state.water < gameOverWaterThreshold - 0.001;
   }
 
   function difficulty() {
@@ -2123,6 +2334,7 @@
     state.difficultyFlash = 1;
     state.flash = Math.max(state.flash, 0.12);
     pushDifficultyBanner(tier + 1);
+    playEventSound("levelUp", { volume: 0.72 });
   }
 
   function noteUsefulAction() {
@@ -2153,6 +2365,10 @@
     return Boolean(bubble && (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb || bubble.isCat || bubble.isCharge || bubble.isDrag));
   }
 
+  function canAreaBlastBubble(bubble) {
+    return Boolean(bubble && bubble.age >= 0 && !bubble.isPulse && !isSpecialBubble(bubble));
+  }
+
   function noteWaterOpportunity(bubble) {
     if (!bubble || bubble.colorIndex < 0) return;
   }
@@ -2173,8 +2389,18 @@
     return heartWater;
   }
 
+  function isReviveInvulnerable() {
+    return state.running && state.elapsed < state.invulnerableUntil;
+  }
+
+  function applyHeartPenalty(penalty) {
+    if (!state.running || isReviveInvulnerable()) return false;
+    state.water = Math.max(0, state.water - Math.max(0, penalty));
+    return true;
+  }
+
   function penalizeStageMistake(bubble, type) {
-    if (!isStageTargetBubble(bubble)) return;
+    if (!isStageTargetBubble(bubble)) return false;
     const penalty = stageMistakePenalty(type, bubble);
     if (bubble.stageLevel === state.stageLevel) {
       if (type === "wrong") state.stageWrongPops += 1;
@@ -2188,11 +2414,12 @@
       }
       state.catMistakeCount += 1;
     }
-    state.water = Math.max(0, state.water - penalty);
+    const tookDamage = applyHeartPenalty(penalty);
     updateHud();
-    if (isWaterGameOver()) {
+    if (tookDamage && isWaterGameOver()) {
       endGame();
     }
+    return tookDamage;
   }
 
   function bubbleRadiusRange(d, kind = "normal") {
@@ -2413,6 +2640,9 @@
       pulseAnchorY: options.pulseAnchorY ?? y,
       pulseVisualProgress: options.pulseVisualProgress ?? 0,
       pulseContact: 0,
+      pulseApproach: 0,
+      pulseAssembly: 0,
+      pulseArmSeconds: options.pulseArmSeconds ?? 0.38,
       pulseLastContactAt: Number.NEGATIVE_INFINITY,
       stageTransitionOut: false,
       stageTransitionStartedAt: 0,
@@ -2680,7 +2910,7 @@
   }
 
   function maxActiveChargeBubblesForLevel(level = displayDifficultyLevel()) {
-    if (isPulsePattern()) return level >= 11 ? 3 : 2;
+    if (isPulsePattern()) return level >= 12 ? 2 : 1;
     if (level <= 2) return 2;
     if (level <= 5) return 3;
     if (level <= 9) return 4;
@@ -2688,7 +2918,7 @@
   }
 
   function nextChargeBubbleDelay(level = displayDifficultyLevel()) {
-    if (isPulsePattern()) return rand(3600, 5200);
+    if (isPulsePattern()) return level <= 10 ? rand(6800, 8500) : rand(5200, 7000);
     if (level <= 1) return rand(9600, 13200);
     if (level <= 2) return rand(4800, 7200);
     if (level <= 5) return rand(3600, 5600);
@@ -3275,6 +3505,7 @@
     bubble.dragResolved = true;
     bubble.dragActive = false;
     const tone = palette[bubble.dragTargetColorIndex] ?? openTone;
+    pushPointerFx("hit", bubble.dragPointerX || bubble.x, bubble.dragPointerY || bubble.y, 1.18, tone);
     makeMembraneSnap(bubble, bubble.dragPointerX || bubble.x, bubble.dragPointerY || bubble.y, tone, 1.18);
     state.bubbles.splice(index, 1);
     state.dragBubbleUid = null;
@@ -3305,9 +3536,14 @@
     noteWrongAction();
     resetCombo();
     const penalty = dragBubblePenaltyForLevel();
-    state.water = Math.max(0, state.water - penalty);
-    waterShockUntil = Math.max(waterShockUntil, state.elapsed + 360);
-    state.mistakeFlash = Math.max(state.mistakeFlash, 0.14);
+    const tookDamage = applyHeartPenalty(penalty);
+    if (tookDamage) {
+      waterShockUntil = Math.max(waterShockUntil, state.elapsed + 360);
+      state.mistakeFlash = Math.max(state.mistakeFlash, 0.82);
+      pushPointerFx("miss", bubble.x, bubble.y, 0.9);
+    } else {
+      pushPointerFx("hit", bubble.x, bubble.y, 0.72, clearTone);
+    }
     makePunctureSplash(bubble, bubble.x, bubble.y, whiteTone, Math.round(10 + bubble.baseRadius * 0.18), false, false);
     state.ripples.push({
       x: bubble.x,
@@ -3318,7 +3554,7 @@
       color: colorWithAlpha("#e9faff", 0.56),
       power: 0.42,
     });
-    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.7, "-1心", "#f2fbff", 0.72, {
+    makeFloatText(bubble.x, bubble.y - bubble.baseRadius * 0.7, tookDamage ? "-1心" : "无敌", tookDamage ? "#f2fbff" : "#d8fffb", 0.72, {
       life: 0.44,
       vy: -18,
       stroke: "rgba(21, 42, 54, 0.42)",
@@ -3326,7 +3562,7 @@
     });
     playPop("regular");
     updateHud();
-    if (isWaterGameOver()) endGame();
+    if (tookDamage && isWaterGameOver()) endGame();
   }
 
   function updateDragBubble(bubble, index, dt) {
@@ -6331,7 +6567,7 @@
     });
     state.chargeWave = null;
     state.nextChargeAt = rhythmGridTimeAtOrAfter(
-      state.elapsed + rhythmBeatMs(info.level) * 1.35,
+      state.elapsed + rhythmBeatMs(info.level) * (info.level <= 10 ? 12 : 8),
       2,
       info.level,
     );
@@ -6425,7 +6661,9 @@
   }
 
   function pulseSupportPathClear(path, radius) {
-    const blockers = state.bubbles.filter((bubble) => bubble.isPulse && !bubble.stageTransitionOut && bubble.age > -0.25);
+    const blockers = state.bubbles.filter(
+      (bubble) => (bubble.isPulse || bubble.isPulseSupport) && !bubble.stageTransitionOut && bubble.age > -0.25,
+    );
     if (!blockers.length) return true;
     for (let sample = 2; sample < 40; sample += 1) {
       const point = pointAtCustomPath(path, sample / 40);
@@ -6487,6 +6725,23 @@
   function maybeSpawnPulseSupportRhythm(info = currentPulseInfo()) {
     if (!state.running || !info || state.elapsed + 1 < state.nextPulseSupportAt) return false;
     const level = displayDifficultyLevel();
+    const activeSupport = state.bubbles.reduce(
+      (count, bubble) => count + (bubble.isPulseSupport && !bubble.stageTransitionOut && bubble.age > -0.4 ? 1 : 0),
+      0,
+    );
+    const carryover = state.bubbles.reduce(
+      (count, bubble) => count + (bubble.pulseCarryover && !bubble.stageTransitionOut && bubble.age > -0.2 ? 1 : 0),
+      0,
+    );
+    const supportCap = level <= 10 ? 3 : level <= 12 ? 5 : 7;
+    if (activeSupport >= supportCap || (level <= 10 && carryover > 2)) {
+      state.nextPulseSupportAt = rhythmGridTimeAtOrAfter(
+        state.elapsed + rhythmBeatMs(level) * 0.72,
+        4,
+        level,
+      );
+      return false;
+    }
     if (stageRemainingBubbles() <= 0 || bubbleCapacityRemaining(level) <= 0) {
       state.nextPulseSupportAt = state.elapsed + rhythmBeatMs(level) * 0.32;
       return false;
@@ -6496,7 +6751,7 @@
     const desired = level >= 11 && step % accentEvery === 0 ? 2 : 1;
     const spawned = spawnPulseSupportBeat(info, desired, step + info.beat * 7 + 3);
     state.pulseSupportStep += 1;
-    const intervalScale = level <= 10 ? 0.72 : level <= 14 ? 0.58 : 0.48;
+    const intervalScale = level <= 10 ? 1.35 : level <= 14 ? 0.78 : 0.6;
     state.nextPulseSupportAt = rhythmGridTimeAtOrAfter(
       state.elapsed + rhythmBeatMs(level) * (spawned > 0 ? intervalScale : 0.3),
       4,
@@ -6507,14 +6762,16 @@
 
   function spawnPulseBeat(info) {
     const level = displayDifficultyLevel();
-    const phraseCount = level >= 11 ? (info.beat % 2 === 0 ? 4 : 3) : 3;
+    const phraseCount = level <= 10 ? 2 : level >= 13 ? (info.beat % 2 === 0 ? 4 : 3) : 3;
     const count = Math.min(phraseCount, stageRemainingBubbles());
     if (count <= 0) return false;
     const radiusSteps = count >= 4 ? [0.19, 0.36, 0.53, 0.7] : count === 2 ? [0.3, 0.62] : [0.22, 0.44, 0.66];
     const placed = [];
     let spawned = 0;
     for (let index = 0; index < count; index += 1) {
-      const bubbleRadius = clamp(31 + Math.sin(info.beat * 1.4 + index) * 2.4, 27, 34);
+      const bubbleRadius = level <= 10
+        ? clamp(36 + Math.sin(info.beat * 1.4 + index) * 1.8, 34, 38)
+        : clamp(32 + Math.sin(info.beat * 1.4 + index) * 2.2, 29, 35);
       const point = pulseBubblePoint(info, radiusSteps[index], bubbleRadius, index, placed);
       if (!point) continue;
       const didSpawn = spawnBubble(bubbleRadius <= 29, "normal", {
@@ -6524,7 +6781,7 @@
         target: point,
         velocity: { vx: 0, vy: 0 },
         radius: bubbleRadius,
-        initialRadius: bubbleRadius * 0.18,
+        initialRadius: bubbleRadius,
         speed: 0,
         colorIndex: info.ringColorIndex,
         sizeKind: bubbleRadius <= 29 ? "small" : "normal",
@@ -6538,13 +6795,16 @@
         spawnRevealSeconds: 0,
         ignoreCapacity: true,
         pulseVisualProgress: 0.05,
+        pulseArmSeconds: info.beat === 0 ? 0.76 : 0.38,
       });
       if (didSpawn) {
         placed.push(point);
         spawned += 1;
       }
     }
-    spawned += spawnPulseSupportBeat(info);
+    if (level >= 11) {
+      spawned += spawnPulseSupportBeat(info, level >= 13 ? 2 : 1);
+    }
     return spawned > 0;
   }
 
@@ -6553,7 +6813,12 @@
     if (state.pulsePatternLevel !== info.level) {
       enterPulsePattern(info);
     }
-    if (state.pulseBeatKey === info.beatKey || info.phase > Math.min(0.16, info.previewEnd * 0.72)) return false;
+    const prelude = info.beat === 0 ? Math.min(0.08, info.previewEnd * 0.5) : 0;
+    if (
+      state.pulseBeatKey === info.beatKey ||
+      info.phase < prelude ||
+      info.phase > Math.min(0.16, info.previewEnd * 0.72)
+    ) return false;
     state.pulseBeatKey = info.beatKey;
     return spawnPulseBeat(info);
   }
@@ -6570,7 +6835,8 @@
         wave.visibility > 0.1 &&
         Math.abs(bubbleDistance - wave.radius) <= wave.thickness + bubbleAllowance,
     );
-    return directlyTouching || state.elapsed - (bubble.pulseLastContactAt ?? Number.NEGATIVE_INFINITY) <= pulseContactGraceMs;
+    const graceMs = state.tutorialMode ? 720 : info.level <= 10 ? 260 : info.level <= 12 ? 210 : pulseContactGraceMs;
+    return directlyTouching || state.elapsed - (bubble.pulseLastContactAt ?? Number.NEGATIVE_INFINITY) <= graceMs;
   }
 
   function updateStageTransitionBubble(bubble, index, dt) {
@@ -6599,25 +6865,30 @@
     const centerY = info.centerY * state.height;
     const radialDistance = Math.hypot(bubble.pulseAnchorX - centerX, bubble.pulseAnchorY - centerY) / minDimension;
     let contact = 0;
+    let approach = 0;
     info.waves.forEach((wave) => {
       const distance = Math.abs(radialDistance - wave.radius);
       const touchWidth = wave.thickness + (bubble.baseRadius / minDimension) * 0.52;
       const waveContact = (1 - smoothstep(touchWidth * 0.6, touchWidth * 1.35, distance)) * wave.visibility;
+      const waveApproach = (1 - smoothstep(touchWidth * 1.2, touchWidth * 4.8, distance)) * wave.visibility;
       contact = Math.max(contact, waveContact);
+      approach = Math.max(approach, waveApproach);
     });
-    const grow = smoothstep(0.01, Math.max(0.08, info.previewEnd * 0.9), info.phase);
+    const assembly = smoothstep(0, bubble.pulseArmSeconds ?? 0.38, bubble.age);
     const breath = Math.sin(state.visualTime / 144 + bubble.skinPhase) * (0.005 + contact * 0.018);
     const shake = Math.pow(contact, 1.45) * (1.4 + bubble.baseRadius * 0.045);
     bubble.x = bubble.pulseAnchorX + Math.sin(state.visualTime * 0.094 + bubble.skinPhase) * shake;
     bubble.y = bubble.pulseAnchorY + Math.cos(state.visualTime * 0.117 + bubble.skinPhase * 1.4) * shake * 0.72;
     bubble.vx = 0;
     bubble.vy = 0;
-    bubble.radius = bubble.baseRadius * (0.18 + grow * 0.82 + breath + contact * 0.055);
+    bubble.radius = bubble.baseRadius * (1 + breath * 0.28 + contact * 0.025);
     bubble.pulseContact = contact;
+    bubble.pulseApproach = Math.max(contact, approach);
+    bubble.pulseAssembly = assembly;
     if (contact > 0.08) {
       bubble.pulseLastContactAt = state.elapsed;
     }
-    bubble.pulseVisualProgress = clamp(0.08 + grow * 0.48 + contact * 0.44, 0, 1);
+    bubble.pulseVisualProgress = clamp(0.18 + assembly * 0.34 + approach * 0.2 + contact * 0.28, 0, 1);
     bubble.wobble += bubble.wobbleSpeed * dt * contact * 0.68;
     if (contact > 0.46 && state.elapsed - lastChargeTickAt >= rhythmBeatMs() * 0.48) {
       playChargeWarningTick(0.16 + contact * 0.32);
@@ -6804,75 +7075,57 @@
   }
 
   function activateClearScreen(origin) {
-    const cleared = [];
-    const waiting = [];
-    state.bubbles.forEach((bubble) => {
-      if (bubble.isCat || bubble.isCharge || bubble.isDrag) {
-        waiting.push(bubble);
-      } else if (bubble.age >= 0) {
-        cleared.push(bubble);
-      } else {
-        waiting.push(bubble);
-      }
-    });
-    state.bubbles = waiting;
+    const cleared = state.bubbles.slice();
+    state.bubbles = [];
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
+    state.catHoldPointerId = null;
+    state.catHoldBubbleId = null;
+    state.customHoldPointerId = null;
+    state.customHoldBubbleUid = null;
     for (let i = 0; i < cleared.length; i += 1) {
       registerCombo({ chargeSkill: false });
       recordStageCorrect(cleared[i]);
     }
-    chargeClearSkillByBubbles(cleared);
     state.poppedCount += cleared.length;
     state.score += cleared.length;
+    requestStageSustainIfCleared();
     addWater(Math.min(24, 8 + cleared.length * 1.55 + comboWaterBonus()));
     state.nextSpawnAt = Math.min(state.nextSpawnAt, state.elapsed + rand(240, 520));
-    state.flash = Math.max(state.flash, 0.82);
-    state.blasts.push({
-      x: origin.x,
-      y: origin.y,
-      radius: 16,
-      maxRadius: Math.max(state.width, state.height) * 1.08,
-      speed: 920,
-      age: 0,
-      life: 0.96,
-      color: clearTone.light,
-      accentColor: palette[0].light,
-      fillAlpha: 0.26,
-      decorative: true,
-      rings: 3,
-    });
-    state.ripples.push({ x: origin.x, y: origin.y, radius: origin.radius * 1.15, age: 0, life: 0.82, color: clearTone.color, power: 1.55 });
-    state.ripples.push({ x: state.width * 0.5, y: state.height * 0.5, radius: Math.min(state.width, state.height) * 0.22, age: 0, life: 0.56, color: clearTone.light, power: 1.15 });
-
-    cleared.forEach((bubble, index) => {
+    state.flash = Math.max(state.flash, 0.42);
+    cleared.forEach((bubble) => {
       const color = bubble.colorIndex >= 0 ? palette[bubble.colorIndex] : openTone;
-      state.ripples.push({
-        x: bubble.x,
-        y: bubble.y,
-        radius: bubble.radius * 0.42,
-        age: 0,
-        life: 0.36,
-        color: color.color,
-      });
-
-      if (index < 8) {
+      if (
+        bubble.age >= 0 &&
+        bubble.x > -bubble.radius &&
+        bubble.x < state.width + bubble.radius &&
+        bubble.y > -bubble.radius &&
+        bubble.y < state.height + bubble.radius
+      ) {
+        state.clearBursts.push({
+          x: bubble.x,
+          y: bubble.y,
+          radius: Math.max(18, bubble.baseRadius ?? bubble.radius ?? 28),
+          age: 0,
+          life: rand(0.68, 0.84),
+          phase: rand(0, Math.PI * 2),
+          color: color.color,
+          light: color.light,
+          droplets: clamp(Math.round(9 + (bubble.baseRadius ?? bubble.radius ?? 28) * 0.11), 10, 15),
+        });
+        makeMembraneSnap(bubble, bubble.x, bubble.y, color, 1.28);
         for (let i = 0; i < 3; i += 1) {
-          makeParticle(
-            bubble.x,
-            bubble.y,
-            i % 2 === 0 ? clearTone.light : color.light,
-            rand(90, 240),
-            rand(0, Math.PI * 2),
-            rand(0.32, 0.7),
-            i === 0,
-          );
+          makeParticle(bubble.x, bubble.y, i === 0 ? "#ffffff" : clearTone.light, rand(110, 250), rand(0, Math.PI * 2), rand(0.42, 0.78), i === 0);
         }
       }
     });
 
-    makeFloatText(origin.x + 18, origin.y - 42, `CLEAR x${Math.max(1, cleared.length)}`, clearTone.light, 1.34);
-    for (let i = 0; i < 30; i += 1) {
-      makeParticle(origin.x, origin.y, i % 2 === 0 ? clearTone.color : palette[i % 4 === 0 ? 0 : 1].light, rand(160, 420), rand(0, Math.PI * 2), rand(0.42, 0.98), i % 3 === 0);
-    }
+    makeFloatText(state.width * 0.5, state.height * 0.54, `全屏净化 x${Math.max(1, cleared.length)}`, clearTone.light, 1.42, {
+      life: 0.9,
+      vy: -18,
+      stroke: "rgba(8, 55, 70, 0.6)",
+      shadow: "rgba(171, 255, 244, 0.34)",
+    });
   }
 
   function useClearSkill() {
@@ -6989,6 +7242,7 @@
     if (bubble.chargeResolved) return;
     clearCustomHoldForBubble(bubble);
     bubble.chargeResolved = true;
+    pushPointerFx("hit", hitX, hitY, 1.28, whiteTone);
     makeMembraneSnap(bubble, hitX, hitY, whiteTone, 1.35);
     state.bubbles.splice(index, 1);
     state.poppedCount += 1;
@@ -6999,11 +7253,10 @@
     let chainCount = 0;
     for (let otherIndex = state.bubbles.length - 1; otherIndex >= 0; otherIndex -= 1) {
       const other = state.bubbles[otherIndex];
-      if (other.age < 0 || isSpecialBubble(other)) continue;
+      if (!canAreaBlastBubble(other)) continue;
       const distance = Math.hypot(other.x - bubble.x, other.y - bubble.y);
       if (distance > blastRadius + other.radius * 0.34) continue;
-      burstBubbleByBlast(other, otherIndex);
-      chainCount += 1;
+      if (burstBubbleByBlast(other, otherIndex)) chainCount += 1;
     }
     state.blasts.push({
       x: bubble.x,
@@ -7035,10 +7288,16 @@
     state.bubbles.splice(index, 1);
     noteWrongAction();
     resetCombo();
-    state.water = Math.max(0, state.water - chargeBubblePenalty);
-    waterShockUntil = Math.max(waterShockUntil, state.elapsed + 520);
+    const tookDamage = applyHeartPenalty(chargeBubblePenalty);
+    if (tookDamage) {
+      state.mistakeFlash = Math.max(state.mistakeFlash, 0.9);
+      pushPointerFx("miss", bubble.x, bubble.y, 1.12);
+      waterShockUntil = Math.max(waterShockUntil, state.elapsed + 520);
+    } else {
+      pushPointerFx("hit", bubble.x, bubble.y, 0.82, clearTone);
+    }
     makePunctureSplash(bubble, bubble.x, bubble.y, whiteTone, Math.round(18 + bubble.radius * 0.32), false, false);
-    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, "-1心", "#f8fdff", 1.12, {
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, tookDamage ? "-1心" : "无敌", tookDamage ? "#f8fdff" : "#d8fffb", 1.12, {
       stroke: "rgba(50, 18, 38, 0.66)",
       shadow: "rgba(255,255,255,0.24)",
     });
@@ -7047,7 +7306,7 @@
     }
     playPop("big");
     updateHud();
-    if (isWaterGameOver()) {
+    if (tookDamage && isWaterGameOver()) {
       endGame();
     }
   }
@@ -7108,6 +7367,7 @@
   }
 
   function burstBubbleByBlast(bubble, index) {
+    if (!canAreaBlastBubble(bubble)) return false;
     const color = bubble.isWhite
       ? whiteTone
       : bubble.isBleach
@@ -7138,6 +7398,7 @@
       makeParticle(bubble.x, bubble.y, color.light, rand(70, 190), rand(0, Math.PI * 2), rand(0.18, 0.38), i === 0);
     }
     playPop(popSoundKindForBubble(bubble), rand(0, 0.045));
+    return true;
   }
 
   function makeParticle(x, y, color, speed, angle, life, sparkle = false) {
@@ -7520,7 +7781,7 @@
     decolorBubbles(bubble);
     comboFeedbackAt(bubble.x, bubble.y, whiteTone);
     vibratePop(16);
-    playPop("clear");
+    playEventSound("decolor", { volume: 0.86 });
     updateHud();
   }
 
@@ -7636,9 +7897,9 @@
     updateHud();
   }
 
-  function missBubble(bubble, index, isTap) {
+  function missBubble(bubble, index, isTap, hitX = bubble.x, hitY = bubble.y) {
     noteWrongAction();
-    penalizeStageMistake(bubble, "wrong");
+    const tookDamage = penalizeStageMistake(bubble, "wrong");
     state.bubbles.splice(index, 1);
     requestStageSustainIfCleared();
     resetCombo();
@@ -7660,12 +7921,17 @@
       color: colorWithAlpha("#f4fbff", 0.42),
       power: 0.28,
     });
-    state.mistakeFlash = Math.max(state.mistakeFlash, 0.22);
-    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.72, "-1心", "#eefbff", 0.82, {
+    if (tookDamage) {
+      state.mistakeFlash = Math.max(state.mistakeFlash, 1);
+      pushPointerFx("miss", hitX, hitY, isTap ? 1 : 0.82);
+    } else {
+      pushPointerFx("hit", hitX, hitY, 0.72, clearTone);
+    }
+    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.72, tookDamage ? "-1心" : "无敌", tookDamage ? "#ffdce3" : "#d8fffb", 0.86, {
       life: 0.42,
       vy: -18,
-      stroke: "rgba(15, 33, 43, 0.46)",
-      shadow: "rgba(15, 33, 43, 0.18)",
+      stroke: "rgba(71, 26, 48, 0.62)",
+      shadow: "rgba(255, 157, 180, 0.22)",
     });
 
     for (let i = 0; i < 5; i += 1) {
@@ -8083,8 +8349,19 @@
     resolveBubbleWallContact(bubble, 0, -1, bubble.y - (state.height - contact), d);
   }
 
-  function pushPointerFx(type, x, y, power = 1) {
-    state.pointerFx.push({ type, x, y, age: 0, life: type === "hold" ? 0.68 : 0.46, power });
+  function pushPointerFx(type, x, y, power = 1, tone = null) {
+    const life = type === "hold" ? 0.68 : type === "hit" ? 0.34 : type === "miss" ? 0.44 : 0.46;
+    state.pointerFx.push({
+      type,
+      x,
+      y,
+      age: 0,
+      life,
+      power,
+      color: tone?.light ?? (type === "miss" ? "#ff9aac" : "#eefcff"),
+      deep: tone?.deep ?? (type === "miss" ? "#74324d" : "#4da6c4"),
+      rotation: ((x * 0.017 + y * 0.011 + state.elapsed * 0.0007) % 1) * Math.PI * 2,
+    });
     if (state.pointerFx.length > 20) state.pointerFx.splice(0, state.pointerFx.length - 20);
   }
 
@@ -8168,7 +8445,12 @@
     const latePrecision = smoothstep(0.48, 1, difficulty());
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
-      if (bubble.age < 0 || bubble.stageTransitionOut || bubble.isCharge) continue;
+      if (
+        bubble.age < 0 ||
+        bubble.stageTransitionOut ||
+        bubble.isCharge ||
+        (bubble.isPulse && bubble.age < (bubble.pulseArmSeconds ?? 0.38))
+      ) continue;
       const dx = x - bubble.x;
       const dy = y - bubble.y;
       const hitPadding = isTap ? 9 - latePrecision * 2.2 : 15 - latePrecision * 3.4;
@@ -8200,6 +8482,18 @@
       return true;
     }
     if (canPopBubble(bubble, x, y)) {
+      const tone = bubble.isWhite
+        ? whiteTone
+        : bubble.isBomb
+          ? bombTone
+          : bubble.isBleach
+            ? whiteTone
+            : bubble.isClear
+              ? clearTone
+              : bubble.isSuper || bubble.colorIndex < 0
+                ? openTone
+                : palette[bubble.colorIndex];
+      pushPointerFx("hit", x, y, isTap ? 1.08 : 0.84, tone);
       if (customBubbleNeedsClear(bubble)) {
         if (isTap) {
           hitCustomBubble(bubble, pointerId, x, y);
@@ -8208,7 +8502,7 @@
         popBubble(bubble, index, x, y);
       }
     } else {
-      missBubble(bubble, index, isTap);
+      missBubble(bubble, index, isTap, x, y);
     }
     return true;
   }
@@ -8327,22 +8621,24 @@
 
     state.elapsed += dt * 1000;
     updateBackgroundFlow(dt);
-    maybeAdvanceStage();
-    updateRhythmClock(dt);
-    const pulseInfo = currentPulseInfo();
-    if (pulseInfo) {
-      maybeSpawnPulseBeat(pulseInfo);
-      maybeSpawnPulseSupportRhythm(pulseInfo);
-      maybeSpawnChargeBubble();
-    } else {
-      maybeActivateCatBubbleSystem();
-      maybeSpawnChargeBubble();
-      maybeSpawnDragBubble();
-      maybeSpawnCadenceLifeline();
+    if (!state.tutorialMode) {
+      maybeAdvanceStage();
+      updateRhythmClock(dt);
+      const pulseInfo = currentPulseInfo();
+      if (pulseInfo) {
+        maybeSpawnPulseBeat(pulseInfo);
+        maybeSpawnPulseSupportRhythm(pulseInfo);
+        maybeSpawnChargeBubble();
+      } else {
+        maybeActivateCatBubbleSystem();
+        maybeSpawnChargeBubble();
+        maybeSpawnDragBubble();
+        maybeSpawnCadenceLifeline();
+      }
     }
     const d = difficulty();
     const tier = difficultyTier(d);
-    if (tier > state.difficultyTier) {
+    if (!state.tutorialMode && tier > state.difficultyTier) {
       triggerDifficultyUp(tier);
     }
     updatePointerFeedback(dt);
@@ -8361,22 +8657,24 @@
       comboChip.classList.remove("expiring");
     }
 
-    let spawnStepsThisFrame = 0;
-    while (state.elapsed >= state.nextSpawnAt && spawnStepsThisFrame < 1) {
-      spawnWave();
-      if (!isPulsePattern()) {
-        state.nextSpawnAt = nextRhythmTime(state.nextSpawnAt, rhythmSpawnSubdivision());
+    if (!state.tutorialMode) {
+      let spawnStepsThisFrame = 0;
+      while (state.elapsed >= state.nextSpawnAt && spawnStepsThisFrame < 1) {
+        spawnWave();
+        if (!isPulsePattern()) {
+          state.nextSpawnAt = nextRhythmTime(state.nextSpawnAt, rhythmSpawnSubdivision());
+        }
+        spawnStepsThisFrame += 1;
       }
-      spawnStepsThisFrame += 1;
-    }
-    if (state.elapsed >= state.nextSpawnAt) {
-      state.nextSpawnAt = isPulsePattern()
-        ? state.elapsed + 120
-        : nextRhythmTime(state.elapsed + 90, rhythmSpawnSubdivision());
-    }
-    maybeAdvanceStage();
-    if (!pulseInfo) {
-      maybeActivateCatBubbleSystem();
+      if (state.elapsed >= state.nextSpawnAt) {
+        state.nextSpawnAt = isPulsePattern()
+          ? state.elapsed + 120
+          : nextRhythmTime(state.elapsed + 90, rhythmSpawnSubdivision());
+      }
+      maybeAdvanceStage();
+      if (!currentPulseInfo()) {
+        maybeActivateCatBubbleSystem();
+      }
     }
     updateCatBubbleHold(dt);
     updateCustomBubbleHold(dt);
@@ -8426,6 +8724,11 @@
           continue;
         }
         bubble.wobble += bubble.wobbleSpeed * dt;
+        continue;
+      }
+      if (bubble.tutorialStatic) {
+        bubble.wobble += bubble.wobbleSpeed * dt * 0.32;
+        bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 3.2) * 0.018);
         continue;
       }
       bubble.wobble += bubble.wobbleSpeed * dt;
@@ -8513,7 +8816,7 @@
       if (!blast.decorative) {
         for (let j = state.bubbles.length - 1; j >= 0; j -= 1) {
           const bubble = state.bubbles[j];
-          if (bubble.age < 0 || isSpecialBubble(bubble)) {
+          if (!canAreaBlastBubble(bubble)) {
             continue;
           }
           const dx = bubble.x - blast.x;
@@ -8528,6 +8831,12 @@
       if (blast.radius >= blast.maxRadius || blast.age >= blast.life) {
         state.blasts.splice(i, 1);
       }
+    }
+
+    for (let i = state.clearBursts.length - 1; i >= 0; i -= 1) {
+      const burst = state.clearBursts[i];
+      burst.age += dt;
+      if (burst.age >= burst.life) state.clearBursts.splice(i, 1);
     }
 
     for (let i = state.particles.length - 1; i >= 0; i -= 1) {
@@ -8578,7 +8887,9 @@
       }
     }
 
-    if (isWaterGameOver()) {
+    monitorTutorialPractice();
+
+    if (!state.tutorialMode && isWaterGameOver()) {
       endGame();
     }
 
@@ -9267,22 +9578,114 @@
   function drawPulseChargeBubbleTexture(bubble, x, y, r, alpha = 1) {
     const progress = clamp(bubble.pulseVisualProgress ?? 0, 0, 1);
     const contact = clamp(bubble.pulseContact ?? 0, 0, 1);
+    const approach = clamp(bubble.pulseApproach ?? 0, 0, 1);
+    const assembly = clamp(bubble.pulseAssembly ?? 0, 0, 1);
     const tone = backgroundPalette[bubble.colorIndex] ?? palette[bubble.colorIndex] ?? openTone;
-    drawChargeBubbleTexture(bubble, x, y, r, alpha, progress, tone);
+    const shimmer = 0.5 + Math.sin(state.visualTime / 106 + bubble.skinPhase) * 0.5;
+    const ready = smoothstep(0.12, 0.58, contact);
+    const guideRadius = r * (1.68 - approach * 0.48);
+    const restingAlpha = 0.34 + assembly * 0.54 + progress * 0.08;
 
-    if (contact <= 0.08) return true;
-    const shimmer = 0.5 + Math.sin(state.visualTime / 82 + bubble.skinPhase) * 0.5;
     ctx.save();
     ctx.translate(x, y);
+    ctx.globalAlpha *= alpha;
+
+    ctx.save();
     ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha *= alpha * contact;
-    ctx.shadowColor = colorWithAlpha(tone.light, 0.46);
-    ctx.shadowBlur = Math.min(18, r * 0.42);
-    ctx.strokeStyle = colorWithAlpha(tone.color, 0.38 + shimmer * 0.2);
-    ctx.lineWidth = Math.max(1.8, r * 0.065);
+    const aura = ctx.createRadialGradient(0, 0, r * 0.34, 0, 0, r * 1.5);
+    aura.addColorStop(0, colorWithAlpha(tone.light, 0.02 + ready * 0.1));
+    aura.addColorStop(0.62, colorWithAlpha(tone.color, 0.08 + approach * 0.11));
+    aura.addColorStop(1, colorWithAlpha(tone.light, 0));
+    ctx.fillStyle = aura;
     ctx.beginPath();
-    ctx.arc(0, 0, r * (1.02 + shimmer * 0.045), 0, Math.PI * 2);
+    ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const ring = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r * 1.04);
+    ring.addColorStop(0, colorWithAlpha(tone.deep, 0.08));
+    ring.addColorStop(0.5, colorWithAlpha(tone.color, 0.14));
+    ring.addColorStop(0.62, colorWithAlpha(tone.light, 0.72 * restingAlpha));
+    ring.addColorStop(0.78, colorWithAlpha(tone.color, 0.78 + ready * 0.16));
+    ring.addColorStop(0.93, colorWithAlpha(tone.deep, 0.64 + ready * 0.2));
+    ring.addColorStop(1, colorWithAlpha(tone.light, 0.86));
+    ctx.fillStyle = ring;
+    ctx.shadowColor = colorWithAlpha(tone.light, 0.28 + ready * 0.5);
+    ctx.shadowBlur = r * (0.18 + ready * 0.34);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.02, 0, Math.PI * 2);
+    ctx.arc(0, 0, r * 0.51, 0, Math.PI * 2, true);
+    ctx.fill("evenodd");
+    ctx.shadowBlur = 0;
+
+    ctx.save();
+    ctx.fillStyle = colorWithAlpha(tone.deep, 0.1 + ready * 0.08);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.47, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = colorWithAlpha(tone.light, 0.34 + ready * 0.42);
+    ctx.lineWidth = Math.max(1.2, r * 0.035);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.48, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.rotate(-state.visualTime * 0.00024 + bubble.skinPhase * 0.1);
+    ctx.lineCap = "round";
+    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.5 + ready * 0.42);
+    ctx.lineWidth = Math.max(2.6, r * (0.075 + ready * 0.025));
+    for (let marker = 0; marker < 4; marker += 1) {
+      const segment = smoothstep(marker * 0.14, marker * 0.14 + 0.36, assembly);
+      if (segment <= 0.01) continue;
+      const angle = marker * Math.PI * 0.5 + Math.PI * 0.1;
+      ctx.save();
+      ctx.globalAlpha *= segment;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.04, angle, angle + Math.PI * 0.22);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha *= 0.18 + assembly * 0.82;
+    ctx.rotate(Math.PI * 0.25 + state.visualTime * 0.00014);
+    const coreSize = r * (0.15 + ready * 0.055 + shimmer * 0.008);
+    ctx.fillStyle = colorWithAlpha(tone.light, 0.58 + ready * 0.36);
+    ctx.shadowColor = colorWithAlpha("#ffffff", 0.5 + ready * 0.4);
+    ctx.shadowBlur = r * (0.08 + ready * 0.18);
+    ctx.beginPath();
+    ctx.rect(-coreSize, -coreSize, coreSize * 2, coreSize * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.rotate(state.visualTime * 0.00038 + bubble.skinPhase * 0.16);
+    ctx.setLineDash([Math.max(5, r * 0.18), Math.max(6, r * 0.16)]);
+    ctx.lineDashOffset = -state.visualTime * 0.005;
+    ctx.strokeStyle = colorWithAlpha(tone.light, 0.12 + approach * 0.42);
+    ctx.lineWidth = Math.max(1.5, r * (0.035 + approach * 0.025));
+    ctx.beginPath();
+    ctx.arc(0, 0, guideRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    if (ready > 0.015) {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha *= ready * (0.76 + shimmer * 0.2);
+      ctx.strokeStyle = colorWithAlpha("#ffffff", 0.9);
+      ctx.lineWidth = Math.max(2.4, r * 0.07);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * (1.14 + shimmer * 0.03), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     ctx.restore();
     return true;
   }
@@ -9789,6 +10192,77 @@
         const progress = clamp(effect.age / effect.life, 0, 1);
         const ease = 1 - Math.pow(1 - progress, 3);
         const alpha = (1 - progress) * effect.power;
+        if (effect.type === "hit") {
+          const radius = 9 + ease * 28;
+          ctx.save();
+          ctx.globalCompositeOperation = "screen";
+          ctx.translate(effect.x, effect.y);
+          ctx.rotate(effect.rotation + progress * 0.32);
+          ctx.shadowColor = colorWithAlpha(effect.color, 0.42 * alpha);
+          ctx.shadowBlur = 10 + ease * 8;
+          ctx.strokeStyle = colorWithAlpha(effect.color, 0.82 * alpha);
+          ctx.lineWidth = 2.4 - progress * 0.9;
+          ctx.beginPath();
+          ctx.arc(0, 0, radius, -0.26, Math.PI * 1.24);
+          ctx.stroke();
+          ctx.strokeStyle = colorWithAlpha("#ffffff", 0.7 * alpha);
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(0, 0, radius * 0.66, Math.PI * 0.22, Math.PI * 1.62);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          for (let index = 0; index < 4; index += 1) {
+            const angle = index * Math.PI * 0.5 + 0.34;
+            const start = radius * (0.76 + progress * 0.18);
+            const end = start + 5.5 * (1 - progress);
+            ctx.strokeStyle = colorWithAlpha(index % 2 ? "#ffffff" : effect.color, 0.62 * alpha);
+            ctx.lineWidth = index % 2 ? 1.2 : 1.8;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(angle) * start, Math.sin(angle) * start);
+            ctx.lineTo(Math.cos(angle) * end, Math.sin(angle) * end);
+            ctx.stroke();
+          }
+          ctx.fillStyle = colorWithAlpha("#ffffff", 0.82 * alpha);
+          ctx.beginPath();
+          ctx.arc(0, 0, 2.6 * (1 - progress) + 0.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          return;
+        }
+        if (effect.type === "miss") {
+          const radius = 20 + ease * 8;
+          const recoil = Math.sin(progress * Math.PI) * 2.2;
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.translate(effect.x + recoil, effect.y);
+          ctx.rotate(effect.rotation - progress * 0.2);
+          ctx.shadowColor = colorWithAlpha(effect.color, 0.28 * alpha);
+          ctx.shadowBlur = 8;
+          ctx.strokeStyle = colorWithAlpha(effect.color, 0.72 * alpha);
+          ctx.lineWidth = 2.2 - progress * 0.7;
+          ctx.beginPath();
+          ctx.arc(-2.4 * ease, 0, radius, -0.25, Math.PI * 0.72);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(2.4 * ease, 0, radius, Math.PI * 0.9, Math.PI * 1.78);
+          ctx.stroke();
+          const cross = 7.5 + ease * 2;
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = colorWithAlpha("#fff3f6", 0.82 * alpha);
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.moveTo(-cross, -cross);
+          ctx.lineTo(cross, cross);
+          ctx.moveTo(cross, -cross);
+          ctx.lineTo(-cross, cross);
+          ctx.stroke();
+          ctx.fillStyle = colorWithAlpha(effect.deep, 0.22 * alpha);
+          ctx.beginPath();
+          ctx.arc(0, 0, radius * 0.68, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          return;
+        }
         const isHold = effect.type === "hold";
         const radius = isHold ? 10 + ease * 27 : 5 + ease * 22;
         const glow = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, radius);
@@ -9847,6 +10321,63 @@
       ctx.beginPath();
       ctx.arc(blast.x, blast.y, blast.radius * 0.9, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function drawClearBursts() {
+    state.clearBursts.forEach((burst) => {
+      const progress = clamp(burst.age / Math.max(0.01, burst.life), 0, 1);
+      const release = 1 - Math.pow(1 - progress, 3);
+      const fade = 1 - smoothstep(0.48, 1, progress);
+      const radius = burst.radius;
+
+      ctx.save();
+      ctx.translate(burst.x, burst.y);
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = fade * 0.92;
+      ctx.shadowColor = "rgba(181, 255, 246, 0.72)";
+      ctx.shadowBlur = 14 * fade;
+
+      const membrane = ctx.createRadialGradient(-radius * 0.18, -radius * 0.22, 1, 0, 0, radius * (0.74 + release * 0.88));
+      membrane.addColorStop(0, "rgba(255,255,255,0.66)");
+      membrane.addColorStop(0.34, colorWithAlpha(burst.light, 0.46));
+      membrane.addColorStop(0.72, "rgba(126,234,230,0.2)");
+      membrane.addColorStop(1, "rgba(104,208,225,0)");
+      ctx.fillStyle = membrane;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, radius * (0.8 + release * 1.18), radius * (0.68 + release * 0.92), burst.phase * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.shadowBlur = 0;
+      const dropletCount = burst.droplets ?? 12;
+      for (let index = 0; index < dropletCount; index += 1) {
+        const angle = burst.phase + index * 2.399963 + Math.sin(index * 1.7) * 0.16;
+        const speed = 1.05 + ((index * 7) % 6) * 0.13;
+        const distance = radius * (0.28 + release * speed * 2.05);
+        const x = Math.cos(angle) * distance;
+        const y = Math.sin(angle) * distance;
+        const size = radius * (0.075 + (index % 4) * 0.018) * (1 - progress * 0.25);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        ctx.globalAlpha = fade * (0.62 + (index % 3) * 0.13);
+        ctx.fillStyle = index % 4 === 0 ? "#ffffff" : index % 2 === 0 ? "#b9fff4" : colorWithAlpha(burst.light, 0.94);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, size * 1.7, size * 0.72, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.globalAlpha = fade * 0.86;
+      ctx.strokeStyle = "rgba(239,255,252,0.92)";
+      ctx.lineWidth = Math.max(2, radius * 0.08) * (1 - progress * 0.35);
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * (0.64 + release * 1.42), burst.phase, burst.phase + Math.PI * 0.78);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * (0.58 + release * 1.18), burst.phase + Math.PI, burst.phase + Math.PI * 1.62);
+      ctx.stroke();
       ctx.restore();
     });
   }
@@ -10093,24 +10624,55 @@
 
   function drawMistakeFlash() {
     if (state.mistakeFlash <= 0) return;
-    const alpha = state.mistakeFlash * 0.16;
+    const alpha = state.mistakeFlash * 0.2;
     ctx.save();
-    const edge = Math.max(18, Math.min(state.width, state.height) * 0.075);
-    let gradient = ctx.createLinearGradient(0, 0, edge, 0);
-    gradient.addColorStop(0, colorWithAlpha("#20384f", alpha));
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, edge, state.height);
-
-    gradient = ctx.createLinearGradient(state.width, 0, state.width - edge, 0);
-    gradient.addColorStop(0, colorWithAlpha("#20384f", alpha));
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(state.width - edge, 0, edge, state.height);
-
-    ctx.globalAlpha = state.mistakeFlash * 0.035;
-    ctx.fillStyle = "#eefbff";
+    const radius = Math.hypot(state.width, state.height) * 0.58;
+    const vignette = ctx.createRadialGradient(
+      state.width * 0.5,
+      state.height * 0.48,
+      Math.min(state.width, state.height) * 0.16,
+      state.width * 0.5,
+      state.height * 0.48,
+      radius,
+    );
+    vignette.addColorStop(0, "rgba(255,255,255,0)");
+    vignette.addColorStop(0.62, colorWithAlpha("#9b4565", alpha * 0.16));
+    vignette.addColorStop(1, colorWithAlpha("#4d2038", alpha));
+    ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, state.width, state.height);
+    ctx.globalAlpha = state.mistakeFlash * 0.024;
+    ctx.fillStyle = "#ffb8c7";
+    ctx.fillRect(0, 0, state.width, state.height);
+    ctx.restore();
+  }
+
+  function drawReviveInvulnerability() {
+    if (!isReviveInvulnerable()) return;
+    const remaining = Math.max(0, state.invulnerableUntil - state.elapsed);
+    const pulse = 0.5 + Math.sin(state.visualTime / 110) * 0.5;
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.strokeStyle = colorWithAlpha("#9ff8ee", 0.34 + pulse * 0.18);
+    ctx.lineWidth = 3 + pulse * 1.5;
+    ctx.strokeRect(5, 5, Math.max(0, state.width - 10), Math.max(0, state.height - 10));
+    const label = `无敌 ${(remaining / 1000).toFixed(1)}s`;
+    ctx.font = '900 14px "Microsoft YaHei UI", "PingFang SC", sans-serif';
+    const width = Math.ceil(ctx.measureText(label).width) + 26;
+    const height = 30;
+    const x = state.width * 0.5 - width * 0.5;
+    const y = state.height - 54;
+    ctx.fillStyle = "rgba(14, 81, 96, 0.62)";
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, 15);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(196, 255, 248, 0.72)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba(239, 255, 252, 0.96)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, state.width * 0.5, y + height * 0.5 + 0.5);
     ctx.restore();
   }
 
@@ -10213,6 +10775,83 @@
     ctx.restore();
   }
 
+  function drawTutorialDragGuide() {
+    if (!state.tutorialMode || !tutorialRun.active) return;
+    const scene = tutorialSlides[tutorialStepIndex]?.scene ?? "";
+    if (!scene.startsWith("drag")) return;
+    const bubble = state.bubbles.find((item) => tutorialRun.targets.includes(item.uid) && item.isDrag);
+    const target = bubble?.tutorialDestination;
+    if (!bubble || !target) return;
+
+    const dx = target.x - bubble.x;
+    const dy = target.y - bubble.y;
+    const distance = Math.max(1, Math.hypot(dx, dy));
+    const nx = dx / distance;
+    const ny = dy / distance;
+    const startX = bubble.x + nx * bubble.baseRadius * 0.82;
+    const startY = bubble.y + ny * bubble.baseRadius * 0.82;
+    const endX = target.x - nx * 22;
+    const endY = target.y - ny * 22;
+    const bend = Math.min(54, distance * 0.16) * (scene === "dragPink" ? -1 : 1);
+    const controlX = (startX + endX) * 0.5 - ny * bend;
+    const controlY = (startY + endY) * 0.5 + nx * bend;
+    const targetTone = palette[bubble.dragTargetColorIndex] ?? clearTone;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.96)";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.setLineDash([13, 11]);
+    ctx.lineDashOffset = -state.visualTime * 0.025;
+    ctx.shadowColor = colorWithAlpha(targetTone.light, 0.92);
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.quadraticCurveTo(controlX, controlY, endX, endY);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    const arrowAngle = Math.atan2(endY - controlY, endX - controlX);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
+    ctx.beginPath();
+    ctx.moveTo(endX, endY);
+    ctx.lineTo(endX - Math.cos(arrowAngle - 0.58) * 24, endY - Math.sin(arrowAngle - 0.58) * 24);
+    ctx.lineTo(endX - Math.cos(arrowAngle + 0.58) * 24, endY - Math.sin(arrowAngle + 0.58) * 24);
+    ctx.closePath();
+    ctx.fill();
+
+    const pulse = 1 + Math.sin(state.visualTime * 0.008) * 0.06;
+    ctx.globalAlpha = 0.94;
+    ctx.fillStyle = colorWithAlpha(targetTone.color, 0.3);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.96)";
+    ctx.lineWidth = 5;
+    ctx.setLineDash([9, 7]);
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, bubble.baseRadius * 0.92 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const label = `拖到${bubble.dragTargetColorIndex === 0 ? "蓝色" : "粉色"}圈里`;
+    const labelX = clamp(target.x, 72, state.width - 72);
+    const labelY = clamp(target.y - bubble.baseRadius - 34, 112, state.height - 58);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(5, 35, 52, 0.82)";
+    ctx.beginPath();
+    ctx.roundRect(labelX - 61, labelY - 17, 122, 34, 17);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.62)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = '900 13px "Microsoft YaHei UI", system-ui, sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, labelX, labelY + 1);
+    ctx.restore();
+  }
+
   function draw() {
     drawBackground();
     drawRhythmBreath();
@@ -10220,14 +10859,17 @@
     drawWaterStressOverlay();
     drawPointerFeedback("trail");
     state.bubbles.forEach(drawBubble);
+    drawTutorialDragGuide();
     drawMembraneSnaps();
     drawRipples();
     drawPointerFeedback("fx");
     drawBlasts();
+    drawClearBursts();
     drawParticles();
     drawFloaters();
     drawBuildVersion();
     drawMistakeFlash();
+    drawReviveInvulnerability();
     drawFlash();
   }
 
@@ -10447,14 +11089,569 @@
     }
   }
 
+  function playEventSound(group, { playbackRate = 1, volume = 0.82, delayOffset = 0 } = {}) {
+    try {
+      const fileName = chooseSoundFile(group);
+      playSoundBuffer(fileName, { playbackRate, volume, delayOffset });
+    } catch {
+      audioContext = null;
+    }
+  }
+
   function playCatMeow(kind = "tap", delayOffset = 0) {
-    playPop(kind === "tap" ? "regular" : "big", delayOffset);
+    if (kind === "tap") {
+      playPop("small", delayOffset, 0.58);
+      return;
+    }
+    playEventSound("cat", { volume: kind === "hold" ? 0.84 : 0.9, delayOffset });
   }
 
   function playIntroSound() {
     resetPopPitchChain();
     const fileName = soundFiles.start[0];
     playSoundBuffer(fileName, { playbackRate: 1, volume: 0.9 });
+  }
+
+  const tutorialSlides = [
+    {
+      scene: "life", kicker: "生命系统", title: "先认识左上角的三颗爱心",
+      copy: "每次失误都会少一颗：点错颜色、泡泡飞出屏幕、蓄力泡爆炸都算失误。正确点击会慢慢为下一颗爱心充能；三颗都满时不会继续增加。",
+      tip: "现在故意点一下这颗颜色不对的泡泡，看看爱心怎么减少", label: "观察生命变化",
+      action: "我看懂了，试一次扣血", success: "对，这就是失去一颗生命",
+    },
+    {
+      scene: "normal", kicker: "基础泡泡", title: "颜色一样，才能轻点泡泡",
+      copy: "第一步：看泡泡是蓝色还是粉色。第二步：看泡泡中心下面的背景。两种颜色一样时，用手指轻点一下。",
+      tip: "练习：把蓝色区域里的蓝泡和粉色区域里的粉泡都点掉", label: "同色时点击",
+      action: "我看懂了，点掉两个泡泡", success: "正确，你找到了同色泡泡",
+    },
+    {
+      scene: "charge", kicker: "蓄力泡", title: "它会越变越大，爆炸前点掉",
+      copy: "先看它从一个小点慢慢长大。变得很大并开始发抖，表示马上要爆炸。轻点一次就能处理；长大后也可以快速滑过。",
+      tip: "练习：等它出现后，直接轻点一次。不要等到最后一刻", label: "变大前点掉",
+      action: "我看懂了，试着点掉它", success: "正确，你阻止了蓄力泡爆炸",
+    },
+    {
+      scene: "dragBlue", kicker: "拖拽泡 · 第一次", title: "把蓝色拖拽泡送到粉色区域",
+      copy: "第一步：手指按在蓝色泡泡上，不要松开。第二步：沿粗虚线箭头移动。第三步：进入粉色目标圈后再松手。",
+      tip: "记住：按住 → 沿箭头拖动 → 到目标圈松手", label: "蓝色拖到粉色",
+      action: "我看懂了，跟着箭头拖", success: "正确，蓝色泡已经送到粉色区域",
+    },
+    {
+      scene: "dragPink", kicker: "拖拽泡 · 第二次", title: "再把粉色拖拽泡送到蓝色区域",
+      copy: "这次方向相反。手指按住粉色泡泡，不要松开；沿虚线箭头拖进蓝色目标圈，再松开手指。",
+      tip: "再练一次：拖拽泡永远要去另一种颜色", label: "粉色拖到蓝色",
+      action: "再练一次，粉色拖到蓝色", success: "正确，你已经会双向拖拽了",
+    },
+    {
+      scene: "pulse", kicker: "脉冲泡", title: "先别点，等圆环碰到泡泡",
+      copy: "看到泡泡后先把手指停住。看着宽圆环向外扩散；圆环碰到泡泡、泡泡明显亮起时，再轻点一次。",
+      tip: "太早或太晚都不算。只在泡泡亮起的短时间里点击", label: "亮起时点击",
+      action: "我会等圆环，开始练习", success: "时机正确，你跟上了脉冲",
+    },
+    {
+      scene: "bleach", kicker: "无色泡", title: "白色泡泡要连续轻点三次",
+      copy: "白色无色泡不用看背景颜色。把手指对准泡泡，清楚地轻点三次：一下、两下、三下。",
+      tip: "练习：不要滑动，同一个位置连续点 3 次", label: "点击 3 次",
+      action: "我看懂了，连续点 3 次", success: "正确，三次点击全部命中",
+    },
+    {
+      scene: "cat", kicker: "猫咪泡", title: "猫咪泡也要连续点击三次",
+      copy: "把手指对准猫咪泡，连续轻点三次。你也可以把手指按在猫咪泡上不放，直到它被清除。",
+      tip: "这次先用最容易理解的方法：连续轻点 3 次", label: "连点 / 长按",
+      action: "我看懂了，给猫咪点 3 次", success: "正确，猫咪泡已经清除",
+    },
+    {
+      scene: "power", kicker: "场上道具", title: "看到炸弹泡和清屏泡，可以直接点",
+      copy: "这两种是帮助玩家的道具，不需要等待同色背景。炸弹只清附近；写着“清”的泡泡会清掉整个画面。",
+      tip: "练习：把画面里的两个道具泡泡都点掉", label: "直接点击",
+      action: "我看懂了，点掉两个道具", success: "正确，你会使用场上道具了",
+    },
+    {
+      scene: "skill", kicker: "一键清屏", title: "右上角显示 READY，就能一键清屏",
+      copy: "每局开始先送一次。使用后，正确点击泡泡会重新蓄能；达到 100% 才能再用。它会清掉所有普通和特殊泡泡，每局最多使用三次。",
+      tip: "练习：找到右上角发光的“清屏 READY”，轻点一次", label: "清除全部泡泡",
+      action: "我找到按钮了，开始练习", success: "正确，所有泡泡都被清空",
+    },
+  ];
+
+  function setStartButtonHome() {
+    if (!startButton) return;
+    const label = document.createElement("strong");
+    label.textContent = "开始挑战";
+    const detail = document.createElement("span");
+    detail.textContent = "进入 Level 1";
+    startButton.replaceChildren(label, detail);
+  }
+
+  function renderTutorialStep() {
+    const slide = tutorialSlides[tutorialStepIndex];
+    if (!slide || !tutorialFrame) return;
+    tutorialFrame.hidden = false;
+    if (tutorialComplete) tutorialComplete.hidden = true;
+    if (tutorialControls) tutorialControls.hidden = false;
+    tutorialFrame.dataset.scene = slide.scene;
+    tutorialProgress.textContent = `${tutorialStepIndex + 1} / ${tutorialSlides.length}`;
+    tutorialKicker.textContent = slide.kicker;
+    tutorialTitle.textContent = slide.title;
+    tutorialCopy.textContent = slide.copy;
+    tutorialTip.textContent = slide.tip;
+    tutorialVisualLabel.textContent = slide.label;
+    tutorialPrevButton.disabled = true;
+    tutorialNextButton.textContent = slide.action ?? "我看懂了，开始练习";
+    tutorialDots.replaceChildren();
+    tutorialSlides.forEach((_, index) => {
+      const dot = document.createElement("span");
+      if (index === tutorialStepIndex) dot.className = "active";
+      tutorialDots.append(dot);
+    });
+  }
+
+  function tutorialPointsForColor(colorIndex) {
+    const points = [];
+    const xRatios = [0.18, 0.28, 0.4, 0.6, 0.72, 0.82];
+    const yRatios = [0.25, 0.36, 0.48, 0.6, 0.72, 0.8];
+    yRatios.forEach((yRatio) => {
+      xRatios.forEach((xRatio) => {
+        const point = { x: state.width * xRatio, y: state.height * yRatio };
+        if (backgroundColorIndexAt(point.x, point.y) === colorIndex) points.push(point);
+      });
+    });
+    return points;
+  }
+
+  function tutorialPointForColor(colorIndex, preferRight = false) {
+    const points = tutorialPointsForColor(colorIndex);
+    if (!points.length) return { x: state.width * (preferRight ? 0.72 : 0.28), y: state.height * 0.5 };
+    points.sort((left, right) => {
+      const leftSide = preferRight ? left.x : state.width - left.x;
+      const rightSide = preferRight ? right.x : state.width - right.x;
+      return rightSide - leftSide;
+    });
+    return points[0];
+  }
+
+  function addTutorialBubble(kind, options = {}, staticBubble = false) {
+    const previousUid = state.bubbleCounter;
+    const spawned = spawnBubble(false, kind, {
+      ignoreCapacity: true,
+      ignoreStageBudget: true,
+      quietHint: true,
+      fairPassComplete: true,
+      ...options,
+    });
+    if (!spawned) return null;
+    const bubble = state.bubbles.find((item) => item.uid > previousUid) ?? state.bubbles.at(-1);
+    if (!bubble) return null;
+    bubble.tutorialTarget = true;
+    bubble.tutorialStatic = staticBubble;
+    bubble.age = Math.max(0.22, bubble.age);
+    bubble.hasEntered = true;
+    tutorialRun.targets.push(bubble.uid);
+    return bubble;
+  }
+
+  function configureTutorialBackground(level) {
+    state.stageLevel = level;
+    state.stageStartAt = (level - 1) * stageDurationMs;
+    state.elapsed = state.stageStartAt + (level === 10 ? 0 : 1200);
+    setBackgroundToLevel(level);
+  }
+
+  function spawnTutorialTargets() {
+    const scene = tutorialSlides[tutorialStepIndex].scene;
+    tutorialRun.targets = [];
+    tutorialRun.expectedPops = scene === "normal" || scene === "power" ? 2 : 1;
+    tutorialRun.expectedMistake = scene === "life";
+    tutorialRun.waterBaseline = state.water;
+
+    if (scene === "pulse") {
+      configureTutorialBackground(10);
+      const info = currentPulseInfo();
+      if (!info) return;
+      const radius = 39;
+      const point = pulseBubblePoint(info, 0.48, radius, 0, []) ?? {
+        x: state.width * 0.5,
+        y: state.height * 0.68,
+      };
+      addTutorialBubble("normal", {
+        x: point.x,
+        y: point.y,
+        target: point,
+        velocity: { x: 0, y: 0, vx: 0, vy: 0 },
+        radius,
+        initialRadius: radius,
+        speed: 0,
+        colorIndex: info.ringColorIndex,
+        isPulse: true,
+        pulseBeatKey: info.beatKey,
+        pulseAnchorX: point.x,
+        pulseAnchorY: point.y,
+        pulseVisualProgress: 0.05,
+        pulseArmSeconds: 0.3,
+        allowFreePath: true,
+      });
+      return;
+    }
+
+    configureTutorialBackground(1);
+    if (scene === "life") {
+      const wrongBackground = tutorialPointForColor(1, false);
+      addTutorialBubble("normal", {
+        x: wrongBackground.x,
+        y: wrongBackground.y,
+        target: wrongBackground,
+        velocity: { vx: 0, vy: 0 },
+        radius: 46,
+        colorIndex: 0,
+        allowFreePath: true,
+      }, true);
+      tutorialRun.expectedPops = 0;
+      tutorialRun.waterBaseline = state.water;
+      return;
+    }
+    if (scene === "normal") {
+      [0, 1].forEach((colorIndex) => {
+        const point = tutorialPointForColor(colorIndex, colorIndex === 0);
+        addTutorialBubble("normal", {
+          x: point.x,
+          y: point.y,
+          target: point,
+          velocity: { vx: 0, vy: 0 },
+          radius: 43,
+          colorIndex,
+          allowFreePath: true,
+        }, true);
+      });
+      return;
+    }
+
+    if (scene === "charge") {
+      const point = { x: state.width * 0.5, y: state.height * 0.54 };
+      addTutorialBubble("charge", {
+        x: point.x,
+        y: point.y,
+        target: point,
+        velocity: { vx: 0, vy: 0 },
+        radius: 38,
+        initialRadius: 5,
+        speed: 0,
+        chargeWarningSeconds: 0.9,
+        chargeFuseSeconds: 6.4,
+        chargeExplodeAt: state.elapsed + 7300,
+      });
+      return;
+    }
+
+    if (scene.startsWith("drag")) {
+      const sourceColorIndex = scene === "dragPink" ? 1 : 0;
+      const targetColorIndex = 1 - sourceColorIndex;
+      const source = tutorialPointForColor(sourceColorIndex, sourceColorIndex === 0);
+      const target = tutorialPointForColor(targetColorIndex, targetColorIndex === 0);
+      const hint = normalizeVector(target.x - source.x, target.y - source.y, { x: -1, y: 0 });
+      const bubble = addTutorialBubble("drag", {
+        x: source.x,
+        y: source.y,
+        target: source,
+        velocity: { vx: 0, vy: 0 },
+        radius: 48,
+        speed: 0,
+        dragSourceColorIndex: sourceColorIndex,
+        dragTargetColorIndex: targetColorIndex,
+        dragLifeSeconds: 10,
+        dragHintX: hint.x,
+        dragHintY: hint.y,
+      });
+      if (bubble) bubble.tutorialDestination = target;
+      return;
+    }
+
+    const center = { x: state.width * 0.5, y: state.height * 0.54 };
+    if (scene === "bleach") {
+      const bubble = addTutorialBubble("bleach", {
+        x: center.x,
+        y: center.y,
+        target: center,
+        velocity: { vx: 0, vy: 0 },
+        radius: 45,
+        speed: 0,
+      }, true);
+      if (bubble) bubble.bleachExpireAt = state.elapsed + 12000;
+      return;
+    }
+    if (scene === "cat") {
+      addTutorialBubble("cat", {
+        x: center.x,
+        y: center.y,
+        target: center,
+        velocity: { vx: 0, vy: 0 },
+        radius: 48,
+        speed: 0,
+        catTapRequired: 3,
+        catHoldRequiredMs: 1100,
+      }, true);
+      return;
+    }
+    if (scene === "power") {
+      addTutorialBubble("bomb", {
+        x: state.width * 0.34,
+        y: center.y,
+        target: center,
+        velocity: { vx: 0, vy: 0 },
+        radius: 43,
+        speed: 0,
+      }, true);
+      addTutorialBubble("clear", {
+        x: state.width * 0.68,
+        y: center.y,
+        target: center,
+        velocity: { vx: 0, vy: 0 },
+        radius: 40,
+        speed: 0,
+      }, true);
+      return;
+    }
+    if (scene === "skill") {
+      state.clearSkillCharge = 1;
+      state.clearSkillUses = 0;
+      const specs = [
+        ["normal", 0.22, 0.38, { colorIndex: 1, allowFreePath: true }],
+        ["normal", 0.78, 0.38, { colorIndex: 0, allowFreePath: true }],
+        ["cat", 0.26, 0.64, { catTapRequired: 3, catHoldRequiredMs: 1100 }],
+        ["bleach", 0.5, 0.56, {}],
+        ["charge", 0.74, 0.64, { initialRadius: 8, chargeWarningSeconds: 1, chargeFuseSeconds: 12, chargeExplodeAt: state.elapsed + 13000 }],
+      ];
+      specs.forEach(([kind, xRatio, yRatio, extra]) => {
+        const point = { x: state.width * xRatio, y: state.height * yRatio };
+        const bubble = addTutorialBubble(kind, {
+          x: point.x,
+          y: point.y,
+          target: point,
+          velocity: { vx: 0, vy: 0 },
+          radius: kind === "charge" ? 38 : 34,
+          speed: 0,
+          ...extra,
+        }, kind !== "charge");
+        if (bubble?.isBleach) bubble.bleachExpireAt = state.elapsed + 13000;
+      });
+      tutorialRun.expectedPops = tutorialRun.targets.length;
+    }
+  }
+
+  function prepareTutorialStep({ showExplanation = true } = {}) {
+    if (!tutorialRun.active) return;
+    tutorialRun.practicing = false;
+    state.paused = true;
+    state.water = 100;
+    state.dragPointerId = null;
+    state.dragBubbleUid = null;
+    clearRuntimeEffects();
+    resetCombo({ recovery: false });
+    spawnTutorialTargets();
+    tutorialRun.poppedBaseline = state.poppedCount;
+    const slide = tutorialSlides[tutorialStepIndex];
+    phoneShell?.classList.toggle("tutorial-skill-step", slide.scene === "skill");
+    tutorialLiveProgress.textContent = `练习 ${tutorialStepIndex + 1} / ${tutorialSlides.length}`;
+    tutorialLiveTitle.textContent = slide.title;
+    tutorialLiveHint.textContent = slide.tip;
+    tutorialLiveFeedback.textContent = "";
+    tutorialLive.classList.remove("is-success", "is-error");
+    tutorialResultCue.hidden = true;
+    tutorialResultCue.classList.remove("is-success", "is-error");
+    tutorialLive.dataset.ready = "false";
+    delete tutorialLive.dataset.destinationX;
+    delete tutorialLive.dataset.destinationY;
+    tutorialLive.dataset.remaining = String(tutorialRun.targets.length);
+    tutorialLive.dataset.popped = "0";
+    tutorialLive.dataset.targetCount = String(tutorialRun.targets.length);
+    tutorialLive.dataset.targets = JSON.stringify(
+      state.bubbles
+        .filter((bubble) => tutorialRun.targets.includes(bubble.uid))
+        .map((bubble) => ({ uid: bubble.uid, x: Number(bubble.x.toFixed(2)), y: Number(bubble.y.toFixed(2)), kind: tutorialSlides[tutorialStepIndex].scene })),
+    );
+    const firstTarget = state.bubbles.find((bubble) => tutorialRun.targets.includes(bubble.uid));
+    if (firstTarget) {
+      tutorialLive.dataset.targetX = firstTarget.x.toFixed(2);
+      tutorialLive.dataset.targetY = firstTarget.y.toFixed(2);
+    }
+    renderTutorialStep();
+    tutorialOverlay.classList.remove("is-complete");
+    if (showExplanation) {
+      tutorialOverlay.hidden = false;
+      tutorialOverlay.setAttribute("aria-hidden", "false");
+      tutorialLive.hidden = true;
+    }
+    updateHud();
+    draw();
+  }
+
+  function startTutorialSession() {
+    resetGame({ startPaused: true });
+    state.tutorialMode = true;
+    state.paused = true;
+    tutorialRun.active = true;
+    tutorialRun.practicing = false;
+    phoneShell?.classList.add("tutorial-open", "tutorial-active");
+    tutorialOverlay.classList.add("interactive-mode");
+    prepareTutorialStep();
+  }
+
+  function openTutorial() {
+    if (!tutorialOverlay || state.running) return;
+    tutorialStepIndex = 0;
+    startTutorialSession();
+  }
+
+  function stopTutorialSession() {
+    if (tutorialRun.transitionTimer) {
+      window.clearTimeout(tutorialRun.transitionTimer);
+      tutorialRun.transitionTimer = 0;
+    }
+    tutorialRun.active = false;
+    tutorialRun.practicing = false;
+    tutorialRun.targets = [];
+    state.tutorialMode = false;
+    state.running = false;
+    state.paused = false;
+    clearRuntimeEffects();
+    state.elapsed = 0;
+    state.stageLevel = 1;
+    resetBackgroundFlow();
+    curtain.classList.remove("hidden", "result-mode", "starting");
+    titleMark.textContent = "泡泡补水";
+    setStartButtonHome();
+    endStats.textContent = "";
+    tutorialOverlay.hidden = true;
+    tutorialOverlay.setAttribute("aria-hidden", "true");
+    tutorialOverlay.classList.remove("interactive-mode", "is-complete");
+    tutorialLive.hidden = true;
+    tutorialResultCue.hidden = true;
+    phoneShell?.classList.remove("tutorial-open", "tutorial-active", "tutorial-skill-step");
+    if (tutorialComplete) tutorialComplete.hidden = true;
+    if (tutorialFrame) tutorialFrame.hidden = false;
+    if (tutorialControls) tutorialControls.hidden = false;
+    updateHud();
+    draw();
+  }
+
+  function closeTutorial() {
+    stopTutorialSession();
+  }
+
+  function showTutorialComplete() {
+    state.paused = true;
+    tutorialLive.hidden = true;
+    tutorialResultCue.hidden = true;
+    tutorialOverlay.hidden = false;
+    tutorialOverlay.setAttribute("aria-hidden", "false");
+    tutorialOverlay.classList.add("is-complete");
+    tutorialFrame.hidden = true;
+    tutorialControls.hidden = true;
+    tutorialComplete.hidden = false;
+    tutorialProgress.textContent = "完成";
+  }
+
+  function beginTutorialPractice() {
+    if (!tutorialRun.active || tutorialRun.practicing) return;
+    tutorialOverlay.hidden = true;
+    tutorialOverlay.setAttribute("aria-hidden", "true");
+    tutorialLive.hidden = false;
+    tutorialRun.practicing = true;
+    state.paused = false;
+    lastFrameTime = performance.now();
+    state.lastTime = lastFrameTime;
+    scheduleLoop();
+  }
+
+  function completeTutorialPractice() {
+    if (!tutorialRun.practicing) return;
+    tutorialRun.practicing = false;
+    const cinematicSuccess = tutorialSlides[tutorialStepIndex].scene === "power" || tutorialSlides[tutorialStepIndex].scene === "skill";
+    state.paused = !cinematicSuccess;
+    tutorialLive.classList.add("is-success");
+    tutorialLiveFeedback.textContent = "正确，已掌握";
+    tutorialResultCue.hidden = false;
+    tutorialResultCue.classList.remove("is-error");
+    tutorialResultCue.classList.add("is-success");
+    tutorialResultTitle.textContent = "做对了！";
+    tutorialResultText.textContent = tutorialSlides[tutorialStepIndex].success ?? "就是这样，已经学会了";
+    if (navigator.vibrate) navigator.vibrate(22);
+    tutorialRun.transitionTimer = window.setTimeout(() => {
+      tutorialRun.transitionTimer = 0;
+      if (tutorialStepIndex >= tutorialSlides.length - 1) {
+        showTutorialComplete();
+        return;
+      }
+      tutorialStepIndex += 1;
+      prepareTutorialStep();
+    }, cinematicSuccess ? 1180 : 720);
+  }
+
+  function retryTutorialPractice() {
+    if (!tutorialRun.practicing) return;
+    tutorialRun.practicing = false;
+    state.paused = true;
+    tutorialLive.classList.add("is-error");
+    const scene = tutorialSlides[tutorialStepIndex].scene;
+    const errorText = scene.startsWith("drag")
+      ? "手指要按住泡泡，沿虚线拖进目标圈后再松开"
+      : scene === "pulse"
+        ? "点击太早或太晚，请等圆环碰到泡泡再点"
+        : scene === "normal"
+          ? "请确认泡泡颜色和它下面的背景颜色一样"
+          : "没有完成指定动作，请照着说明再做一次";
+    tutorialLiveFeedback.textContent = "没有成功，马上重试";
+    tutorialResultCue.hidden = false;
+    tutorialResultCue.classList.remove("is-success");
+    tutorialResultCue.classList.add("is-error");
+    tutorialResultTitle.textContent = "还差一点";
+    tutorialResultText.textContent = errorText;
+    if (navigator.vibrate) navigator.vibrate([18, 34, 18]);
+    tutorialRun.transitionTimer = window.setTimeout(() => {
+      tutorialRun.transitionTimer = 0;
+      prepareTutorialStep({ showExplanation: false });
+      beginTutorialPractice();
+    }, 760);
+  }
+
+  function monitorTutorialPractice() {
+    if (!tutorialRun.active || !tutorialRun.practicing) return;
+    const activeTarget = state.bubbles.find((bubble) => tutorialRun.targets.includes(bubble.uid));
+    tutorialLive.dataset.ready = activeTarget && !activeTarget.isDrag ? String(canPopBubble(activeTarget)) : "true";
+    if (activeTarget?.tutorialDestination) {
+      tutorialLive.dataset.destinationX = activeTarget.tutorialDestination.x.toFixed(2);
+      tutorialLive.dataset.destinationY = activeTarget.tutorialDestination.y.toFixed(2);
+    }
+    const remaining = tutorialRun.targets.reduce(
+      (count, uid) => count + (state.bubbles.some((bubble) => bubble.uid === uid) ? 1 : 0),
+      0,
+    );
+    const missing = tutorialRun.targets.length - remaining;
+    const popped = state.poppedCount - tutorialRun.poppedBaseline;
+    tutorialLive.dataset.remaining = String(remaining);
+    tutorialLive.dataset.popped = String(popped);
+    if (tutorialRun.expectedMistake && missing > 0 && state.water < tutorialRun.waterBaseline) {
+      completeTutorialPractice();
+      return;
+    }
+    if (!tutorialRun.expectedMistake && popped >= tutorialRun.expectedPops) {
+      completeTutorialPractice();
+      return;
+    }
+    if (missing > popped) retryTutorialPractice();
+  }
+
+  function advanceTutorial() {
+    beginTutorialPractice();
+  }
+
+  function retreatTutorial() {
+    renderTutorialStep();
+  }
+
+  function startGameFromTutorial() {
+    stopTutorialSession();
+    playStartTransition();
   }
 
   function buildStartTransition() {
@@ -10834,6 +12031,16 @@
   initCustomPackDevPanel();
   warmGameSoundFiles();
   startButton.addEventListener("click", playStartTransition);
+  tutorialButton?.addEventListener("click", openTutorial);
+  tutorialCloseButton?.addEventListener("click", closeTutorial);
+  tutorialLiveExitButton?.addEventListener("click", closeTutorial);
+  tutorialPrevButton?.addEventListener("click", retreatTutorial);
+  tutorialNextButton?.addEventListener("click", advanceTutorial);
+  tutorialStartButton?.addEventListener("click", startGameFromTutorial);
+  rewardedAdSkip?.addEventListener("click", () => {
+    if (!rewardedAdActive || performance.now() - rewardedAdStartedAt < rewardedAdSkipDelayMs) return;
+    finishRewardedReviveAd();
+  });
   clearSkillButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();

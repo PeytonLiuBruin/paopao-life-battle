@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>泡泡补水</title>
-    <link rel="stylesheet" href="./styles.css?v=1.3.1" />
+    <link rel="stylesheet" href="./styles.css?v=1.4.4" />
   </head>
   <body>
     <main class="phone-shell" aria-label="泡泡补水游戏">
@@ -92,14 +92,98 @@
 
       <section id="curtain" class="curtain">
         <div class="title-mark">泡泡补水</div>
-        <p class="start-copy">泡泡进入同色背景时戳破它，连续命中为下一颗生命充能。</p>
-        <button id="startButton" class="primary-button" type="button">开始</button>
+        <div class="start-home">
+          <div class="start-kicker"><span></span> 双手节奏生存挑战</div>
+          <div class="start-showcase" aria-hidden="true">
+            <span class="start-wave start-wave-pink"></span>
+            <span class="start-wave start-wave-blue"></span>
+            <span class="start-orbit orbit-one"></span>
+            <span class="start-orbit orbit-two"></span>
+            <span class="start-logo-bubble"></span>
+            <span class="start-mini-bubble mini-one"></span>
+            <span class="start-mini-bubble mini-two"></span>
+            <span class="start-mini-bubble mini-three"></span>
+          </div>
+          <p class="start-copy">看准颜色，跟上节拍。点击、滑动、拖拽，在越来越快的水流中守住三颗生命。</p>
+          <div class="start-status" aria-label="游戏特点">
+            <span><b>3</b> 颗生命</span>
+            <i></i>
+            <span><b>∞</b> 无限挑战</span>
+            <i></i>
+            <span><b>2</b> 手协作</span>
+          </div>
+          <div class="start-actions">
+            <button id="startButton" class="primary-button" type="button"><strong>开始挑战</strong><span>进入 Level 1</span></button>
+            <button id="tutorialButton" class="tutorial-button" type="button"><span class="tutorial-play" aria-hidden="true">?</span><strong>新手教程</strong><small>约 1 分钟</small></button>
+          </div>
+          <p class="start-footnote">建议开启声音 · 横竖屏均可游玩</p>
+        </div>
         <div id="endStats" class="end-stats"></div>
+      </section>
+      <section id="tutorialOverlay" class="tutorial-overlay" aria-label="新手教程" aria-hidden="true" hidden>
+        <header class="tutorial-header">
+          <div>
+            <span class="tutorial-label">HOW TO PLAY</span>
+            <strong id="tutorialProgress">1 / 7</strong>
+          </div>
+          <button id="tutorialClose" class="tutorial-close" type="button" aria-label="退出教程">&times;</button>
+        </header>
+        <div id="tutorialFrame" class="tutorial-frame" data-scene="normal">
+          <div class="tutorial-visual" aria-hidden="true">
+            <span class="tutorial-bg tutorial-bg-a"></span>
+            <span class="tutorial-bg tutorial-bg-b"></span>
+            <span class="tutorial-ring"></span>
+            <span class="tutorial-bubble tutorial-bubble-main"></span>
+            <span class="tutorial-bubble tutorial-bubble-second"></span>
+            <span class="tutorial-bubble tutorial-bubble-third"></span>
+            <span class="tutorial-gesture"></span>
+            <span id="tutorialVisualLabel" class="tutorial-visual-label">同色时点击</span>
+          </div>
+          <div class="tutorial-copy-block">
+            <span id="tutorialKicker" class="tutorial-step-kicker">基础规则</span>
+            <h2 id="tutorialTitle">泡泡碰到同色背景时点击</h2>
+            <p id="tutorialCopy">蓝泡在蓝色区域、粉泡在粉色区域时才是正确时机。点错颜色或让泡泡飞走，都会失去一颗生命。</p>
+            <div id="tutorialTip" class="tutorial-tip">观察泡泡中心所在的颜色</div>
+          </div>
+        </div>
+        <div id="tutorialComplete" class="tutorial-complete" hidden>
+          <div class="tutorial-complete-mark" aria-hidden="true"><span></span></div>
+          <span>TRAINING COMPLETE</span>
+          <h2>准备好跟上水流了吗？</h2>
+          <p>正式挑战会从 Level 1 开始，泡泡会随着节拍逐步加速。</p>
+          <button id="tutorialStart" class="primary-button" type="button"><strong>开始正式挑战</strong><span>3 颗生命 · Level 1</span></button>
+        </div>
+        <footer id="tutorialControls" class="tutorial-controls">
+          <button id="tutorialPrev" type="button">上一步</button>
+          <div id="tutorialDots" class="tutorial-dots" aria-hidden="true"></div>
+          <button id="tutorialNext" class="is-primary" type="button">下一步</button>
+        </footer>
+      </section>
+      <section id="tutorialLive" class="tutorial-live" aria-live="polite" hidden>
+        <div class="tutorial-live-topline">
+          <span id="tutorialLiveProgress">练习 1 / 7</span>
+          <button id="tutorialLiveExit" type="button" aria-label="退出教程">&times;</button>
+        </div>
+        <strong id="tutorialLiveTitle">同色时点击泡泡</strong>
+        <span id="tutorialLiveHint">完成正确操作后自动进入下一项</span>
+        <b id="tutorialLiveFeedback"></b>
+      </section>
+      <section id="tutorialResultCue" class="tutorial-result-cue" aria-live="assertive" hidden>
+        <div class="tutorial-result-icon" aria-hidden="true"></div>
+        <strong id="tutorialResultTitle">做对了</strong>
+        <span id="tutorialResultText">就是这样</span>
+      </section>
+      <section id="rewardedAd" class="rewarded-ad" aria-label="复活广告" aria-hidden="true" hidden>
+        <img id="rewardedAdMedia" class="rewarded-ad-media" alt="" />
+        <span class="rewarded-ad-label">广告</span>
+        <span id="rewardedAdWait" class="rewarded-ad-wait" aria-live="polite">5</span>
+        <button id="rewardedAdSkip" class="rewarded-ad-skip" type="button" hidden>跳过</button>
+        <div class="rewarded-ad-progress" aria-hidden="true"><span id="rewardedAdProgress"></span></div>
       </section>
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./background-engine.js?v=1.3.1" defer></script>
-    <script src="./game.js?v=1.3.1" defer></script>
+    <script src="./background-engine.js?v=1.4.4" defer></script>
+    <script src="./game.js?v=1.4.4" defer></script>
   </body>
 </html>
