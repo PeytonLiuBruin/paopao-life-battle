@@ -7,11 +7,11 @@
     <meta http-equiv="Cache-Control" content="no-store" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-  <title>泡泡乐</title>
-    <link rel="stylesheet" href="./styles.css?v=1.4.7" />
+  <title>泡泡乐 DEMO</title>
+    <link rel="stylesheet" href="./styles.css?v=1.4.8" />
   </head>
   <body>
-  <main class="phone-shell" aria-label="泡泡乐游戏">
+  <main class="phone-shell" aria-label="泡泡乐 DEMO 游戏">
       <canvas id="game" aria-label="游戏画面"></canvas>
 
       <section class="hud" aria-label="游戏状态">
@@ -105,7 +105,7 @@
       </section>
 
       <section id="curtain" class="curtain">
-        <div class="title-mark">泡泡乐</div>
+        <div class="title-mark" data-edition="DEMO">泡泡乐</div>
         <div class="start-home">
           <div class="start-kicker"><span></span> 双手节奏生存挑战</div>
           <div class="start-showcase" aria-hidden="true">
@@ -126,6 +126,11 @@
             <i></i>
             <span><b>2</b> 手协作</span>
           </div>
+          <label class="start-profile" for="playerNameInput">
+            <span>排行榜昵称</span>
+            <input id="playerNameInput" type="text" maxlength="10" autocomplete="nickname" placeholder="输入你的名字" />
+            <small id="leaderboardStatus">正在连接全球榜</small>
+          </label>
           <div class="start-actions">
             <button id="startButton" class="primary-button" type="button"><strong>开始挑战</strong><span>进入 Level 1</span></button>
             <button id="tutorialButton" class="tutorial-button" type="button"><span class="tutorial-play" aria-hidden="true">?</span><strong>新手教程</strong><small>约 1 分钟</small></button>
@@ -202,7 +207,8 @@
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./background-engine.js?v=1.4.7" defer></script>
-    <script src="./game.js?v=1.4.7" defer></script>
+    <script src="./firebase-leaderboard.js?v=1.4.8" defer></script>
+    <script src="./background-engine.js?v=1.4.8" defer></script>
+    <script src="./game.js?v=1.4.8" defer></script>
   </body>
 </html>
