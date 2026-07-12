@@ -9,13 +9,14 @@
     storageBucket: "tap-pop-dc3b2.firebasestorage.app",
     messagingSenderId: "194329223920",
     appId: "1:194329223920:web:d94f9547bb581031a31835",
+    databaseURL: "https://tap-pop-dc3b2-default-rtdb.firebaseio.com",
   };
 
   const moduleUrl = (name) => `https://www.gstatic.com/firebasejs/${sdkVersion}/firebase-${name}.js`;
   const modulesPromise = Promise.all([
     import(moduleUrl("app")),
     import(moduleUrl("auth")),
-    import(moduleUrl("firestore")),
+    import(moduleUrl("database")),
   ]);
 
   const clampInteger = (value, min, max) => Math.min(max, Math.max(min, Math.round(Number(value) || 0)));
@@ -52,54 +53,63 @@
     );
   }
 
-  const contextPromise = modulesPromise.then(async ([appSdk, authSdk, firestoreSdk]) => {
+  const contextPromise = modulesPromise.then(async ([appSdk, authSdk, databaseSdk]) => {
     const app = appSdk.initializeApp(firebaseConfig);
     const auth = authSdk.getAuth(app);
-    const db = firestoreSdk.getFirestore(app);
+    const db = databaseSdk.getDatabase(app, firebaseConfig.databaseURL);
     if (!auth.currentUser) await authSdk.signInAnonymously(auth);
-    return { auth, authSdk, db, firestoreSdk };
+    return { auth, databaseSdk, db };
   });
 
   async function setPlayerName(value) {
     const username = normalizeName(value);
     if (!username) throw new Error("请输入昵称");
-    const { auth, db, firestoreSdk } = await contextPromise;
-    const ref = firestoreSdk.doc(db, "leaderboard", auth.currentUser.uid);
-    const snapshot = await firestoreSdk.getDoc(ref);
+    const { auth, databaseSdk, db } = await contextPromise;
+    const scoreRef = databaseSdk.ref(db, `leaderboard/${auth.currentUser.uid}`);
+    const snapshot = await databaseSdk.get(scoreRef);
     if (snapshot.exists()) {
-      await firestoreSdk.updateDoc(ref, {
+      await databaseSdk.update(scoreRef, {
         username,
-        updatedAt: firestoreSdk.serverTimestamp(),
+        updatedAt: databaseSdk.serverTimestamp(),
       });
     }
     return username;
   }
 
   async function submitBestScore(input) {
-    const { auth, db, firestoreSdk } = await contextPromise;
+    const { auth, databaseSdk, db } = await contextPromise;
     const uid = auth.currentUser.uid;
     const incoming = normalizeScore(input, uid);
-    const ref = firestoreSdk.doc(db, "leaderboard", uid);
-    return firestoreSdk.runTransaction(db, async (transaction) => {
-      const snapshot = await transaction.get(ref);
-      const previous = snapshot.exists() ? normalizeScore(snapshot.data(), uid, incoming.username) : null;
-      const isBetter = !previous || compareRecords(incoming, previous) < 0;
-      if (isBetter) {
-        transaction.set(ref, {
-          ...incoming,
-          createdAt: snapshot.data()?.createdAt || firestoreSdk.serverTimestamp(),
-          updatedAt: firestoreSdk.serverTimestamp(),
-        });
-        return { record: incoming, isCurrentBest: true };
-      }
-      if (previous.username !== incoming.username) {
-        transaction.update(ref, {
-          username: incoming.username,
-          updatedAt: firestoreSdk.serverTimestamp(),
-        });
-      }
-      return { record: { ...previous, username: incoming.username }, isCurrentBest: false };
-    });
+    const scoreRef = databaseSdk.ref(db, `leaderboard/${uid}`);
+    const transaction = await databaseSdk.runTransaction(
+      scoreRef,
+      (currentData) => {
+        const previous = currentData ? normalizeScore(currentData, uid, incoming.username) : null;
+        const isBetter = !previous || compareRecords(incoming, previous) < 0;
+        if (isBetter) {
+          return {
+            ...incoming,
+            createdAt: currentData?.createdAt || databaseSdk.serverTimestamp(),
+            updatedAt: databaseSdk.serverTimestamp(),
+          };
+        }
+        if (previous.username !== incoming.username) {
+          return {
+            ...currentData,
+            username: incoming.username,
+            updatedAt: databaseSdk.serverTimestamp(),
+          };
+        }
+        return currentData;
+      },
+      { applyLocally: false },
+    );
+    if (!transaction.committed || !transaction.snapshot.exists()) throw new Error("成绩写入失败");
+    const record = normalizeScore(transaction.snapshot.val(), uid, incoming.username);
+    return {
+      record,
+      isCurrentBest: record.rankScore === incoming.rankScore && record.elapsed === incoming.elapsed,
+    };
   }
 
   function resultItem(record, place, uid, tone) {
@@ -122,62 +132,56 @@
     };
   }
 
-  async function loadLeaderboard() {
-    const { auth, db, firestoreSdk } = await contextPromise;
-    const uid = auth.currentUser.uid;
-    const collectionRef = firestoreSdk.collection(db, "leaderboard");
-    const currentRef = firestoreSdk.doc(db, "leaderboard", uid);
-    const topQuery = firestoreSdk.query(
-      collectionRef,
-      firestoreSdk.orderBy("rankScore", "desc"),
-      firestoreSdk.limit(4),
-    );
-    const [topSnapshot, currentSnapshot, totalSnapshot] = await Promise.all([
-      firestoreSdk.getDocs(topQuery),
-      firestoreSdk.getDoc(currentRef),
-      firestoreSdk.getCountFromServer(collectionRef),
-    ]);
-    if (!currentSnapshot.exists()) throw new Error("成绩尚未写入");
-
-    const current = normalizeScore(currentSnapshot.data(), uid);
-    const betterQuery = firestoreSdk.query(
-      collectionRef,
-      firestoreSdk.where("rankScore", ">", current.rankScore),
-    );
-    const aheadQuery = firestoreSdk.query(
-      collectionRef,
-      firestoreSdk.where("rankScore", ">", current.rankScore),
-      firestoreSdk.orderBy("rankScore", "asc"),
-      firestoreSdk.limit(1),
-    );
-    const [betterSnapshot, aheadSnapshot] = await Promise.all([
-      firestoreSdk.getCountFromServer(betterQuery),
-      firestoreSdk.getDocs(aheadQuery),
-    ]);
-
-    const rank = betterSnapshot.data().count + 1;
-    const totalCount = Math.max(1, totalSnapshot.data().count);
+  function leaderboardContext(rawValue, uid) {
+    const rawRecords = rawValue && typeof rawValue === "object" ? rawValue : {};
+    const records = Object.entries(rawRecords)
+      .map(([recordUid, record]) => normalizeScore(record, recordUid))
+      .sort(compareRecords);
+    const currentIndex = records.findIndex((record) => record.uid === uid);
+    if (currentIndex < 0) throw new Error("成绩尚未写入");
+    const current = records[currentIndex];
+    const rank = currentIndex + 1;
+    const totalCount = Math.max(1, records.length);
     const percentile =
       totalCount <= 1 ? 100 : Math.max(0, Math.min(100, Math.round(((totalCount - rank) / (totalCount - 1)) * 100)));
-    const topRecords = topSnapshot.docs.map((entry) => normalizeScore(entry.data(), entry.id));
+    const topRecords = records.slice(0, 4);
     const tones = ["violet", "mint", "rose", "indigo"];
     const leaderboard = topRecords.map((record, index) => resultItem(record, index + 1, uid, tones[index % tones.length]));
     if (!leaderboard.some((item) => item.isCurrent)) {
       leaderboard.push(resultItem(current, rank, uid, "me"));
     }
-    const aheadDocument = aheadSnapshot.docs[0];
-    const aheadRecord = aheadDocument ? normalizeScore(aheadDocument.data(), aheadDocument.id) : null;
 
     return {
       source: "global",
       current: { ...current, id: uid },
-      records: topRecords,
-      aheadRecord,
+      records,
+      aheadRecord: rank > 1 ? records[rank - 2] : null,
       rank,
       totalCount,
       percentile,
       leaderboard,
     };
+  }
+
+  async function loadLeaderboard() {
+    const { auth, databaseSdk, db } = await contextPromise;
+    const snapshot = await databaseSdk.get(databaseSdk.ref(db, "leaderboard"));
+    return leaderboardContext(snapshot.val(), auth.currentUser.uid);
+  }
+
+  async function watchLeaderboard(onChange, onError) {
+    const { auth, databaseSdk, db } = await contextPromise;
+    return databaseSdk.onValue(
+      databaseSdk.ref(db, "leaderboard"),
+      (snapshot) => {
+        try {
+          onChange(leaderboardContext(snapshot.val(), auth.currentUser.uid));
+        } catch (error) {
+          onError?.(error);
+        }
+      },
+      (error) => onError?.(error),
+    );
   }
 
   async function submitAndLoad(input) {
@@ -186,13 +190,17 @@
     return { ...board, isCurrentBest: submission.isCurrentBest };
   }
 
-  const ready = contextPromise.then(({ auth }) => ({ uid: auth.currentUser.uid }));
+  const ready = contextPromise.then(async ({ auth, databaseSdk, db }) => {
+    await databaseSdk.get(databaseSdk.ref(db, "leaderboard"));
+    return { uid: auth.currentUser.uid };
+  });
   window.PaopaoLeaderboard = {
     ready,
     normalizeName,
     setPlayerName,
     submitBestScore,
     loadLeaderboard,
+    watchLeaderboard,
     submitAndLoad,
   };
   ready.then(

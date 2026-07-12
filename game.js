@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.8";
+  const buildVersion = "1.4.9";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -96,7 +96,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.8`;
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.9`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -412,6 +412,7 @@
   let rewardedAdActive = false;
   let introRunning = false;
   let resultSyncSequence = 0;
+  let leaderboardWatchStop = null;
   let musicEnabled = true;
   let musicVolume = 0.1;
   let tutorialStepIndex = 0;
@@ -2050,6 +2051,7 @@
 
   function resetGame(options = {}) {
     const startPaused = Boolean(options?.startPaused);
+    stopGlobalLeaderboardWatch();
     pauseBackgroundMusic({ reset: true });
     resetRewardedAdOverlay();
     state.running = true;
@@ -2376,6 +2378,7 @@
     homeLabel.textContent = "返回主页";
     homeButton.append(homeLabel);
     homeButton.addEventListener("click", () => {
+      stopGlobalLeaderboardWatch();
       pauseBackgroundMusic({ reset: true });
       curtain.classList.remove("result-mode");
       titleMark.textContent = "泡泡乐";
@@ -2400,9 +2403,31 @@
     return root;
   }
 
+  function stopGlobalLeaderboardWatch() {
+    if (typeof leaderboardWatchStop === "function") leaderboardWatchStop();
+    leaderboardWatchStop = null;
+  }
+
+  function canRenderGlobalLeaderboard(syncToken) {
+    return (
+      syncToken === resultSyncSequence &&
+      !state.running &&
+      !rewardedAdActive &&
+      curtain.classList.contains("result-mode")
+    );
+  }
+
+  function renderGlobalLeaderboard(stats, boardData, syncToken) {
+    if (!canRenderGlobalLeaderboard(syncToken)) return false;
+    endStats.replaceChildren(buildResultScreen(stats, boardData));
+    curtain.scrollTop = 0;
+    return true;
+  }
+
   async function syncGlobalLeaderboardResult(stats, localBoard, syncToken) {
     const leaderboard = window.PaopaoLeaderboard;
     if (!leaderboard || !localBoard?.current) return;
+    stopGlobalLeaderboardWatch();
     setLeaderboardStatus("正在上传本局成绩", "syncing");
     try {
       const globalBoard = await leaderboard.submitAndLoad({
@@ -2413,17 +2438,18 @@
         elapsed: localBoard.current.elapsed,
         total: localBoard.current.total,
       });
-      if (
-        syncToken !== resultSyncSequence ||
-        state.running ||
-        rewardedAdActive ||
-        !curtain.classList.contains("result-mode")
-      ) {
-        return;
-      }
+      if (!canRenderGlobalLeaderboard(syncToken)) return;
       setLeaderboardStatus("成绩已同步到全球榜", "online");
-      endStats.replaceChildren(buildResultScreen(stats, globalBoard));
-      curtain.scrollTop = 0;
+      renderGlobalLeaderboard(stats, globalBoard, syncToken);
+      if (leaderboard.watchLeaderboard) {
+        const isCurrentBest = globalBoard.isCurrentBest;
+        const stop = await leaderboard.watchLeaderboard(
+          (liveBoard) => renderGlobalLeaderboard(stats, { ...liveBoard, isCurrentBest }, syncToken),
+          (error) => console.warn("Realtime leaderboard listener paused.", error),
+        );
+        if (canRenderGlobalLeaderboard(syncToken)) leaderboardWatchStop = stop;
+        else stop?.();
+      }
     } catch (error) {
       console.warn("Global leaderboard unavailable; keeping local result.", error);
       setLeaderboardStatus("全球榜暂不可用，本局已保存在本机", "offline");
@@ -2492,6 +2518,7 @@
 
   function finishRewardedReviveAd() {
     if (!rewardedAdActive) return false;
+    stopGlobalLeaderboardWatch();
     resetRewardedAdOverlay();
     curtain.classList.remove("result-mode");
     curtain.classList.add("hidden");
@@ -12288,6 +12315,7 @@
   }
 
   function returnHomeFromSettings() {
+    stopGlobalLeaderboardWatch();
     closeSettings({ resume: false });
     pauseBackgroundMusic({ reset: true });
     stopTutorialSession();

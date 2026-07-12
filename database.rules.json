@@ -1,0 +1,24 @@
+{
+  "rules": {
+    "leaderboard": {
+      ".read": "auth != null",
+      ".indexOn": ["rankScore"],
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid && newData.exists() && (!data.exists() || (newData.child('rankScore').val() >= data.child('rankScore').val() && newData.child('createdAt').val() === data.child('createdAt').val()))",
+        ".validate": "newData.hasChildren(['uid', 'username', 'level', 'hitCount', 'bestCombo', 'elapsed', 'total', 'rankScore', 'schemaVersion', 'createdAt', 'updatedAt'])",
+        "uid": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+        "username": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 10" },
+        "level": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 100" },
+        "hitCount": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
+        "bestCombo": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000" },
+        "elapsed": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 86400000" },
+        "total": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000" },
+        "rankScore": { ".validate": "newData.isNumber() && newData.val() === newData.parent().child('level').val() * 1000000000000 + newData.parent().child('hitCount').val() * 1000000 + newData.parent().child('bestCombo').val() * 100" },
+        "schemaVersion": { ".validate": "newData.val() === 1" },
+        "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+        "updatedAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
