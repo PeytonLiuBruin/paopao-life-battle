@@ -7,11 +7,11 @@
     <meta http-equiv="Cache-Control" content="no-store" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>泡泡补水</title>
-    <link rel="stylesheet" href="./styles.css?v=1.4.4" />
+  <title>泡泡乐</title>
+    <link rel="stylesheet" href="./styles.css?v=1.4.7" />
   </head>
   <body>
-    <main class="phone-shell" aria-label="泡泡补水游戏">
+  <main class="phone-shell" aria-label="泡泡乐游戏">
       <canvas id="game" aria-label="游戏画面"></canvas>
 
       <section class="hud" aria-label="游戏状态">
@@ -84,14 +84,28 @@
           <span id="settingsStageMeta" class="settings-stage-meta">Lv 1 · 中央水波</span>
         </div>
 
+        <div class="settings-audio">
+          <div class="settings-audio-heading">
+            <label for="musicVolume">背景音乐</label>
+            <output id="musicVolumeValue" for="musicVolume">10%</output>
+          </div>
+          <div class="settings-audio-control">
+            <button id="musicToggle" class="music-toggle" type="button" aria-label="关闭背景音乐" aria-pressed="true">
+              <span class="speaker-icon" aria-hidden="true"></span>
+            </button>
+            <input id="musicVolume" type="range" min="0" max="100" step="1" value="10" aria-label="背景音乐音量" />
+          </div>
+        </div>
+
         <button id="settingsPause" class="settings-pause" type="button">
           <span id="settingsPauseIcon" aria-hidden="true">&#9654;</span>
           <strong id="settingsPauseLabel">继续游戏</strong>
         </button>
+        <button id="settingsHome" class="settings-home" type="button">返回主页</button>
       </section>
 
       <section id="curtain" class="curtain">
-        <div class="title-mark">泡泡补水</div>
+        <div class="title-mark">泡泡乐</div>
         <div class="start-home">
           <div class="start-kicker"><span></span> 双手节奏生存挑战</div>
           <div class="start-showcase" aria-hidden="true">
@@ -126,7 +140,6 @@
             <span class="tutorial-label">HOW TO PLAY</span>
             <strong id="tutorialProgress">1 / 7</strong>
           </div>
-          <button id="tutorialClose" class="tutorial-close" type="button" aria-label="退出教程">&times;</button>
         </header>
         <div id="tutorialFrame" class="tutorial-frame" data-scene="normal">
           <div class="tutorial-visual" aria-hidden="true">
@@ -149,29 +162,34 @@
         <div id="tutorialComplete" class="tutorial-complete" hidden>
           <div class="tutorial-complete-mark" aria-hidden="true"><span></span></div>
           <span>TRAINING COMPLETE</span>
-          <h2>准备好跟上水流了吗？</h2>
-          <p>正式挑战会从 Level 1 开始，泡泡会随着节拍逐步加速。</p>
-          <button id="tutorialStart" class="primary-button" type="button"><strong>开始正式挑战</strong><span>3 颗生命 · Level 1</span></button>
+          <h2>准备好开始解压了吗？</h2>
+          <p>点泡泡，正式开始啦！</p>
+          <button id="tutorialStart" class="primary-button" type="button"><strong>开始游戏</strong><span>3 颗生命 · Level 1</span></button>
         </div>
         <footer id="tutorialControls" class="tutorial-controls">
-          <button id="tutorialPrev" type="button">上一步</button>
+          <button id="tutorialPrev" class="tutorial-home" type="button">返回主页</button>
           <div id="tutorialDots" class="tutorial-dots" aria-hidden="true"></div>
-          <button id="tutorialNext" class="is-primary" type="button">下一步</button>
+          <button id="tutorialNext" class="is-primary" type="button">让我试试！</button>
         </footer>
       </section>
       <section id="tutorialLive" class="tutorial-live" aria-live="polite" hidden>
         <div class="tutorial-live-topline">
           <span id="tutorialLiveProgress">练习 1 / 7</span>
-          <button id="tutorialLiveExit" type="button" aria-label="退出教程">&times;</button>
+          <button id="tutorialLiveExit" type="button">返回主页</button>
         </div>
         <strong id="tutorialLiveTitle">同色时点击泡泡</strong>
         <span id="tutorialLiveHint">完成正确操作后自动进入下一项</span>
         <b id="tutorialLiveFeedback"></b>
       </section>
+      <div id="tutorialFocus" class="tutorial-focus" aria-hidden="true" hidden>
+        <span id="tutorialFocusLabel"></span>
+      </div>
       <section id="tutorialResultCue" class="tutorial-result-cue" aria-live="assertive" hidden>
         <div class="tutorial-result-icon" aria-hidden="true"></div>
         <strong id="tutorialResultTitle">做对了</strong>
         <span id="tutorialResultText">就是这样</span>
+        <button id="tutorialResultNext" type="button">点击继续</button>
+        <div class="tutorial-result-progress" aria-hidden="true"><i id="tutorialResultProgress"></i></div>
       </section>
       <section id="rewardedAd" class="rewarded-ad" aria-label="复活广告" aria-hidden="true" hidden>
         <img id="rewardedAdMedia" class="rewarded-ad-media" alt="" />
@@ -180,10 +198,11 @@
         <button id="rewardedAdSkip" class="rewarded-ad-skip" type="button" hidden>跳过</button>
         <div class="rewarded-ad-progress" aria-hidden="true"><span id="rewardedAdProgress"></span></div>
       </section>
+      <audio id="backgroundMusic" src="./assets/music/bgm.mp3" preload="metadata"></audio>
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./background-engine.js?v=1.4.4" defer></script>
-    <script src="./game.js?v=1.4.4" defer></script>
+    <script src="./background-engine.js?v=1.4.7" defer></script>
+    <script src="./game.js?v=1.4.7" defer></script>
   </body>
 </html>

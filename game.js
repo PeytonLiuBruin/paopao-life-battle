@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.4";
+  const buildVersion = "1.4.7";
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const tutorialButton = document.getElementById("tutorialButton");
@@ -32,6 +32,10 @@
   const tutorialResultCue = document.getElementById("tutorialResultCue");
   const tutorialResultTitle = document.getElementById("tutorialResultTitle");
   const tutorialResultText = document.getElementById("tutorialResultText");
+  const tutorialResultNext = document.getElementById("tutorialResultNext");
+  const tutorialResultProgress = document.getElementById("tutorialResultProgress");
+  const tutorialFocus = document.getElementById("tutorialFocus");
+  const tutorialFocusLabel = document.getElementById("tutorialFocusLabel");
   const titleMark = document.querySelector(".title-mark");
   const startTransition = document.getElementById("startTransition");
   const endStats = document.getElementById("endStats");
@@ -60,6 +64,11 @@
   const settingsPauseButton = document.getElementById("settingsPause");
   const settingsPauseIcon = document.getElementById("settingsPauseIcon");
   const settingsPauseLabel = document.getElementById("settingsPauseLabel");
+  const settingsHomeButton = document.getElementById("settingsHome");
+  const backgroundMusic = document.getElementById("backgroundMusic");
+  const musicToggleButton = document.getElementById("musicToggle");
+  const musicVolumeInput = document.getElementById("musicVolume");
+  const musicVolumeValue = document.getElementById("musicVolumeValue");
   const perfDebug = document.getElementById("perfDebug");
   const debugLevelSelect = document.getElementById("debugLevel");
   const debugJumpButton = document.getElementById("debugJump");
@@ -84,7 +93,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-      image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.4`;
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.7`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -230,6 +239,9 @@
   const gameOverWaterThreshold = heartWater;
   const customPackStorageKey = "paopao.customBubblePack.v1";
   const localLeaderboardStorageKey = "paopao.localLeaderboard.v1";
+  const playerNameStorageKey = "paopao.playerName.v1";
+  const musicEnabledStorageKey = "paopao.musicEnabled.v1";
+  const musicVolumeStorageKey = "paopao.musicVolume.v2";
   const localLeaderboardLimit = 80;
   const customPackSchema = "paopao-bubble-pack@1";
   const fairMatchDwell = 2.5;
@@ -396,6 +408,8 @@
   let rewardedAdStartedAt = 0;
   let rewardedAdActive = false;
   let introRunning = false;
+  let musicEnabled = true;
+  let musicVolume = 0.1;
   let tutorialStepIndex = 0;
   const tutorialRun = {
     active: false,
@@ -406,6 +420,10 @@
     expectedMistake: false,
     waterBaseline: 100,
     transitionTimer: 0,
+    pendingOutcome: "",
+    deadlineAt: 0,
+    retryReason: "",
+    resolveAt: 0,
   };
   let frameRequest = 0;
   let lastFrameTime = 0;
@@ -1540,6 +1558,69 @@
     return `${minutes}:${seconds}`;
   }
 
+  function loadMusicPreferences() {
+    try {
+      const enabled = window.localStorage.getItem(musicEnabledStorageKey);
+      const volumeValue = window.localStorage.getItem(musicVolumeStorageKey);
+      const storedVolume = volumeValue === null ? Number.NaN : Number(volumeValue);
+      musicEnabled = enabled === null ? true : enabled === "true";
+      musicVolume = Number.isFinite(storedVolume) ? clamp(storedVolume, 0, 1) : 0.1;
+    } catch {
+      musicEnabled = true;
+      musicVolume = 0.1;
+    }
+  }
+
+  function saveMusicPreferences() {
+    try {
+      window.localStorage.setItem(musicEnabledStorageKey, String(musicEnabled));
+      window.localStorage.setItem(musicVolumeStorageKey, musicVolume.toFixed(3));
+    } catch {
+      // Music settings still work for the current session.
+    }
+  }
+
+  function syncMusicControls() {
+    if (backgroundMusic) {
+      backgroundMusic.loop = false;
+      backgroundMusic.volume = musicEnabled ? musicVolume : 0;
+    }
+    if (musicToggleButton) {
+      musicToggleButton.classList.toggle("is-muted", !musicEnabled);
+      musicToggleButton.setAttribute("aria-pressed", String(musicEnabled));
+      musicToggleButton.setAttribute("aria-label", musicEnabled ? "关闭背景音乐" : "开启背景音乐");
+    }
+    if (musicVolumeInput) musicVolumeInput.value = String(Math.round(musicVolume * 100));
+    if (musicVolumeValue) musicVolumeValue.textContent = musicEnabled ? `${Math.round(musicVolume * 100)}%` : "已关闭";
+  }
+
+  function pauseBackgroundMusic({ reset = false } = {}) {
+    if (!backgroundMusic) return;
+    backgroundMusic.pause();
+    if (reset) {
+      try {
+        backgroundMusic.currentTime = 0;
+      } catch {
+        // Metadata may not have loaded yet.
+      }
+    }
+  }
+
+  function playBackgroundMusic({ restart = false } = {}) {
+    if (!backgroundMusic || !musicEnabled || !state.running || state.paused || state.tutorialMode || rewardedAdActive) return;
+    if (restart) {
+      try {
+        backgroundMusic.currentTime = 0;
+      } catch {
+        // Metadata may not have loaded yet.
+      }
+    } else if (backgroundMusic.ended) {
+      return;
+    }
+    backgroundMusic.volume = musicVolume;
+    backgroundMusic.play().catch(() => {});
+  }
+
   function scoreBreakdown() {
     const seconds = Math.max(0, Math.floor(state.elapsed / 1000));
     const timeScore = seconds;
@@ -1553,6 +1634,33 @@
     };
   }
 
+  function normalizePlayerName(value) {
+    const normalized = String(value ?? "").replace(/[\r\n\t]/g, " ").replace(/\s+/g, " ").trim().slice(0, 10);
+    return normalized || "你";
+  }
+
+  function loadPlayerName() {
+    try {
+      return normalizePlayerName(window.localStorage.getItem(playerNameStorageKey));
+    } catch {
+      return "你";
+    }
+  }
+
+  function savePlayerName(value, currentId = "") {
+    const name = normalizePlayerName(value);
+    try {
+      window.localStorage.setItem(playerNameStorageKey, name);
+      if (currentId) {
+        const records = loadLocalLeaderboardRecords().map((record) => record.id === currentId ? { ...record, name } : record);
+        window.localStorage.setItem(localLeaderboardStorageKey, JSON.stringify(records.slice(0, localLeaderboardLimit)));
+      }
+    } catch {
+      // The visible name still updates for this result.
+    }
+    return name;
+  }
+
   function normalizeLocalLeaderboardRecord(record) {
     if (!record || typeof record !== "object") return null;
     const createdAt = Number(record.createdAt);
@@ -1560,6 +1668,7 @@
     return {
       id: String(record.id || `local-${createdAt || Date.now()}-${hitCount}`).slice(0, 48),
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+      name: normalizePlayerName(record.name || "泡泡玩家"),
       level: Math.max(1, Math.round(Number(record.level ?? 1))),
       hitCount,
       bestCombo: Math.max(0, Math.round(Number(record.bestCombo ?? 0))),
@@ -1601,6 +1710,7 @@
     return {
       id,
       createdAt,
+      name: loadPlayerName(),
       level: displayDifficultyLevel(),
       hitCount: state.correctBubbleCount,
       bestCombo: state.bestCombo,
@@ -1610,7 +1720,7 @@
   }
 
   function localLeaderboardRecordLabel(record, currentId) {
-    return `第${record.level}关`;
+    return record.id === currentId ? normalizePlayerName(record.name || loadPlayerName()) : normalizePlayerName(record.name || "泡泡玩家");
   }
 
   function formatLocalBubbleCount(count) {
@@ -1619,18 +1729,29 @@
   }
 
   function localLeaderboardSlots(records, currentIndex, currentId) {
-    const tones = ["violet", "mint", "rose", "indigo", "violet"];
-    const visibleCount = Math.min(5, records.length);
-    const centeredStart = currentIndex - 2;
-    const maxStart = Math.max(0, records.length - visibleCount);
-    const start = clamp(centeredStart, 0, maxStart);
-    return records.slice(start, start + visibleCount).map((record, index) => {
-      const place = start + index + 1;
+    const tones = ["violet", "mint", "rose", "indigo"];
+    const currentRecord = records[currentIndex] ?? null;
+    const visibleRecords = records.slice(0, 4);
+    if (currentRecord && !visibleRecords.some((record) => record.id === currentRecord.id)) {
+      visibleRecords.push(currentRecord);
+    }
+    return visibleRecords.map((record, index) => {
+      const place = records.findIndex((item) => item.id === record.id) + 1;
+      const isCurrent = record.id === currentId;
       return {
         place,
         name: localLeaderboardRecordLabel(record, currentId),
+        level: record.level,
         score: formatLocalBubbleCount(record.hitCount),
-        tone: record.id === currentId ? "me" : tones[index],
+        tone: isCurrent ? "me" : tones[index % tones.length],
+        isCurrent,
+        praise: isCurrent
+          ? place === 1
+            ? "你就是本机最强"
+            : place <= 5
+              ? "强势杀进前五"
+              : `第 ${place} 名也很能打`
+          : "",
         empty: false,
       };
     });
@@ -1866,6 +1987,7 @@
 
   function resetGame(options = {}) {
     const startPaused = Boolean(options?.startPaused);
+    pauseBackgroundMusic({ reset: true });
     resetRewardedAdOverlay();
     state.running = true;
     state.paused = startPaused;
@@ -1958,7 +2080,7 @@
     state.lastSwipeX = 0;
     state.lastSwipeY = 0;
     if (titleMark) {
-      titleMark.textContent = "泡泡补水";
+      titleMark.textContent = "泡泡乐";
     }
     updateHud();
     curtain.classList.remove("result-mode");
@@ -1975,6 +2097,7 @@
     draw();
     updatePerfDebug(lastFrameTime, true);
     scheduleLoop();
+    if (!startPaused) playBackgroundMusic({ restart: true });
   }
 
   function resultGradeForRun(level, hitCount, bestCombo, elapsedMs) {
@@ -2102,7 +2225,9 @@
     if (totalCount <= 1) {
       boardSub.textContent = "首局记录已保存";
     } else if (rank === 1) {
-      boardSub.textContent = `本机历史最佳 / 共 ${totalCount} 局`;
+      boardSub.textContent = `你就是本机最强 / 共 ${totalCount} 局`;
+    } else if (rank <= 5) {
+      boardSub.textContent = `强势杀进前五，第 ${rank} 名！`;
     } else {
       const boardPercent = document.createElement("em");
       boardPercent.textContent = `${percentile}%`;
@@ -2123,11 +2248,32 @@
       const avatar = document.createElement("span");
       avatar.className = "result-avatar";
       avatar.setAttribute("aria-hidden", "true");
-      const name = document.createElement("span");
-      name.textContent = item.name;
+      const name = item.isCurrent ? document.createElement("input") : document.createElement("span");
+      if (item.isCurrent) {
+        name.className = "result-player-name";
+        name.type = "text";
+        name.maxLength = 10;
+        name.value = item.name;
+        name.placeholder = "输入名字";
+        name.setAttribute("aria-label", "你的排行榜名字");
+        const commitName = () => {
+          const savedName = savePlayerName(name.value, boardData.current.id);
+          name.value = savedName;
+        };
+        name.addEventListener("change", commitName);
+        name.addEventListener("blur", commitName);
+      } else {
+        name.textContent = item.name;
+      }
       const score = document.createElement("strong");
-      score.textContent = String(item.score);
+      score.textContent = `第${item.level}关 · ${item.score}`;
       card.append(place, avatar, name, score);
+      if (item.isCurrent && item.praise) {
+        const praise = document.createElement("small");
+        praise.className = "result-rank-praise";
+        praise.textContent = item.praise;
+        card.append(praise);
+      }
       rankList.append(card);
     });
     board.append(boardTitle, rankList);
@@ -2154,8 +2300,9 @@
     homeLabel.textContent = "返回主页";
     homeButton.append(homeLabel);
     homeButton.addEventListener("click", () => {
+      pauseBackgroundMusic({ reset: true });
       curtain.classList.remove("result-mode");
-      titleMark.textContent = "泡泡补水";
+      titleMark.textContent = "泡泡乐";
       setStartButtonHome();
       endStats.textContent = "";
       clearRuntimeEffects();
@@ -2243,7 +2390,7 @@
     curtain.classList.remove("result-mode");
     curtain.classList.add("hidden");
     endStats.textContent = "";
-    if (titleMark) titleMark.textContent = "泡泡补水";
+    if (titleMark) titleMark.textContent = "泡泡乐";
     state.water = heartWater;
     state.invulnerableUntil = state.elapsed + reviveInvulnerabilityMs;
     state.running = true;
@@ -2265,11 +2412,13 @@
     updateHud();
     draw();
     scheduleLoop();
+    playBackgroundMusic();
     return true;
   }
 
   function endGame() {
     if (!state.running) return;
+    pauseBackgroundMusic();
     waterShockUntil = Math.max(waterShockUntil, state.elapsed + 720);
     waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 1100);
     if (navigator.vibrate) {
@@ -7253,10 +7402,11 @@
     let chainCount = 0;
     for (let otherIndex = state.bubbles.length - 1; otherIndex >= 0; otherIndex -= 1) {
       const other = state.bubbles[otherIndex];
-      if (!canAreaBlastBubble(other)) continue;
+      const chargeCanBurst = canAreaBlastBubble(other) || (isPulsePattern() && other.isPulse && other.age >= 0);
+      if (!chargeCanBurst) continue;
       const distance = Math.hypot(other.x - bubble.x, other.y - bubble.y);
       if (distance > blastRadius + other.radius * 0.34) continue;
-      if (burstBubbleByBlast(other, otherIndex)) chainCount += 1;
+      if (burstBubbleByBlast(other, otherIndex, { allowPulse: true })) chainCount += 1;
     }
     state.blasts.push({
       x: bubble.x,
@@ -7366,8 +7516,9 @@
     return "regular";
   }
 
-  function burstBubbleByBlast(bubble, index) {
-    if (!canAreaBlastBubble(bubble)) return false;
+  function burstBubbleByBlast(bubble, index, { allowPulse = false } = {}) {
+    const pulseAllowed = allowPulse && isPulsePattern() && bubble?.isPulse && bubble.age >= 0;
+    if (!canAreaBlastBubble(bubble) && !pulseAllowed) return false;
     const color = bubble.isWhite
       ? whiteTone
       : bubble.isBleach
@@ -8474,6 +8625,15 @@
     const candidate = bubbleInputCandidateAt(x, y, isTap);
     if (!candidate) return false;
     const { bubble, index } = candidate;
+    if (
+      tutorialRun.active &&
+      tutorialRun.practicing &&
+      tutorialSlides[tutorialStepIndex]?.scene === "power" &&
+      !tutorialRun.targets.includes(bubble.uid)
+    ) {
+      retryTutorialPractice("这是普通泡泡。这一关只点击带引线的炸弹泡");
+      return true;
+    }
     if (bubble.isDrag) return true;
     if (bubble.isCat) {
       if (isTap) {
@@ -8520,6 +8680,15 @@
   function handlePointerDown(event) {
     event.preventDefault();
     if (!state.running || state.paused) return;
+    if (tutorialRun.active && tutorialRun.resolveAt > 0) return;
+    if (
+      tutorialRun.active &&
+      tutorialRun.practicing &&
+      tutorialSlides[tutorialStepIndex]?.scene === "skill"
+    ) {
+      retryTutorialPractice("不要点击画面里的泡泡，要点击右上角发光的“清屏 READY”按钮");
+      return;
+    }
 
     const { x, y } = canvasPointFromPointerEvent(event);
     state.activePointers.set(event.pointerId, {
@@ -9584,11 +9753,30 @@
     const shimmer = 0.5 + Math.sin(state.visualTime / 106 + bubble.skinPhase) * 0.5;
     const ready = smoothstep(0.12, 0.58, contact);
     const guideRadius = r * (1.68 - approach * 0.48);
-    const restingAlpha = 0.34 + assembly * 0.54 + progress * 0.08;
+    const restingAlpha = 0.68 + assembly * 0.24 + progress * 0.08;
 
     ctx.save();
     ctx.translate(x, y);
     ctx.globalAlpha *= alpha;
+
+    ctx.save();
+    ctx.globalAlpha *= 0.72 + assembly * 0.22;
+    const colorCore = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.08, 0, 0, r * 0.86);
+    colorCore.addColorStop(0, colorWithAlpha("#ffffff", 0.9));
+    colorCore.addColorStop(0.22, colorWithAlpha(tone.light, 0.88));
+    colorCore.addColorStop(0.68, colorWithAlpha(tone.color, 0.92));
+    colorCore.addColorStop(1, colorWithAlpha(tone.deep, 0.9));
+    ctx.fillStyle = colorCore;
+    ctx.shadowColor = colorWithAlpha(tone.light, 0.46 + ready * 0.3);
+    ctx.shadowBlur = r * (0.24 + ready * 0.2);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.79, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = colorWithAlpha("#ffffff", 0.42 + ready * 0.34);
+    ctx.lineWidth = Math.max(1.6, r * 0.045);
+    ctx.stroke();
+    ctx.restore();
 
     ctx.save();
     ctx.globalCompositeOperation = "screen";
@@ -9603,11 +9791,11 @@
     ctx.restore();
 
     const ring = ctx.createRadialGradient(0, 0, r * 0.48, 0, 0, r * 1.04);
-    ring.addColorStop(0, colorWithAlpha(tone.deep, 0.08));
-    ring.addColorStop(0.5, colorWithAlpha(tone.color, 0.14));
-    ring.addColorStop(0.62, colorWithAlpha(tone.light, 0.72 * restingAlpha));
-    ring.addColorStop(0.78, colorWithAlpha(tone.color, 0.78 + ready * 0.16));
-    ring.addColorStop(0.93, colorWithAlpha(tone.deep, 0.64 + ready * 0.2));
+    ring.addColorStop(0, colorWithAlpha(tone.deep, 0.2));
+    ring.addColorStop(0.5, colorWithAlpha(tone.color, 0.3));
+    ring.addColorStop(0.62, colorWithAlpha(tone.light, 0.9 * restingAlpha));
+    ring.addColorStop(0.78, colorWithAlpha(tone.color, 0.9 + ready * 0.08));
+    ring.addColorStop(0.93, colorWithAlpha(tone.deep, 0.8 + ready * 0.14));
     ring.addColorStop(1, colorWithAlpha(tone.light, 0.86));
     ctx.fillStyle = ring;
     ctx.shadowColor = colorWithAlpha(tone.light, 0.28 + ready * 0.5);
@@ -11114,64 +11302,64 @@
 
   const tutorialSlides = [
     {
-      scene: "life", kicker: "生命系统", title: "先认识左上角的三颗爱心",
-      copy: "每次失误都会少一颗：点错颜色、泡泡飞出屏幕、蓄力泡爆炸都算失误。正确点击会慢慢为下一颗爱心充能；三颗都满时不会继续增加。",
-      tip: "现在故意点一下这颗颜色不对的泡泡，看看爱心怎么减少", label: "观察生命变化",
-      action: "我看懂了，试一次扣血", success: "对，这就是失去一颗生命",
+      scene: "life", kicker: "生命", title: "三颗爱心，用完就结束",
+      copy: "点错、漏掉泡泡或蓄力泡爆炸，都会少一颗。正确点击会为下一颗爱心充能。",
+      tip: "故意点错一次，看看爱心减少", label: "观察生命变化",
+      instruction: "点一下颜色不对的泡泡", success: "爱心少了一颗。正式游戏里要避免失误。", focusLabel: "生命在这里",
     },
     {
-      scene: "normal", kicker: "基础泡泡", title: "颜色一样，才能轻点泡泡",
-      copy: "第一步：看泡泡是蓝色还是粉色。第二步：看泡泡中心下面的背景。两种颜色一样时，用手指轻点一下。",
-      tip: "练习：把蓝色区域里的蓝泡和粉色区域里的粉泡都点掉", label: "同色时点击",
-      action: "我看懂了，点掉两个泡泡", success: "正确，你找到了同色泡泡",
+      scene: "normal", kicker: "普通泡泡", title: "泡泡和背景同色，再点",
+      copy: "蓝泡在蓝色背景、粉泡在粉色背景时，轻点一下。颜色不一样时不要点。",
+      tip: "点掉两个同色泡泡", label: "同色时点击",
+      instruction: "找出两个同色泡泡并点掉", success: "正确，你认出了同色泡泡。",
     },
     {
-      scene: "charge", kicker: "蓄力泡", title: "它会越变越大，爆炸前点掉",
-      copy: "先看它从一个小点慢慢长大。变得很大并开始发抖，表示马上要爆炸。轻点一次就能处理；长大后也可以快速滑过。",
-      tip: "练习：等它出现后，直接轻点一次。不要等到最后一刻", label: "变大前点掉",
-      action: "我看懂了，试着点掉它", success: "正确，你阻止了蓄力泡爆炸",
+      scene: "charge", kicker: "蓄力泡", title: "它在变大，马上点掉",
+      copy: "蓄力泡会越长越大，最后发抖并爆炸。看见后轻点一次。",
+      tip: "在爆炸前点掉它", label: "变大前点掉",
+      instruction: "趁它还没爆炸，点一下", success: "正确，你阻止了蓄力泡爆炸。",
     },
     {
-      scene: "dragBlue", kicker: "拖拽泡 · 第一次", title: "把蓝色拖拽泡送到粉色区域",
-      copy: "第一步：手指按在蓝色泡泡上，不要松开。第二步：沿粗虚线箭头移动。第三步：进入粉色目标圈后再松手。",
-      tip: "记住：按住 → 沿箭头拖动 → 到目标圈松手", label: "蓝色拖到粉色",
-      action: "我看懂了，跟着箭头拖", success: "正确，蓝色泡已经送到粉色区域",
+      scene: "dragBlue", kicker: "拖动泡", title: "按住蓝泡，拖到粉色区域",
+      copy: "按住泡泡不要松手，沿虚线箭头拖进目标圈，再松开。",
+      tip: "蓝色拖到粉色", label: "蓝色拖到粉色",
+      instruction: "按住蓝泡，沿箭头拖到粉色", success: "正确，蓝泡到达了粉色区域。",
     },
     {
-      scene: "dragPink", kicker: "拖拽泡 · 第二次", title: "再把粉色拖拽泡送到蓝色区域",
-      copy: "这次方向相反。手指按住粉色泡泡，不要松开；沿虚线箭头拖进蓝色目标圈，再松开手指。",
-      tip: "再练一次：拖拽泡永远要去另一种颜色", label: "粉色拖到蓝色",
-      action: "再练一次，粉色拖到蓝色", success: "正确，你已经会双向拖拽了",
+      scene: "dragPink", kicker: "拖动泡", title: "按住粉泡，拖到蓝色区域",
+      copy: "这次方向相反。仍然是按住、沿箭头拖动、进入目标圈后松手。",
+      tip: "粉色拖到蓝色", label: "粉色拖到蓝色",
+      instruction: "按住粉泡，沿箭头拖到蓝色", success: "正确，你已经会双向拖动了。",
     },
     {
-      scene: "pulse", kicker: "脉冲泡", title: "先别点，等圆环碰到泡泡",
-      copy: "看到泡泡后先把手指停住。看着宽圆环向外扩散；圆环碰到泡泡、泡泡明显亮起时，再轻点一次。",
-      tip: "太早或太晚都不算。只在泡泡亮起的短时间里点击", label: "亮起时点击",
-      action: "我会等圆环，开始练习", success: "时机正确，你跟上了脉冲",
+      scene: "pulse", kicker: "脉冲泡", title: "先等，亮起来再点",
+      copy: "圆环碰到泡泡时，它会亮起来。只在亮起的短时间里点击。",
+      tip: "等圆环碰到泡泡", label: "亮起时点击",
+      instruction: "等泡泡亮起，再点一下", success: "时机正确，你跟上了脉冲。",
     },
     {
-      scene: "bleach", kicker: "无色泡", title: "白色泡泡要连续轻点三次",
-      copy: "白色无色泡不用看背景颜色。把手指对准泡泡，清楚地轻点三次：一下、两下、三下。",
-      tip: "练习：不要滑动，同一个位置连续点 3 次", label: "点击 3 次",
-      action: "我看懂了，连续点 3 次", success: "正确，三次点击全部命中",
+      scene: "bleach", kicker: "无色泡", title: "白色泡泡，连续点三次",
+      copy: "不用看背景颜色，对准同一个泡泡连续轻点三次。",
+      tip: "连续点 3 次", label: "点击 3 次",
+      instruction: "对准白色泡泡，连续点三次", success: "正确，三次点击全部命中。",
     },
     {
-      scene: "cat", kicker: "猫咪泡", title: "猫咪泡也要连续点击三次",
-      copy: "把手指对准猫咪泡，连续轻点三次。你也可以把手指按在猫咪泡上不放，直到它被清除。",
-      tip: "这次先用最容易理解的方法：连续轻点 3 次", label: "连点 / 长按",
-      action: "我看懂了，给猫咪点 3 次", success: "正确，猫咪泡已经清除",
+      scene: "cat", kicker: "猫咪泡", title: "猫咪泡，连续点三次",
+      copy: "对准猫咪连续点三次，也可以一直按住它。",
+      tip: "连续点 3 次", label: "连点 / 长按",
+      instruction: "对准猫咪泡，连续点三次", success: "正确，猫咪泡已经清除。",
     },
     {
-      scene: "power", kicker: "场上道具", title: "看到炸弹泡和清屏泡，可以直接点",
-      copy: "这两种是帮助玩家的道具，不需要等待同色背景。炸弹只清附近；写着“清”的泡泡会清掉整个画面。",
-      tip: "练习：把画面里的两个道具泡泡都点掉", label: "直接点击",
-      action: "我看懂了，点掉两个道具", success: "正确，你会使用场上道具了",
+      scene: "power", kicker: "炸弹泡", title: "只点飞过来的炸弹泡",
+      copy: "炸弹泡可以直接点击，并会炸掉附近泡泡。旁边的普通泡泡不要点。",
+      tip: "认准带引线的炸弹泡", label: "点击炸弹",
+      instruction: "只点击正在飞行的炸弹泡", success: "正确，炸弹清掉了附近泡泡。",
     },
     {
-      scene: "skill", kicker: "一键清屏", title: "右上角显示 READY，就能一键清屏",
-      copy: "每局开始先送一次。使用后，正确点击泡泡会重新蓄能；达到 100% 才能再用。它会清掉所有普通和特殊泡泡，每局最多使用三次。",
-      tip: "练习：找到右上角发光的“清屏 READY”，轻点一次", label: "清除全部泡泡",
-      action: "我找到按钮了，开始练习", success: "正确，所有泡泡都被清空",
+      scene: "skill", kicker: "一键清屏", title: "右上角显示 READY，就点它",
+      copy: "一键清屏会清掉画面里所有泡泡。使用后，正确点击可以重新充能。",
+      tip: "只点击右上角发光的清屏按钮", label: "清除全部泡泡",
+      instruction: "点击右上角的“清屏 READY”", success: "正确，所有泡泡都被清空。", focusLabel: "点这里清屏",
     },
   ];
 
@@ -11197,14 +11385,69 @@
     tutorialCopy.textContent = slide.copy;
     tutorialTip.textContent = slide.tip;
     tutorialVisualLabel.textContent = slide.label;
-    tutorialPrevButton.disabled = true;
-    tutorialNextButton.textContent = slide.action ?? "我看懂了，开始练习";
+    tutorialPrevButton.disabled = false;
+    tutorialNextButton.textContent = "让我试试！";
     tutorialDots.replaceChildren();
     tutorialSlides.forEach((_, index) => {
       const dot = document.createElement("span");
       if (index === tutorialStepIndex) dot.className = "active";
       tutorialDots.append(dot);
     });
+  }
+
+  function positionTutorialFocus(rect, label = "") {
+    if (!tutorialFocus || !phoneShell || !rect) return;
+    const shellRect = phoneShell.getBoundingClientRect();
+    tutorialFocus.style.setProperty("--tutorial-focus-x", `${rect.x - shellRect.left + rect.width * 0.5}px`);
+    tutorialFocus.style.setProperty("--tutorial-focus-y", `${rect.y - shellRect.top + rect.height * 0.5}px`);
+    tutorialFocus.style.setProperty("--tutorial-focus-width", `${rect.width}px`);
+    tutorialFocus.style.setProperty("--tutorial-focus-height", `${rect.height}px`);
+    tutorialFocusLabel.textContent = label;
+    tutorialFocus.hidden = false;
+  }
+
+  function updateTutorialFocus() {
+    if (!tutorialFocus || !tutorialRun.active) {
+      if (tutorialFocus) tutorialFocus.hidden = true;
+      return;
+    }
+    const slide = tutorialSlides[tutorialStepIndex];
+    const explaining = !tutorialOverlay.hidden && !tutorialOverlay.classList.contains("is-complete");
+    tutorialFocus.classList.toggle("is-explaining", explaining);
+    tutorialFocus.classList.toggle("is-practicing", tutorialRun.practicing);
+
+    const focusElement = slide.scene === "skill"
+      ? clearSkillButton
+      : explaining && slide.scene === "life"
+        ? heartMeter
+        : null;
+    if (focusElement) {
+      const elementRect = focusElement.getBoundingClientRect();
+      const padding = slide.scene === "life" ? 8 : 10;
+      positionTutorialFocus({
+        x: elementRect.left - padding,
+        y: elementRect.top - padding,
+        width: elementRect.width + padding * 2,
+        height: elementRect.height + padding * 2,
+      }, slide.focusLabel ?? "看这里");
+      return;
+    }
+
+    const bubble = state.bubbles.find((item) => tutorialRun.targets.includes(item.uid));
+    if (!bubble || bubble.age < 0) {
+      tutorialFocus.hidden = true;
+      return;
+    }
+    const canvasRect = canvas.getBoundingClientRect();
+    const radius = Math.max(30, bubble.radius * 1.22);
+    const scaleX = canvasRect.width / Math.max(1, state.width);
+    const scaleY = canvasRect.height / Math.max(1, state.height);
+    positionTutorialFocus({
+      x: canvasRect.left + (bubble.x - radius) * scaleX,
+      y: canvasRect.top + (bubble.y - radius) * scaleY,
+      width: radius * 2 * scaleX,
+      height: radius * 2 * scaleY,
+    }, explaining ? (slide.focusLabel ?? slide.label) : "");
   }
 
   function tutorialPointsForColor(colorIndex) {
@@ -11231,7 +11474,7 @@
     return points[0];
   }
 
-  function addTutorialBubble(kind, options = {}, staticBubble = false) {
+  function addTutorialBubble(kind, options = {}, staticBubble = false, isTarget = true) {
     const previousUid = state.bubbleCounter;
     const spawned = spawnBubble(false, kind, {
       ignoreCapacity: true,
@@ -11243,11 +11486,16 @@
     if (!spawned) return null;
     const bubble = state.bubbles.find((item) => item.uid > previousUid) ?? state.bubbles.at(-1);
     if (!bubble) return null;
-    bubble.tutorialTarget = true;
+    bubble.tutorialTarget = isTarget;
     bubble.tutorialStatic = staticBubble;
     bubble.age = Math.max(0.22, bubble.age);
-    bubble.hasEntered = true;
-    tutorialRun.targets.push(bubble.uid);
+    bubble.hasEntered = staticBubble || (
+      bubble.x > bubble.radius * 0.25 &&
+      bubble.x < state.width - bubble.radius * 0.25 &&
+      bubble.y > bubble.radius * 0.25 &&
+      bubble.y < state.height - bubble.radius * 0.25
+    );
+    if (isTarget) tutorialRun.targets.push(bubble.uid);
     return bubble;
   }
 
@@ -11261,9 +11509,12 @@
   function spawnTutorialTargets() {
     const scene = tutorialSlides[tutorialStepIndex].scene;
     tutorialRun.targets = [];
-    tutorialRun.expectedPops = scene === "normal" || scene === "power" ? 2 : 1;
+    tutorialRun.expectedPops = scene === "normal" ? 2 : 1;
     tutorialRun.expectedMistake = scene === "life";
     tutorialRun.waterBaseline = state.water;
+    tutorialRun.deadlineAt = 0;
+    tutorialRun.retryReason = "";
+    tutorialRun.resolveAt = 0;
 
     if (scene === "pulse") {
       configureTutorialBackground(10);
@@ -11393,22 +11644,54 @@
       return;
     }
     if (scene === "power") {
+      const radius = 43;
+      const controls = [
+        { x: -radius * 1.4, y: state.height * 0.4 },
+        { x: state.width * 0.22, y: state.height * 0.34 },
+        { x: state.width * 0.5, y: state.height * 0.5 },
+        { x: state.width * 0.77, y: state.height * 0.44 },
+        { x: state.width + radius * 1.4, y: state.height * 0.58 },
+      ];
+      const sampled = sampleCurvedCustomPath(controls, 0.88, {
+        minX: -radius * 1.6,
+        maxX: state.width + radius * 1.6,
+        minY: radius * 1.2,
+        maxY: state.height - radius * 1.4,
+      });
+      const path = makeMotionPathFromSampledPoints("tutorial-bomb", sampled, radius, 58, 6.2, 8.2);
+      path.protectedPath = true;
       addTutorialBubble("bomb", {
-        x: state.width * 0.34,
-        y: center.y,
-        target: center,
-        velocity: { vx: 0, vy: 0 },
-        radius: 43,
-        speed: 0,
-      }, true);
-      addTutorialBubble("clear", {
-        x: state.width * 0.68,
-        y: center.y,
-        target: center,
-        velocity: { vx: 0, vy: 0 },
-        radius: 40,
-        speed: 0,
-      }, true);
+        x: path.points[0].x,
+        y: path.points[0].y,
+        target: path.points[1],
+        velocity: { vx: 58, vy: 0 },
+        customPath: path,
+        exitAfterPath: true,
+        radius,
+        speed: 58,
+      });
+      [
+        [0, 0.76, 0.3],
+        [0, 0.72, 0.7],
+        [1, 0.24, 0.36],
+        [1, 0.28, 0.72],
+      ].forEach(([colorIndex, xRatio, yRatio]) => {
+        const candidates = tutorialPointsForColor(colorIndex);
+        const point = candidates.reduce((best, candidate) => {
+          const distance = Math.hypot(candidate.x - state.width * xRatio, candidate.y - state.height * yRatio);
+          return !best || distance < best.distance ? { ...candidate, distance } : best;
+        }, null) ?? { x: state.width * xRatio, y: state.height * yRatio };
+        addTutorialBubble("normal", {
+          x: point.x,
+          y: point.y,
+          target: point,
+          velocity: { vx: 0, vy: 0 },
+          radius: 31,
+          colorIndex,
+          allowFreePath: true,
+        }, true, false);
+      });
+      tutorialRun.deadlineAt = state.elapsed + path.duration * 1000 + 500;
       return;
     }
     if (scene === "skill") {
@@ -11435,12 +11718,19 @@
         if (bubble?.isBleach) bubble.bleachExpireAt = state.elapsed + 13000;
       });
       tutorialRun.expectedPops = tutorialRun.targets.length;
+      tutorialRun.deadlineAt = state.elapsed + 9000;
     }
   }
 
   function prepareTutorialStep({ showExplanation = true } = {}) {
     if (!tutorialRun.active) return;
+    if (tutorialRun.transitionTimer) {
+      window.clearTimeout(tutorialRun.transitionTimer);
+      tutorialRun.transitionTimer = 0;
+    }
     tutorialRun.practicing = false;
+    tutorialRun.pendingOutcome = "";
+    tutorialRun.resolveAt = 0;
     state.paused = true;
     state.water = 100;
     state.dragPointerId = null;
@@ -11452,7 +11742,7 @@
     const slide = tutorialSlides[tutorialStepIndex];
     phoneShell?.classList.toggle("tutorial-skill-step", slide.scene === "skill");
     tutorialLiveProgress.textContent = `练习 ${tutorialStepIndex + 1} / ${tutorialSlides.length}`;
-    tutorialLiveTitle.textContent = slide.title;
+    tutorialLiveTitle.textContent = slide.instruction ?? slide.title;
     tutorialLiveHint.textContent = slide.tip;
     tutorialLiveFeedback.textContent = "";
     tutorialLive.classList.remove("is-success", "is-error");
@@ -11469,6 +11759,11 @@
         .filter((bubble) => tutorialRun.targets.includes(bubble.uid))
         .map((bubble) => ({ uid: bubble.uid, x: Number(bubble.x.toFixed(2)), y: Number(bubble.y.toFixed(2)), kind: tutorialSlides[tutorialStepIndex].scene })),
     );
+    tutorialLive.dataset.distractors = JSON.stringify(
+      state.bubbles
+        .filter((bubble) => !tutorialRun.targets.includes(bubble.uid))
+        .map((bubble) => ({ uid: bubble.uid, x: Number(bubble.x.toFixed(2)), y: Number(bubble.y.toFixed(2)) })),
+    );
     const firstTarget = state.bubbles.find((bubble) => tutorialRun.targets.includes(bubble.uid));
     if (firstTarget) {
       tutorialLive.dataset.targetX = firstTarget.x.toFixed(2);
@@ -11483,6 +11778,7 @@
     }
     updateHud();
     draw();
+    window.requestAnimationFrame(updateTutorialFocus);
   }
 
   function startTutorialSession() {
@@ -11509,6 +11805,7 @@
     }
     tutorialRun.active = false;
     tutorialRun.practicing = false;
+    tutorialRun.pendingOutcome = "";
     tutorialRun.targets = [];
     state.tutorialMode = false;
     state.running = false;
@@ -11518,7 +11815,7 @@
     state.stageLevel = 1;
     resetBackgroundFlow();
     curtain.classList.remove("hidden", "result-mode", "starting");
-    titleMark.textContent = "泡泡补水";
+    titleMark.textContent = "泡泡乐";
     setStartButtonHome();
     endStats.textContent = "";
     tutorialOverlay.hidden = true;
@@ -11526,6 +11823,7 @@
     tutorialOverlay.classList.remove("interactive-mode", "is-complete");
     tutorialLive.hidden = true;
     tutorialResultCue.hidden = true;
+    tutorialFocus.hidden = true;
     phoneShell?.classList.remove("tutorial-open", "tutorial-active", "tutorial-skill-step");
     if (tutorialComplete) tutorialComplete.hidden = true;
     if (tutorialFrame) tutorialFrame.hidden = false;
@@ -11549,6 +11847,7 @@
     tutorialControls.hidden = true;
     tutorialComplete.hidden = false;
     tutorialProgress.textContent = "完成";
+    tutorialFocus.hidden = true;
   }
 
   function beginTutorialPractice() {
@@ -11560,62 +11859,76 @@
     state.paused = false;
     lastFrameTime = performance.now();
     state.lastTime = lastFrameTime;
+    updateTutorialFocus();
     scheduleLoop();
+  }
+
+  function finishTutorialOutcome() {
+    if (!tutorialRun.pendingOutcome) return;
+    const outcome = tutorialRun.pendingOutcome;
+    tutorialRun.pendingOutcome = "";
+    if (tutorialRun.transitionTimer) {
+      window.clearTimeout(tutorialRun.transitionTimer);
+      tutorialRun.transitionTimer = 0;
+    }
+    tutorialResultCue.hidden = true;
+    if (outcome === "retry") {
+      prepareTutorialStep({ showExplanation: false });
+      beginTutorialPractice();
+      return;
+    }
+    if (tutorialStepIndex >= tutorialSlides.length - 1) {
+      showTutorialComplete();
+      return;
+    }
+    tutorialStepIndex += 1;
+    prepareTutorialStep();
+  }
+
+  function showTutorialOutcome(kind, title, text) {
+    state.paused = true;
+    tutorialRun.pendingOutcome = kind;
+    tutorialResultCue.hidden = false;
+    tutorialResultCue.classList.toggle("is-success", kind === "success");
+    tutorialResultCue.classList.toggle("is-error", kind === "retry");
+    tutorialResultTitle.textContent = title;
+    tutorialResultText.textContent = text;
+    tutorialResultNext.textContent = kind === "success" ? "继续下一步" : "重新试一次";
+    tutorialResultProgress.style.animation = "none";
+    tutorialResultProgress.getBoundingClientRect();
+    tutorialResultProgress.style.animation = "tutorial-result-countdown 3s linear forwards";
+    tutorialRun.transitionTimer = window.setTimeout(finishTutorialOutcome, 3000);
   }
 
   function completeTutorialPractice() {
     if (!tutorialRun.practicing) return;
     tutorialRun.practicing = false;
-    const cinematicSuccess = tutorialSlides[tutorialStepIndex].scene === "power" || tutorialSlides[tutorialStepIndex].scene === "skill";
-    state.paused = !cinematicSuccess;
     tutorialLive.classList.add("is-success");
     tutorialLiveFeedback.textContent = "正确，已掌握";
-    tutorialResultCue.hidden = false;
-    tutorialResultCue.classList.remove("is-error");
-    tutorialResultCue.classList.add("is-success");
-    tutorialResultTitle.textContent = "做对了！";
-    tutorialResultText.textContent = tutorialSlides[tutorialStepIndex].success ?? "就是这样，已经学会了";
+    showTutorialOutcome("success", "做对了！", tutorialSlides[tutorialStepIndex].success ?? "就是这样，已经学会了。");
     if (navigator.vibrate) navigator.vibrate(22);
-    tutorialRun.transitionTimer = window.setTimeout(() => {
-      tutorialRun.transitionTimer = 0;
-      if (tutorialStepIndex >= tutorialSlides.length - 1) {
-        showTutorialComplete();
-        return;
-      }
-      tutorialStepIndex += 1;
-      prepareTutorialStep();
-    }, cinematicSuccess ? 1180 : 720);
   }
 
-  function retryTutorialPractice() {
+  function retryTutorialPractice(reason = "") {
     if (!tutorialRun.practicing) return;
     tutorialRun.practicing = false;
-    state.paused = true;
     tutorialLive.classList.add("is-error");
     const scene = tutorialSlides[tutorialStepIndex].scene;
-    const errorText = scene.startsWith("drag")
+    const errorText = reason || (scene.startsWith("drag")
       ? "手指要按住泡泡，沿虚线拖进目标圈后再松开"
       : scene === "pulse"
         ? "点击太早或太晚，请等圆环碰到泡泡再点"
         : scene === "normal"
           ? "请确认泡泡颜色和它下面的背景颜色一样"
-          : "没有完成指定动作，请照着说明再做一次";
-    tutorialLiveFeedback.textContent = "没有成功，马上重试";
-    tutorialResultCue.hidden = false;
-    tutorialResultCue.classList.remove("is-success");
-    tutorialResultCue.classList.add("is-error");
-    tutorialResultTitle.textContent = "还差一点";
-    tutorialResultText.textContent = errorText;
+          : "没有完成指定动作，请照着提示再做一次");
+    tutorialLiveFeedback.textContent = "这次不对，再试一次";
+    showTutorialOutcome("retry", "这次不对", errorText);
     if (navigator.vibrate) navigator.vibrate([18, 34, 18]);
-    tutorialRun.transitionTimer = window.setTimeout(() => {
-      tutorialRun.transitionTimer = 0;
-      prepareTutorialStep({ showExplanation: false });
-      beginTutorialPractice();
-    }, 760);
   }
 
   function monitorTutorialPractice() {
     if (!tutorialRun.active || !tutorialRun.practicing) return;
+    updateTutorialFocus();
     const activeTarget = state.bubbles.find((bubble) => tutorialRun.targets.includes(bubble.uid));
     tutorialLive.dataset.ready = activeTarget && !activeTarget.isDrag ? String(canPopBubble(activeTarget)) : "true";
     if (activeTarget?.tutorialDestination) {
@@ -11635,10 +11948,32 @@
       return;
     }
     if (!tutorialRun.expectedMistake && popped >= tutorialRun.expectedPops) {
+      const scene = tutorialSlides[tutorialStepIndex].scene;
+      const animationWait = scene === "power" ? 1500 : scene === "skill" ? 1250 : 0;
+      if (animationWait > 0) {
+        if (tutorialRun.resolveAt <= 0) {
+          tutorialRun.resolveAt = state.elapsed + animationWait;
+          tutorialLiveFeedback.textContent = scene === "power" ? "看，炸弹正在清除附近泡泡" : "看，所有泡泡正在被清空";
+          tutorialFocus.hidden = true;
+        }
+        if (state.elapsed < tutorialRun.resolveAt) return;
+      }
       completeTutorialPractice();
       return;
     }
-    if (missing > popped) retryTutorialPractice();
+    if (tutorialRun.deadlineAt > 0 && state.elapsed >= tutorialRun.deadlineAt) {
+      const scene = tutorialSlides[tutorialStepIndex].scene;
+      retryTutorialPractice(scene === "skill"
+        ? "要点击右上角发光的“清屏 READY”按钮"
+        : "炸弹泡飞走了。认准带引线的炸弹泡并及时点击");
+      return;
+    }
+    if (missing > popped) {
+      const scene = tutorialSlides[tutorialStepIndex].scene;
+      retryTutorialPractice(scene === "power"
+        ? "炸弹泡飞走了。认准带引线的炸弹泡并及时点击"
+        : "目标泡泡没有完成，请照着提示再试一次");
+    }
   }
 
   function advanceTutorial() {
@@ -11646,7 +11981,7 @@
   }
 
   function retreatTutorial() {
-    renderTutorialStep();
+    closeTutorial();
   }
 
   function startGameFromTutorial() {
@@ -11751,6 +12086,7 @@
     }
     settingsButton?.classList.toggle("is-paused", playing && state.paused);
     updateSettingsStageMeta();
+    syncMusicControls();
   }
 
   function releasePointersForPause() {
@@ -11776,6 +12112,7 @@
   function pauseGame() {
     if (!state.running || state.paused) return false;
     state.paused = true;
+    pauseBackgroundMusic();
     releasePointersForPause();
     if (frameRequest) {
       cancelAnimationFrame(frameRequest);
@@ -11796,6 +12133,7 @@
     updateHud();
     syncSettingsPanel();
     scheduleLoop();
+    playBackgroundMusic();
     return true;
   }
 
@@ -11840,6 +12178,12 @@
     resumeGame();
   }
 
+  function returnHomeFromSettings() {
+    closeSettings({ resume: false });
+    pauseBackgroundMusic({ reset: true });
+    stopTutorialSession();
+  }
+
   function initSettingsControls() {
     if (!settingsButton || !settingsPanel || !settingsLevelSelect) return;
     for (let level = 1; level <= 30; level += 1) {
@@ -11868,6 +12212,19 @@
       }
     });
     settingsJumpButton?.addEventListener("click", startAtSettingsLevel);
+    settingsHomeButton?.addEventListener("click", returnHomeFromSettings);
+    musicToggleButton?.addEventListener("click", () => {
+      musicEnabled = !musicEnabled;
+      saveMusicPreferences();
+      syncMusicControls();
+      if (musicEnabled) playBackgroundMusic();
+      else pauseBackgroundMusic();
+    });
+    musicVolumeInput?.addEventListener("input", () => {
+      musicVolume = clamp(Number(musicVolumeInput.value) / 100, 0, 1);
+      saveMusicPreferences();
+      syncMusicControls();
+    });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && settingsAreOpen()) {
         event.preventDefault();
@@ -12036,7 +12393,13 @@
   tutorialLiveExitButton?.addEventListener("click", closeTutorial);
   tutorialPrevButton?.addEventListener("click", retreatTutorial);
   tutorialNextButton?.addEventListener("click", advanceTutorial);
+  tutorialOverlay?.addEventListener("click", (event) => {
+    if (!tutorialRun.active || tutorialRun.practicing || tutorialRun.pendingOutcome || tutorialOverlay.classList.contains("is-complete")) return;
+    if (event.target.closest("#tutorialPrev")) return;
+    beginTutorialPractice();
+  });
   tutorialStartButton?.addEventListener("click", startGameFromTutorial);
+  tutorialResultCue?.addEventListener("click", finishTutorialOutcome);
   rewardedAdSkip?.addEventListener("click", () => {
     if (!rewardedAdActive || performance.now() - rewardedAdStartedAt < rewardedAdSkipDelayMs) return;
     finishRewardedReviveAd();
@@ -12056,6 +12419,7 @@
       draw();
       updatePerfDebug(performance.now(), true);
     }
+    if (tutorialRun.active) window.requestAnimationFrame(updateTutorialFocus);
   });
   window.addEventListener("orientationchange", () => {
     resize();
@@ -12066,6 +12430,7 @@
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      pauseBackgroundMusic();
       if (frameRequest) {
         cancelAnimationFrame(frameRequest);
         frameRequest = 0;
@@ -12075,6 +12440,7 @@
     lastFrameTime = performance.now();
     if (state.running && !state.paused) {
       scheduleLoop();
+      playBackgroundMusic();
     } else {
       draw();
       updatePerfDebug(lastFrameTime, true);
@@ -12082,6 +12448,8 @@
   });
 
   resize();
+  loadMusicPreferences();
+  syncMusicControls();
   initSettingsControls();
   initDebugControls();
   updateHud();

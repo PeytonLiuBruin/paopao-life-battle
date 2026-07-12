@@ -397,7 +397,8 @@ body {
 .settings-close:focus-visible,
 .settings-level-control select:focus-visible,
 .settings-level-control button:focus-visible,
-.settings-pause:focus-visible {
+.settings-pause:focus-visible,
+.settings-home:focus-visible {
   outline: 3px solid rgba(255, 255, 255, 0.9);
   outline-offset: 2px;
 }
@@ -591,6 +592,29 @@ body {
 .settings-pause strong {
   font-size: 14px;
   font-weight: 1000;
+}
+
+.settings-home {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+  background: linear-gradient(180deg, #e77f9e, #bd5877);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 5px 12px rgba(139, 48, 79, 0.2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 1000;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.settings-home:active {
+  transform: translateY(1px);
 }
 
 .settings-open .clear-skill {
@@ -3327,6 +3351,263 @@ body {
   }
 }
 
+/* Music settings */
+.settings-audio {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(55, 111, 131, 0.14);
+}
+
+.settings-audio-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: #2c5c70;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.settings-audio-heading output {
+  color: #6a8692;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.settings-audio-control {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.music-toggle {
+  position: relative;
+  width: 42px;
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: 50%;
+  color: #ffffff;
+  background: linear-gradient(180deg, #39b9d2, #238ba8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 4px 10px rgba(29, 122, 151, 0.2);
+  cursor: pointer;
+}
+
+.speaker-icon {
+  position: absolute;
+  left: 11px;
+  top: 15px;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px 0 0 2px;
+  background: currentColor;
+}
+
+.speaker-icon::before {
+  position: absolute;
+  left: 5px;
+  top: -4px;
+  width: 0;
+  height: 0;
+  content: "";
+  border-top: 10px solid transparent;
+  border-bottom: 10px solid transparent;
+  border-right: 11px solid currentColor;
+}
+
+.speaker-icon::after {
+  position: absolute;
+  left: 16px;
+  top: -3px;
+  width: 9px;
+  height: 16px;
+  content: "";
+  border-right: 2px solid currentColor;
+  border-radius: 0 50% 50% 0;
+}
+
+.music-toggle.is-muted {
+  color: rgba(42, 83, 99, 0.62);
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: inset 0 0 0 1px rgba(52, 108, 129, 0.18);
+}
+
+.music-toggle.is-muted::after {
+  position: absolute;
+  left: 11px;
+  top: 20px;
+  width: 22px;
+  height: 2px;
+  content: "";
+  border-radius: 999px;
+  background: #d66f7f;
+  transform: rotate(-45deg);
+}
+
+#musicVolume {
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  accent-color: #279db8;
+  cursor: pointer;
+}
+
+.music-toggle:focus-visible,
+#musicVolume:focus-visible {
+  outline: 3px solid rgba(50, 181, 209, 0.26);
+  outline-offset: 2px;
+}
+
+@keyframes tutorial-try-glow {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.1); }
+}
+
+/* Compact result composition */
+.curtain.result-mode {
+  align-content: start;
+  overflow-y: auto;
+}
+
+.curtain.result-mode .title-mark {
+  font-size: clamp(32px, 8vw, 44px);
+}
+
+.curtain.result-mode .end-stats {
+  height: auto;
+  overflow: visible;
+}
+
+.result-screen {
+  height: auto;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  gap: 8px;
+}
+
+.result-summary {
+  padding: 13px 14px 12px;
+}
+
+.result-level {
+  min-height: 66px;
+}
+
+.result-level strong {
+  font-size: clamp(58px, 16vw, 78px);
+}
+
+.result-chase {
+  margin-bottom: 7px;
+}
+
+.result-metric {
+  min-height: 64px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.result-board {
+  padding: 11px 10px 10px;
+}
+
+.result-rank-card {
+  min-height: 88px;
+  grid-template-rows: auto 34px minmax(18px, auto) auto auto;
+  gap: 2px;
+}
+
+.result-rank-card.is-me {
+  min-height: 102px;
+  margin: 2px;
+  transform: translateY(-1px);
+}
+
+.result-player-name {
+  width: 100%;
+  min-width: 0;
+  padding: 1px 3px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 0;
+  color: #ffffff;
+  background: transparent;
+  font: 950 12px/1.1 inherit;
+  text-align: center;
+  text-overflow: ellipsis;
+  outline: 0;
+}
+
+.result-player-name::placeholder {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.result-rank-praise {
+  width: 100%;
+  overflow: hidden;
+  color: #fff1a9;
+  font-size: 8px;
+  font-weight: 950;
+  line-height: 1.1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-rank-card strong {
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.result-rank-card.is-me strong {
+  font-size: 11px;
+}
+
+.result-rank-list.is-single .result-rank-card {
+  grid-template-columns: 27px 40px minmax(0, 1fr) auto;
+}
+
+.result-rank-list.is-single .result-rank-praise {
+  display: none;
+}
+
+.result-actions {
+  align-self: start;
+  gap: 8px;
+}
+
+.result-actions.has-revive .result-revive {
+  min-height: 76px;
+  margin: 2px 0 3px;
+  border: 3px solid rgba(255, 248, 188, 0.96);
+  border-radius: 18px;
+  color: #ffffff;
+  background: linear-gradient(145deg, #40d7ca, #1291ad 66%, #08708f);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -12px 24px rgba(0, 72, 112, 0.18),
+    0 0 0 5px rgba(85, 242, 220, 0.17),
+    0 12px 30px rgba(4, 80, 103, 0.36),
+    0 0 28px rgba(91, 255, 224, 0.42);
+}
+
+.result-actions.has-revive .result-revive strong {
+  font-size: 21px;
+}
+
+.result-actions.has-revive .result-revive span {
+  font-size: 11px;
+}
+
+@media (max-height: 720px) {
+  .result-summary { padding: 10px 12px; }
+  .result-level { min-height: 56px; }
+  .result-level strong { font-size: 56px; }
+  .result-metric { min-height: 56px; }
+  .result-rank-card { min-height: 76px; }
+  .result-rank-card.is-me { min-height: 90px; }
+  .result-actions.has-revive .result-revive { min-height: 66px; }
+}
+
 .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-controls {
   grid-template-columns: 24px minmax(76px, 1fr) minmax(178px, 220px);
 }
@@ -3351,8 +3632,9 @@ body {
   justify-items: center;
   gap: 10px;
   padding: 24px;
-  pointer-events: none;
+  pointer-events: auto;
   text-align: center;
+  cursor: pointer;
   animation: tutorial-result-arrive 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -3420,6 +3702,41 @@ body {
   font-weight: 850;
   line-height: 1.5;
   text-shadow: 0 2px 12px rgba(0, 23, 35, 0.3);
+}
+
+.tutorial-result-cue button {
+  min-width: 132px;
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 7px;
+  color: #073247;
+  background: rgba(244, 255, 253, 0.92);
+  box-shadow: 0 9px 24px rgba(0, 24, 35, 0.2);
+  font: 900 14px/1 inherit;
+  cursor: pointer;
+}
+
+.tutorial-result-progress {
+  width: min(240px, 62vw);
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.tutorial-result-progress i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transform-origin: left center;
+}
+
+@keyframes tutorial-result-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
 }
 
 @keyframes tutorial-result-arrive {
@@ -4069,14 +4386,21 @@ body {
 
 /* Real-game tutorial: paused canvas behind the lesson, live input for validation */
 .tutorial-overlay.interactive-mode:not(.is-complete) {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  z-index: 27;
+  grid-template-rows: minmax(0, 1fr) auto;
   background:
-    linear-gradient(180deg, rgba(5, 24, 39, 0.72), transparent 20%, transparent 48%, rgba(5, 24, 39, 0.7)),
-    rgba(5, 25, 40, 0.08);
+    linear-gradient(180deg, rgba(5, 24, 39, 0.14), transparent 24%, transparent 55%, rgba(5, 24, 39, 0.36)),
+    rgba(5, 25, 40, 0.05);
   backdrop-filter: none;
 }
 
+.tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-header {
+  display: none;
+}
+
 .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-frame {
+  position: relative;
+  z-index: 27;
   display: flex;
   min-height: 0;
   align-items: flex-end;
@@ -4088,7 +4412,7 @@ body {
 
 .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block {
   width: 100%;
-  padding: 15px;
+  padding: 13px 14px;
   border: 1px solid rgba(255, 255, 255, 0.26);
   border-radius: 8px;
   background: rgba(6, 33, 51, 0.84);
@@ -4099,11 +4423,13 @@ body {
 }
 
 .tutorial-overlay.interactive-mode:not(.is-complete) #tutorialPrev {
-  visibility: hidden;
+  visibility: visible;
 }
 
 .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-controls {
-  grid-template-columns: 72px minmax(0, 1fr) 132px;
+  position: relative;
+  z-index: 27;
+  grid-template-columns: 82px minmax(0, 1fr) 112px;
 }
 
 .tutorial-overlay.interactive-mode:not(.is-complete) #tutorialNext {
@@ -4111,6 +4437,13 @@ body {
   color: #57300c;
   background: #ffc25b;
   box-shadow: 0 8px 20px rgba(80, 43, 8, 0.2);
+}
+
+.tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-home {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(239, 251, 255, 0.78);
+  background: rgba(4, 29, 46, 0.52);
+  font-size: 11px;
 }
 
 .tutorial-overlay.is-complete {
@@ -4124,14 +4457,15 @@ body {
 .tutorial-live {
   position: absolute;
   z-index: 23;
-  top: calc(88px + var(--safe-top));
+  top: auto;
+  bottom: calc(12px + var(--safe-bottom));
   left: 14px;
   right: 14px;
   min-height: 82px;
   display: grid;
   align-content: center;
   gap: 3px;
-  padding: 10px 46px 10px 13px;
+  padding: 10px 13px 11px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 8px;
   color: #f3fcff;
@@ -4154,16 +4488,13 @@ body {
 }
 
 .tutorial-live-topline button {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 30px;
-  aspect-ratio: 1;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 50%;
-  color: #f3fcff;
-  background: rgba(255, 255, 255, 0.08);
-  font: 400 20px/1 system-ui, sans-serif;
+  min-height: 25px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: rgba(243, 252, 255, 0.76);
+  background: rgba(255, 255, 255, 0.06);
+  font: 800 9px/1 inherit;
   cursor: pointer;
   pointer-events: auto;
 }
@@ -4216,13 +4547,67 @@ body {
   pointer-events: none;
 }
 
+.tutorial-focus[hidden] {
+  display: none;
+}
+
+.tutorial-focus {
+  position: absolute;
+  z-index: 26;
+  left: var(--tutorial-focus-x, 50%);
+  top: var(--tutorial-focus-y, 50%);
+  width: var(--tutorial-focus-width, 88px);
+  height: var(--tutorial-focus-height, 88px);
+  transform: translate(-50%, -50%);
+  border: 3px solid rgba(255, 248, 190, 0.96);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 6px rgba(255, 222, 110, 0.16),
+    0 0 28px rgba(255, 226, 125, 0.74);
+  pointer-events: none;
+  transition: left 110ms linear, top 110ms linear, width 180ms ease, height 180ms ease;
+}
+
+.tutorial-focus.is-explaining {
+  box-shadow:
+    0 0 0 6px rgba(255, 222, 110, 0.18),
+    0 0 28px rgba(255, 226, 125, 0.8),
+    0 0 0 9999px rgba(2, 20, 34, 0.5);
+  animation: tutorial-focus-breathe 900ms ease-in-out infinite alternate;
+}
+
+.tutorial-focus span {
+  position: absolute;
+  left: 50%;
+  bottom: -34px;
+  min-width: max-content;
+  padding: 5px 9px;
+  transform: translateX(-50%);
+  border-radius: 6px;
+  color: #183342;
+  background: #fff2ad;
+  box-shadow: 0 6px 18px rgba(0, 22, 34, 0.22);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.tutorial-focus span:empty {
+  display: none;
+}
+
+@keyframes tutorial-focus-breathe {
+  from { border-color: rgba(255, 248, 190, 0.84); }
+  to { border-color: #fff; }
+}
+
 @media (max-height: 720px) {
   .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block {
     padding: 10px 12px;
   }
 
   .tutorial-live {
-    top: calc(68px + var(--safe-top));
+    top: auto;
+    bottom: calc(8px + var(--safe-bottom));
     min-height: 72px;
     padding-top: 8px;
     padding-bottom: 8px;
@@ -4241,7 +4626,8 @@ body {
 }
 
 .tutorial-skill-step .tutorial-live {
-  top: calc(128px + var(--safe-top));
+  top: auto;
+  bottom: calc(12px + var(--safe-bottom));
 }
 
 .result-revive {
@@ -4305,4 +4691,13 @@ body {
   .result-revive::before {
     animation: none;
   }
+}
+
+.tutorial-overlay.interactive-mode:not(.is-complete) #tutorialNext {
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 0 0 5px rgba(255, 194, 91, 0.18),
+    0 0 24px rgba(255, 194, 91, 0.74);
+  animation: tutorial-try-glow 760ms ease-in-out infinite alternate;
 }
