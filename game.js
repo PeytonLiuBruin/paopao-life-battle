@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.9";
+  const buildVersion = "1.4.10";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -96,7 +96,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.9`;
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.10`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -120,8 +120,8 @@
   const performanceProfiles = [
     {
       name: "high",
-      dprCap: 1,
-      maxCanvasPixels: 520000,
+      dprCap: 1.25,
+      maxCanvasPixels: 650000,
       backgroundScale: backgroundVisualScale,
       backgroundFps: 42,
       backgroundFrameSkip: 1,
@@ -134,66 +134,74 @@
       hints: maxHints,
       effectChance: 0.86,
       bubbleDetail: 0.82,
+      pointerFx: 20,
+      pointerTrail: 26,
       textureOverlay: false,
       fullScreenOverlays: true,
       smoothingQuality: "high",
     },
     {
       name: "balanced",
-      dprCap: 1,
-      maxCanvasPixels: 440000,
-      backgroundScale: backgroundVisualScale * 0.95,
-      backgroundFps: 36,
+      dprCap: 1.25,
+      maxCanvasPixels: 480000,
+      backgroundScale: backgroundVisualScale * 0.985,
+      backgroundFps: 30,
       backgroundFrameSkip: 1,
       targetFps: 60,
       contours: true,
-      particles: 48,
-      ripples: 22,
+      particles: 42,
+      ripples: 18,
       blasts: maxBlasts,
       floaters: 8,
       hints: 7,
       effectChance: 0.72,
-      bubbleDetail: 0.72,
+      bubbleDetail: 0.64,
+      pointerFx: 14,
+      pointerTrail: 18,
       textureOverlay: false,
       fullScreenOverlays: true,
       smoothingQuality: "medium",
     },
     {
       name: "saver",
-      dprCap: 1,
-      maxCanvasPixels: 360000,
-      backgroundScale: backgroundVisualScale * 0.875,
-      backgroundFps: 28,
+      dprCap: 1.16,
+      maxCanvasPixels: 440000,
+      backgroundScale: backgroundVisualScale * 0.975,
+      backgroundFps: 26,
       backgroundFrameSkip: 1,
       targetFps: 60,
-      contours: false,
-      particles: 28,
-      ripples: 14,
+      contours: true,
+      particles: 24,
+      ripples: 12,
       blasts: 3,
       floaters: 6,
       hints: 5,
-      effectChance: 0.58,
-      bubbleDetail: 0.68,
+      effectChance: 0.54,
+      bubbleDetail: 0.6,
+      pointerFx: 10,
+      pointerTrail: 12,
       textureOverlay: false,
       fullScreenOverlays: false,
       smoothingQuality: "medium",
     },
     {
       name: "cool",
-      dprCap: 1,
-      maxCanvasPixels: 300000,
-      backgroundScale: backgroundVisualScale * 0.8,
+      dprCap: 1.1,
+      maxCanvasPixels: 440000,
+      backgroundScale: backgroundVisualScale * 0.975,
       backgroundFps: 24,
       backgroundFrameSkip: 1,
       targetFps: 60,
-      contours: false,
+      contours: true,
       particles: 14,
       ripples: 8,
       blasts: 2,
       floaters: 4,
       hints: 3,
       effectChance: 0.34,
-      bubbleDetail: 0.52,
+      bubbleDetail: 0.56,
+      pointerFx: 7,
+      pointerTrail: 8,
       textureOverlay: false,
       fullScreenOverlays: false,
       smoothingQuality: "medium",
@@ -366,6 +374,7 @@
     pointerTrail: [],
     spawnFlow: null,
     spawnFlowIndex: 0,
+    islandChoreoIndex: 0,
     backgroundFlow: {
       phase: "hold",
       elapsed: 0,
@@ -450,6 +459,7 @@
   let performanceCoolSince = 0;
   let performanceLastChangeAt = 0;
   let performanceLastResizeDpr = 1;
+  let viewportResizeRequest = 0;
   const frameStatSize = 600;
   const frameIntervals = new Float32Array(frameStatSize);
   const frameWorkTimes = new Float32Array(frameStatSize);
@@ -461,12 +471,21 @@
   function resize() {
     const rect = canvas.getBoundingClientRect();
     const profile = currentPerformanceProfile();
-    state.width = Math.max(1, rect.width);
-    state.height = Math.max(1, rect.height);
-    state.dpr = desiredCanvasDpr();
-    performanceLastResizeDpr = state.dpr;
-    canvas.width = Math.floor(state.width * state.dpr);
-    canvas.height = Math.floor(state.height * state.dpr);
+    const nextWidth = Math.max(1, rect.width);
+    const nextHeight = Math.max(1, rect.height);
+    const surfaceChanged = Math.abs(state.width - nextWidth) > 0.5 || Math.abs(state.height - nextHeight) > 0.5;
+    state.width = nextWidth;
+    state.height = nextHeight;
+    const nextDpr = desiredCanvasDpr();
+    const nextPixelWidth = Math.max(1, Math.floor(nextWidth * nextDpr));
+    const nextPixelHeight = Math.max(1, Math.floor(nextHeight * nextDpr));
+    const bitmapChanged = canvas.width !== nextPixelWidth || canvas.height !== nextPixelHeight;
+    state.dpr = nextDpr;
+    performanceLastResizeDpr = nextDpr;
+    if (bitmapChanged) {
+      canvas.width = nextPixelWidth;
+      canvas.height = nextPixelHeight;
+    }
     ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = profile.smoothingQuality;
@@ -477,8 +496,11 @@
         frameSkip: profile.backgroundFrameSkip,
         contours: profile.contours,
       });
-      window.PaopaoBackgroundEngine.resize(state.width, state.height);
+      if (surfaceChanged || bitmapChanged) {
+        window.PaopaoBackgroundEngine.resize(state.width, state.height);
+      }
     }
+    return bitmapChanged;
   }
 
   function rand(min, max) {
@@ -733,7 +755,8 @@
     const dpr = window.devicePixelRatio || 1;
     const mobile = isLikelyMobileDevice();
     if (cores <= 2 || memory <= 2) return 2;
-    if (mobile && (cores <= 4 || memory <= 3 || dpr >= 2.5)) return 1;
+    if (mobile && (cores <= 4 || memory <= 3 || dpr >= 3.5)) return 2;
+    if (mobile) return 1;
     return 0;
   }
 
@@ -756,8 +779,8 @@
   function thermalTierFloor() {
     if (!state.running || !isLikelyMobileDevice()) return initialTier;
     const minutes = state.elapsed / 60000;
-    if (minutes >= 42) return Math.max(initialTier, 2);
-    if (minutes >= 18) return Math.max(initialTier, 1);
+    if (minutes >= 7) return Math.max(initialTier, 3);
+    if (minutes >= 3) return Math.max(initialTier, 2);
     return initialTier;
   }
 
@@ -853,8 +876,8 @@
     trimArray(state.floaters, effectLimit("floaters"));
     trimArray(state.hints, effectLimit("hints"));
     trimArray(state.membraneSnaps, Math.max(6, Math.round(maxMembraneSnaps * currentPerformanceProfile().effectChance)));
-    trimArray(state.pointerFx, 20);
-    trimArray(state.pointerTrail, 30);
+    trimArray(state.pointerFx, effectLimit("pointerFx"));
+    trimArray(state.pointerTrail, effectLimit("pointerTrail"));
   }
 
   function resetFrameStats() {
@@ -1068,6 +1091,7 @@
     state.stageWrongPops = 0;
     state.spawnFlow = null;
     state.spawnFlowIndex = 0;
+    state.islandChoreoIndex = 0;
     state.rhythmBeatIndex = -1;
     state.rhythmPulse = 0;
     state.rhythmDownbeat = false;
@@ -3727,7 +3751,7 @@
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
       if (!bubble.isDrag || bubble.dragResolved || bubble.stageTransitionOut || bubble.age < 0.14 || bubble.dragFade > 0.78) continue;
-      if (Math.hypot(x - bubble.x, y - bubble.y) > bubble.baseRadius * 1.28 + 8) continue;
+      if (Math.hypot(x - bubble.x, y - bubble.y) > bubble.baseRadius * 1.28 + 8 + pointerTapHitSlop(pointerId, true)) continue;
       state.dragPointerId = pointerId;
       state.dragBubbleUid = bubble.uid;
       bubble.dragActive = true;
@@ -5839,7 +5863,7 @@
     return info.outsideColorIndex;
   }
 
-  function islandChoreoLoad() {
+  function islandChoreoLoad(includeTransition = true) {
     let active = 0;
     let notReady = 0;
     let entering = 0;
@@ -5848,6 +5872,7 @@
 
     for (const bubble of state.bubbles) {
       if (!bubble?.islandChainId || !isStageTargetBubble(bubble)) continue;
+      if (!includeTransition && bubble.islandChainId.startsWith("island-transition-")) continue;
       if (bubble.pathComplete) continue;
       if (bubble.age < -0.28) {
         queued += 1;
@@ -5881,6 +5906,7 @@
   function islandOppositePhraseInFlight(colorIndex) {
     return state.bubbles.some((bubble) => {
       if (!bubble?.islandChainId || !isStageTargetBubble(bubble) || bubble.colorIndex === colorIndex) return false;
+      if (bubble.islandChainId.startsWith("island-transition-")) return false;
       if (bubble.age < -0.18) return true;
       const path = bubble.customPath;
       if (!path?.duration || bubble.pathComplete) return false;
@@ -5997,7 +6023,7 @@
       ["top", "left"],
     ];
     const pair = pairs[runIndex % pairs.length];
-    const stable = info.hold >= 0.24;
+    const stable = info.hold >= 0.46;
     const variant = runIndex % 6;
     if (variant === 0) return { type: "outsideTrain", count: stable ? 7 : 4, colorIndex: info.outsideColorIndex, sizeKind: "small", pair };
     if (variant === 1) return { type: "islandTrain", count: stable ? 6 : 4, colorIndex: stable ? info.islandColorIndex : info.outsideColorIndex, sizeKind: "small", pair };
@@ -6134,8 +6160,7 @@
     const capacity = bubbleCapacityRemaining();
     if (remainingStage <= 0 || capacity <= 0) return false;
     const d = difficulty();
-    const runIndex = flow.islandChoreoIndex ?? 0;
-    flow.islandChoreoIndex = runIndex + 1;
+    const runIndex = state.islandChoreoIndex ?? 0;
     const total = Math.min(3, remainingStage, capacity);
     const bubbleSpecs = [];
     for (let index = 0; index < total; index += 1) {
@@ -6198,6 +6223,7 @@
       if (didSpawn) spawned += 1;
     }
     if (spawned <= 0) return false;
+    state.islandChoreoIndex = runIndex + 1;
     state.nextSpawnAt = state.elapsed + longestDelay * 1000 + Math.min(820, basePath.duration * 72) + rand(240, 360);
     return true;
   }
@@ -6224,22 +6250,22 @@
       return true;
     }
 
-    const load = islandChoreoLoad();
+    const islandStable = info.hold >= 0.46;
+    const load = islandChoreoLoad(!islandStable);
     const phraseStillEntering = load.active >= 6 && load.entering > 3;
     const phraseStillUnplayable = load.active >= 7 && load.notReady >= Math.max(4, Math.ceil(load.active * 0.56));
     if (load.active >= 8 || phraseStillEntering || phraseStillUnplayable) {
       state.nextSpawnAt = state.elapsed + clamp(load.delay * 0.72 + load.queued * 42, 280, 760);
       return true;
     }
-    if (info.hold < 0.2) {
+    if (!islandStable) {
       return trySpawnIslandTransitionTrain(flow, remainingStage, info);
     }
 
     const d = difficulty();
-    const runIndex = flow.islandChoreoIndex ?? 0;
-    flow.islandChoreoIndex = runIndex + 1;
+    const runIndex = state.islandChoreoIndex ?? 0;
     const spec = islandSafeRouteSpec(runIndex, info);
-    const total = Math.max(1, Math.min(spec.count, remainingStage, capacity));
+    let total = Math.max(1, Math.min(spec.count, remainingStage, capacity));
     const chainId = `island-safe-${runIndex}-${Math.round(state.elapsed)}`;
     const isTrain = spec.type.includes("Train") || spec.type === "softTrain";
     const bubbleSpecs = [];
@@ -6251,7 +6277,12 @@
             ? "normal"
             : "small";
       const radiusKind = sizeKind === "large" ? "large" : sizeKind === "normal" ? "normal" : index % 3 === 1 ? "tiny" : "small";
-      const radius = radiusForDifficulty(d, radiusKind) * rand(radiusKind === "large" ? 0.86 : 0.84, radiusKind === "large" ? 1.02 : 1.08);
+      const rawRadius = radiusForDifficulty(d, radiusKind) * rand(radiusKind === "large" ? 0.86 : 0.84, radiusKind === "large" ? 1.02 : 1.08);
+      const islandRadiusCap =
+        spec.colorIndex === info.islandColorIndex
+          ? Math.min(info.rx, info.ry) * (sizeKind === "large" ? 0.38 : sizeKind === "normal" ? 0.32 : 0.28)
+          : Number.POSITIVE_INFINITY;
+      const radius = Math.min(rawRadius, islandRadiusCap);
       const speed =
         sizeKind === "large"
           ? rand(36 + d * 3.5, 49 + d * 5)
@@ -6263,10 +6294,15 @@
 
     const baseRadius = Math.max(...bubbleSpecs.map((bubble) => bubble.radius));
     const baseSpeed = bubbleSpecs.reduce((sum, bubble) => sum + bubble.speed, 0) / Math.max(1, bubbleSpecs.length);
-    let basePath = buildIslandSafePath(info, spec.colorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, spec.pair);
+    let routePair = spec.pair;
+    let basePath = buildIslandSafePath(info, spec.colorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, routePair);
     if (!basePath?.points?.length || !pathHasSingleReadablePass(basePath, 36, 0.34, 0.88)) {
-      state.nextSpawnAt = state.elapsed + 520;
-      return true;
+      routePair = islandSafeRouteSpec(runIndex + 3, info).pair;
+      basePath = buildIslandSafePath(info, spec.colorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, routePair);
+      if (!basePath?.points?.length || !pathHasSingleReadablePass(basePath, 36, 0.34, 0.88)) {
+        state.nextSpawnAt = state.elapsed + 360;
+        return true;
+      }
     }
 
     const pathSpeed = basePath.totalLength / Math.max(0.001, basePath.duration);
@@ -6278,16 +6314,30 @@
       current.delay = previous.delay + clamp(spacingSeconds, isTrain ? 0.52 : 0.3, isTrain ? 0.92 : 0.58);
     }
 
-    const longestDelay = bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0;
-    let chainColorIndex = spec.colorIndex;
+    const chainColorIndex = spec.colorIndex;
+    while (
+      bubbleSpecs.length > 1 &&
+      !pathHasPlayableIslandPath(basePath, chainColorIndex, bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0)
+    ) {
+      bubbleSpecs.pop();
+    }
+    let longestDelay = bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0;
     if (!pathHasPlayableIslandPath(basePath, chainColorIndex, longestDelay)) {
-      chainColorIndex = info.outsideColorIndex;
-      basePath = buildIslandSafePath(info, chainColorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, spec.pair);
+      routePair = islandSafeRouteSpec(runIndex + 3, info).pair;
+      basePath = buildIslandSafePath(info, chainColorIndex, baseRadius, baseSpeed, runIndex, 0, spec.type, routePair);
+      while (
+        bubbleSpecs.length > 1 &&
+        !pathHasPlayableIslandPath(basePath, chainColorIndex, bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0)
+      ) {
+        bubbleSpecs.pop();
+      }
+      longestDelay = bubbleSpecs[bubbleSpecs.length - 1]?.delay ?? 0;
       if (!basePath?.points?.length || !pathHasPlayableIslandPath(basePath, chainColorIndex, longestDelay)) {
-        state.nextSpawnAt = state.elapsed + 620;
+        state.nextSpawnAt = state.elapsed + 360;
         return true;
       }
     }
+    total = bubbleSpecs.length;
 
     if (islandOppositePhraseInFlight(chainColorIndex)) {
       state.nextSpawnAt = state.elapsed + 90;
@@ -6300,7 +6350,7 @@
       const { sizeKind, radius, speed, delay } = bubbleSpecs[index];
       const path = isTrain || total === 1
         ? cloneMotionPath(basePath)
-        : buildIslandSafePath(info, chainColorIndex, radius, speed, runIndex, index, spec.type, spec.pair);
+        : buildIslandSafePath(info, chainColorIndex, radius, speed, runIndex, index, spec.type, routePair);
       if (!path?.points?.length || !pathHasSingleReadablePass(path, 30, 0.3, 0.9)) continue;
       const colorIndex = chainColorIndex;
       path.radius = radius;
@@ -6341,6 +6391,7 @@
     }
 
     if (spawned <= 0) return false;
+    state.islandChoreoIndex = runIndex + 1;
     const levelPace = displayDifficultyLevel();
     const entryCap = levelPace >= 10 ? 680 : levelPace >= 6 ? 820 : 980;
     const entryWindow = Math.min(entryCap, basePath.duration * 1000 * 0.085);
@@ -7243,6 +7294,15 @@
       return;
     }
 
+    const islandPatternActive = isIslandChoreoPattern(currentBackgroundPatternId());
+    if (islandPatternActive) {
+      if (trySpawnIslandChoreo(flow, remainingStage)) {
+        return;
+      }
+      state.nextSpawnAt = state.elapsed + 240;
+      return;
+    }
+
     const playableGap = state.elapsed - Math.max(state.stageStartAt, state.lastPlayableAt || state.stageStartAt);
     const bridgeThreshold = level <= 4 ? 1800 : level <= 8 ? 1450 : 1120;
     const bridgeCooldown = level <= 8 ? 2200 : 1760;
@@ -7254,15 +7314,6 @@
     ) {
       state.lastRhythmBridgeAt = state.elapsed;
       state.nextSpawnAt = state.elapsed + rand(280, 420);
-      return;
-    }
-
-    const islandPatternActive = isIslandChoreoPattern(currentBackgroundPatternId());
-    if (islandPatternActive) {
-      if (trySpawnIslandChoreo(flow, remainingStage)) {
-        return;
-      }
-      state.nextSpawnAt = state.elapsed + 240;
       return;
     }
 
@@ -8648,7 +8699,8 @@
       deep: tone?.deep ?? (type === "miss" ? "#74324d" : "#4da6c4"),
       rotation: ((x * 0.017 + y * 0.011 + state.elapsed * 0.0007) % 1) * Math.PI * 2,
     });
-    if (state.pointerFx.length > 20) state.pointerFx.splice(0, state.pointerFx.length - 20);
+    const limit = effectLimit("pointerFx");
+    if (state.pointerFx.length > limit) state.pointerFx.splice(0, state.pointerFx.length - limit);
   }
 
   function pushPointerTrail(fromX, fromY, toX, toY) {
@@ -8664,7 +8716,8 @@
       width: clamp(4.5 + distance * 0.055, 5, 10),
       colorIndex: backgroundColorIndexAt(toX, toY),
     });
-    if (state.pointerTrail.length > 30) state.pointerTrail.splice(0, state.pointerTrail.length - 30);
+    const limit = effectLimit("pointerTrail");
+    if (state.pointerTrail.length > limit) state.pointerTrail.splice(0, state.pointerTrail.length - limit);
   }
 
   function updatePointerFeedback(dt) {
@@ -8703,11 +8756,19 @@
     );
   }
 
-  function tryPopPriorityChargeAt(x, y, isTap) {
+  function pointerTapHitSlop(pointerId, isTap) {
+    if (!isTap) return 0;
+    const pointer = state.activePointers.get(pointerId);
+    if (!pointer?.coarse) return 0;
+    return clamp(Math.min(state.width, state.height) * 0.022, 8, 13);
+  }
+
+  function tryPopPriorityChargeAt(x, y, isTap, pointerId = null) {
+    const touchSlop = pointerTapHitSlop(pointerId, isTap);
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
       if (!bubble.isCharge || bubble.chargeResolved || bubble.stageTransitionOut || bubble.age < 0) continue;
-      const hitRadius = bubble.radius + (isTap ? 9 : 15);
+      const hitRadius = bubble.radius + (isTap ? 9 : 15) + touchSlop;
       if ((x - bubble.x) ** 2 + (y - bubble.y) ** 2 > hitRadius * hitRadius) continue;
       const progress = chargeInteractionProgress(bubble);
       if (progress < 0 || (!isTap && progress < 0.56)) return true;
@@ -8726,9 +8787,10 @@
     return 500;
   }
 
-  function bubbleInputCandidateAt(x, y, isTap) {
+  function bubbleInputCandidateAt(x, y, isTap, pointerId = null) {
     let best = null;
     const latePrecision = smoothstep(0.48, 1, difficulty());
+    const touchSlop = pointerTapHitSlop(pointerId, isTap);
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
       if (
@@ -8742,7 +8804,7 @@
       const hitPadding = isTap ? 9 - latePrecision * 2.2 : 15 - latePrecision * 3.4;
       const stageTarget = isStageTargetBubble(bubble);
       const minTargetHitRadius = stageTarget ? (isCalmSmallBubble(bubble) ? 28 : 32) : 0;
-      const hitRadius = Math.max(bubble.radius + hitPadding, minTargetHitRadius + (isTap ? 0 : 4));
+      const hitRadius = Math.max(bubble.radius + hitPadding + touchSlop, minTargetHitRadius + (isTap ? touchSlop : 4));
       const distanceSquared = dx * dx + dy * dy;
       if (distanceSquared > hitRadius * hitRadius) continue;
       const normalizedDistance = Math.sqrt(distanceSquared) / Math.max(1, hitRadius);
@@ -8756,8 +8818,8 @@
   }
 
   function tryPopAt(x, y, isTap, pointerId = null) {
-    if (tryPopPriorityChargeAt(x, y, isTap)) return true;
-    const candidate = bubbleInputCandidateAt(x, y, isTap);
+    if (tryPopPriorityChargeAt(x, y, isTap, pointerId)) return true;
+    const candidate = bubbleInputCandidateAt(x, y, isTap, pointerId);
     if (!candidate) return false;
     const { bubble, index } = candidate;
     if (
@@ -8826,11 +8888,19 @@
     }
 
     const { x, y } = canvasPointFromPointerEvent(event);
-    state.activePointers.set(event.pointerId, {
+    const pointer = {
       x,
       y,
+      startX: x,
+      startY: y,
+      downAt: Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now(),
+      lastTrailAt: 0,
+      maxTravel: 0,
+      interacted: false,
+      coarse: event.pointerType === "touch" || event.pointerType === "pen" || (!event.pointerType && isLikelyMobileDevice()),
       holdNextAt: state.elapsed + 280,
-    });
+    };
+    state.activePointers.set(event.pointerId, pointer);
     state.activePointerId = event.pointerId;
     state.lastSwipeX = x;
     state.lastSwipeY = y;
@@ -8838,9 +8908,10 @@
     pushPointerFx("tap", x, y, 1);
     canvas.setPointerCapture?.(event.pointerId);
     if (beginDragBubble(x, y, event.pointerId)) {
+      pointer.interacted = true;
       return;
     }
-    tryPopAt(x, y, true, event.pointerId);
+    pointer.interacted = tryPopAt(x, y, true, event.pointerId);
   }
 
   function handlePointerMove(event) {
@@ -8850,8 +8921,15 @@
     if (!pointer) return;
 
     const { x, y } = canvasPointFromPointerEvent(event);
-    pushPointerTrail(pointer.x, pointer.y, x, y);
+    const eventTime = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
+    const trailInterval = pointer.coarse ? 24 : 10;
+    if (!pointer.lastTrailAt || eventTime - pointer.lastTrailAt >= trailInterval) {
+      pushPointerTrail(pointer.x, pointer.y, x, y);
+      pointer.lastTrailAt = eventTime;
+    }
+    pointer.maxTravel = Math.max(pointer.maxTravel, Math.hypot(x - pointer.startX, y - pointer.startY));
     if (moveDragBubblePointer(x, y, event.pointerId)) {
+      pointer.interacted = true;
       pointer.x = x;
       pointer.y = y;
       if (state.activePointerId === event.pointerId) {
@@ -8875,7 +8953,9 @@
 
     for (let step = 1; step <= steps; step += 1) {
       const t = step / steps;
-      tryPopAt(pointer.x + dx * t, pointer.y + dy * t, false, event.pointerId);
+      if (tryPopAt(pointer.x + dx * t, pointer.y + dy * t, false, event.pointerId)) {
+        pointer.interacted = true;
+      }
     }
 
     pointer.x = x;
@@ -8888,10 +8968,18 @@
 
   function handlePointerEnd(event) {
     const pointer = state.activePointers.get(event.pointerId);
+    const point = pointer && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+      ? canvasPointFromPointerEvent(event)
+      : pointer;
     if (state.running && !state.paused && pointer) {
-      const point = Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
-        ? canvasPointFromPointerEvent(event)
-        : pointer;
+      const eventTime = Number.isFinite(event.timeStamp) ? event.timeStamp : performance.now();
+      const releaseTravel = point ? Math.hypot(point.x - pointer.startX, point.y - pointer.startY) : pointer.maxTravel;
+      pointer.maxTravel = Math.max(pointer.maxTravel, releaseTravel);
+      const shortTouch = event.type === "pointerup" && pointer.coarse && eventTime - pointer.downAt <= 480 && pointer.maxTravel <= 28;
+      const dragging = state.dragPointerId === event.pointerId;
+      if (shortTouch && !dragging && !pointer.interacted && point) {
+        pointer.interacted = tryPopAt(point.x, point.y, true, event.pointerId);
+      }
       pushPointerFx("release", point.x, point.y, 0.58);
     }
     releaseDragBubblePointer(event.pointerId);
@@ -11533,10 +11621,23 @@
   function positionTutorialFocus(rect, label = "") {
     if (!tutorialFocus || !phoneShell || !rect) return;
     const shellRect = phoneShell.getBoundingClientRect();
-    tutorialFocus.style.setProperty("--tutorial-focus-x", `${rect.x - shellRect.left + rect.width * 0.5}px`);
-    tutorialFocus.style.setProperty("--tutorial-focus-y", `${rect.y - shellRect.top + rect.height * 0.5}px`);
-    tutorialFocus.style.setProperty("--tutorial-focus-width", `${rect.width}px`);
-    tutorialFocus.style.setProperty("--tutorial-focus-height", `${rect.height}px`);
+    const safeInset = 12;
+    const focusWidth = Math.min(rect.width, Math.max(24, shellRect.width - safeInset * 2));
+    const focusHeight = Math.min(rect.height, Math.max(24, shellRect.height - safeInset * 2));
+    const centerX = clamp(
+      rect.x - shellRect.left + rect.width * 0.5,
+      safeInset + focusWidth * 0.5,
+      shellRect.width - safeInset - focusWidth * 0.5,
+    );
+    const centerY = clamp(
+      rect.y - shellRect.top + rect.height * 0.5,
+      safeInset + focusHeight * 0.5,
+      shellRect.height - safeInset - focusHeight * 0.5,
+    );
+    tutorialFocus.style.setProperty("--tutorial-focus-x", `${centerX}px`);
+    tutorialFocus.style.setProperty("--tutorial-focus-y", `${centerY}px`);
+    tutorialFocus.style.setProperty("--tutorial-focus-width", `${focusWidth}px`);
+    tutorialFocus.style.setProperty("--tutorial-focus-height", `${focusHeight}px`);
     tutorialFocusLabel.textContent = label;
     tutorialFocus.hidden = false;
   }
@@ -12553,20 +12654,26 @@
   canvas.addEventListener("pointermove", handlePointerMove, { passive: false });
   canvas.addEventListener("pointerup", handlePointerEnd);
   canvas.addEventListener("pointercancel", handlePointerEnd);
-  window.addEventListener("resize", () => {
+  function applyViewportResize() {
+    viewportResizeRequest = 0;
     resize();
     if (!state.running || state.paused) {
       draw();
       updatePerfDebug(performance.now(), true);
     }
     if (tutorialRun.active) window.requestAnimationFrame(updateTutorialFocus);
-  });
+  }
+
+  function scheduleViewportResize() {
+    if (viewportResizeRequest) return;
+    viewportResizeRequest = window.requestAnimationFrame(applyViewportResize);
+  }
+
+  window.addEventListener("resize", scheduleViewportResize, { passive: true });
+  window.visualViewport?.addEventListener("resize", scheduleViewportResize, { passive: true });
   window.addEventListener("orientationchange", () => {
-    resize();
-    if (!state.running || state.paused) {
-      draw();
-      updatePerfDebug(performance.now(), true);
-    }
+    scheduleViewportResize();
+    window.setTimeout(scheduleViewportResize, 120);
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {

@@ -5,7 +5,9 @@
     ui-rounded, system-ui, sans-serif;
   background: #70858d;
   --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -20,6 +22,8 @@ body {
   overflow: hidden;
   touch-action: none;
   user-select: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -75,8 +79,8 @@ body {
   position: absolute;
   z-index: 3;
   top: calc(6px + var(--safe-top));
-  left: 6px;
-  right: 7px;
+  left: calc(6px + var(--safe-left));
+  right: calc(7px + var(--safe-right));
   display: block;
   align-items: start;
   pointer-events: none;
@@ -277,7 +281,7 @@ body {
   position: absolute;
   z-index: 3;
   left: auto;
-  right: 8px;
+  right: calc(8px + var(--safe-right));
   top: calc(72px + var(--safe-top));
   bottom: auto;
   width: 52px;
@@ -344,7 +348,7 @@ body {
   position: absolute;
   z-index: 9;
   top: calc(7px + var(--safe-top));
-  right: 8px;
+  right: calc(8px + var(--safe-right));
   width: 36px;
   height: 36px;
   padding: 0;
@@ -4790,4 +4794,282 @@ body {
     0 0 0 5px rgba(255, 194, 91, 0.18),
     0 0 24px rgba(255, 194, 91, 0.74);
   animation: tutorial-try-glow 760ms ease-in-out infinite alternate;
+}
+
+/* Mobile viewport and density normalization */
+@media (max-width: 699px) {
+  .phone-shell {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    box-shadow: none;
+  }
+
+  #game {
+    filter: none;
+  }
+}
+
+@supports (height: 100dvh) {
+  @media (max-width: 699px) {
+    .phone-shell {
+      height: 100dvh;
+    }
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .phone-shell {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    box-shadow: none;
+  }
+
+  #game {
+    filter: none;
+  }
+}
+
+@supports (height: 100dvh) {
+  @media (orientation: landscape) and (max-height: 600px) {
+    .phone-shell {
+      height: 100dvh;
+    }
+  }
+}
+
+@media (max-width: 699px), (orientation: landscape) and (max-height: 600px) {
+  .settings-panel {
+    right: calc(8px + var(--safe-right));
+    max-height: calc(100% - 59px - var(--safe-top) - var(--safe-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .tutorial-overlay {
+    padding-right: max(12px, calc(8px + var(--safe-right)));
+    padding-left: max(12px, calc(8px + var(--safe-left)));
+  }
+
+  .tutorial-focus span {
+    min-width: 0;
+    width: max-content;
+    max-width: min(190px, 68vw);
+    white-space: normal;
+  }
+
+  .rewarded-ad-label {
+    left: calc(12px + var(--safe-left));
+  }
+
+  .rewarded-ad-wait,
+  .rewarded-ad-skip {
+    right: calc(12px + var(--safe-right));
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .curtain:not(.result-mode) {
+    grid-template-columns: minmax(140px, 0.68fr) minmax(300px, 1.32fr);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: center;
+    align-content: center;
+    justify-content: center;
+    gap: 12px;
+    padding:
+      max(8px, var(--safe-top))
+      max(14px, calc(8px + var(--safe-right)))
+      max(8px, var(--safe-bottom))
+      max(14px, calc(8px + var(--safe-left)));
+  }
+
+  .curtain:not(.result-mode) .title-mark {
+    grid-column: 1;
+    margin: 0;
+    font-size: clamp(38px, 6.7vw, 58px);
+  }
+
+  .curtain:not(.result-mode) .title-mark[data-edition]::after {
+    right: -19px;
+    top: -8px;
+  }
+
+  .curtain:not(.result-mode) .start-home {
+    grid-column: 2;
+    width: min(100%, 420px);
+    gap: 6px;
+  }
+
+  .curtain:not(.result-mode) .end-stats:empty,
+  .start-showcase,
+  .start-home .start-copy,
+  .start-footnote {
+    display: none;
+  }
+
+  .start-status {
+    min-height: 28px;
+    padding-block: 3px;
+  }
+
+  .start-profile {
+    min-height: 42px;
+    padding-block: 4px;
+  }
+
+  .start-actions button {
+    min-height: 46px;
+  }
+
+  .settings-panel {
+    top: max(7px, var(--safe-top));
+    width: min(300px, calc(100% - 20px - var(--safe-left) - var(--safe-right)));
+    max-height: calc(100% - 14px - var(--safe-top) - var(--safe-bottom));
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) {
+    gap: 6px;
+    padding-top: max(7px, var(--safe-top));
+    padding-bottom: max(7px, var(--safe-bottom));
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block,
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-controls {
+    width: min(100%, 720px);
+    margin-inline: auto;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block {
+    padding: 9px 12px;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block h2 {
+    font-size: 19px;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block p {
+    font-size: 10px;
+    line-height: 1.36;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-tip {
+    padding: 5px 7px;
+    font-size: 9px;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-controls {
+    min-height: 44px;
+    grid-template-columns: 86px minmax(80px, 1fr) 132px;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-controls button,
+  .tutorial-overlay.interactive-mode:not(.is-complete) #tutorialNext {
+    min-height: 40px;
+  }
+
+  .tutorial-overlay.is-complete {
+    padding-block: max(8px, var(--safe-top)) max(8px, var(--safe-bottom));
+  }
+
+  .tutorial-complete {
+    gap: 7px;
+  }
+
+  .tutorial-complete-mark {
+    width: 78px;
+    box-shadow: 0 0 0 8px rgba(77, 209, 218, 0.06), 0 12px 28px rgba(0, 19, 33, 0.28);
+  }
+
+  .tutorial-complete-mark span {
+    width: 31px;
+    height: 17px;
+    border-left-width: 6px;
+    border-bottom-width: 6px;
+  }
+
+  .tutorial-complete h2 {
+    font-size: 24px;
+  }
+
+  .tutorial-complete p {
+    font-size: 11px;
+  }
+
+  .tutorial-complete .primary-button {
+    min-width: 210px;
+    min-height: 44px;
+  }
+
+  .curtain.result-mode {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 5px;
+    padding:
+      max(5px, var(--safe-top))
+      max(8px, calc(5px + var(--safe-right)))
+      max(5px, var(--safe-bottom))
+      max(8px, calc(5px + var(--safe-left)));
+    overflow: hidden;
+  }
+
+  .curtain.result-mode .title-mark {
+    padding-block: 1px 3px;
+    font-size: 29px;
+  }
+
+  .curtain.result-mode .end-stats {
+    width: min(100%, 780px);
+    height: 100%;
+    overflow: visible;
+  }
+
+  .result-screen {
+    width: 100%;
+    max-width: 780px;
+    height: 100%;
+    grid-template-columns: minmax(250px, 1fr) minmax(250px, 0.94fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .result-summary {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+  }
+
+  .result-board {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 0;
+  }
+
+  .result-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  .result-panel {
+    border-radius: 17px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 360px) {
+  .start-status {
+    display: none;
+  }
+
+  .tutorial-overlay.interactive-mode:not(.is-complete) .tutorial-copy-block p {
+    display: none;
+  }
+
+  .result-eyebrow,
+  .result-board-title span {
+    display: none;
+  }
 }
