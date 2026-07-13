@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.14";
+  const buildVersion = "1.4.15";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -136,6 +136,7 @@
       backgroundFps: 42,
       backgroundFrameSkip: 1,
       targetFps: 60,
+      hudFps: 60,
       contours: true,
       particles: maxParticles,
       ripples: maxRipples,
@@ -155,9 +156,10 @@
       dprCap: 1.25,
       maxCanvasPixels: 480000,
       backgroundScale: backgroundVisualScale * 0.985,
-      backgroundFps: 30,
+      backgroundFps: 26,
       backgroundFrameSkip: 1,
       targetFps: 60,
+      hudFps: 30,
       contours: true,
       particles: 42,
       ripples: 18,
@@ -177,9 +179,10 @@
       dprCap: 1.16,
       maxCanvasPixels: 440000,
       backgroundScale: backgroundVisualScale * 0.975,
-      backgroundFps: 26,
+      backgroundFps: 22,
       backgroundFrameSkip: 1,
-      targetFps: 60,
+      targetFps: 50,
+      hudFps: 30,
       contours: true,
       particles: 24,
       ripples: 12,
@@ -199,9 +202,10 @@
       dprCap: 1.1,
       maxCanvasPixels: 440000,
       backgroundScale: backgroundVisualScale * 0.975,
-      backgroundFps: 24,
+      backgroundFps: 20,
       backgroundFrameSkip: 1,
-      targetFps: 60,
+      targetFps: 45,
+      hudFps: 24,
       contours: true,
       particles: 14,
       ripples: 8,
@@ -405,6 +409,15 @@
   };
 
   let audioContext;
+  let audioMasterGain = null;
+  let audioCompressor = null;
+  let audioResumePromise = null;
+  let audioContextGeneration = 0;
+  let soundPreloadStarted = false;
+  let soundPreloadTimer = 0;
+  let musicPlayPromise = null;
+  let musicRetryPending = false;
+  let backgroundMusicPrimed = false;
   const soundFiles = {
     start: ["start.mp3"],
     small: ["bubble_pop_small_1.mp3"],
@@ -422,7 +435,9 @@
   const soundLoaders = new Map();
   const soundDecks = new Map();
   const lastSoundByGroup = new Map();
-  const warmAudioElements = [];
+  const activeSoundVoices = [];
+  const pendingSoundRequests = [];
+  const maxPendingSoundRequests = 10;
   const comboPitchWindowSeconds = 1.5;
   let popPitchStreak = 0;
   let lastPopSoundAt = Number.NEGATIVE_INFINITY;
@@ -435,6 +450,7 @@
   let rewardedAdStartedAt = 0;
   let rewardedAdActive = false;
   let introRunning = false;
+  let startButtonPressActive = false;
   let resultSyncSequence = 0;
   let leaderboardWatchStop = null;
   let homeLeaderboardWatchStop = null;
@@ -465,6 +481,8 @@
   };
   let frameRequest = 0;
   let lastFrameTime = 0;
+  let nextFrameDeadline = 0;
+  let lastHudFrameRefreshAt = Number.NEGATIVE_INFINITY;
   let perfFrames = 0;
   let perfFps = 0;
   let perfLastTime = 0;
@@ -803,8 +821,8 @@
   function thermalTierFloor() {
     if (!state.running || !isLikelyMobileDevice()) return initialTier;
     const minutes = state.elapsed / 60000;
-    if (minutes >= 7) return Math.max(initialTier, 3);
-    if (minutes >= 3) return Math.max(initialTier, 2);
+    if (minutes >= 3.2) return Math.max(initialTier, 3);
+    if (minutes >= 0.9) return Math.max(initialTier, 2);
     return initialTier;
   }
 
@@ -829,6 +847,7 @@
     const clamped = clamp(Math.round(nextTier), 0, performanceProfiles.length - 1);
     if (clamped === performanceTier) return;
     performanceTier = clamped;
+    nextFrameDeadline = 0;
     performanceLastChangeAt = now;
     performanceSlowSince = 0;
     performanceCoolSince = 0;
@@ -1649,6 +1668,7 @@
 
   function pauseBackgroundMusic({ reset = false } = {}) {
     if (!backgroundMusic) return;
+    musicRetryPending = false;
     backgroundMusic.pause();
     if (reset) {
       try {
@@ -1671,7 +1691,65 @@
       return;
     }
     backgroundMusic.volume = musicVolume;
-    backgroundMusic.play().catch(() => {});
+    if (!backgroundMusic.paused) {
+      musicRetryPending = false;
+      return;
+    }
+    if (musicPlayPromise) return;
+    try {
+      const playResult = backgroundMusic.play();
+      musicPlayPromise = Promise.resolve(playResult)
+        .then(() => {
+          musicRetryPending = false;
+        })
+        .catch(() => {
+          musicRetryPending = true;
+        })
+        .finally(() => {
+          musicPlayPromise = null;
+        });
+    } catch {
+      musicRetryPending = true;
+      musicPlayPromise = null;
+    }
+  }
+
+  function primeBackgroundMusic() {
+    if (!backgroundMusic || backgroundMusicPrimed || !musicEnabled || state.running) return;
+    const previousMuted = backgroundMusic.muted;
+    backgroundMusic.muted = true;
+    try {
+      Promise.resolve(backgroundMusic.play())
+        .then(() => {
+          backgroundMusicPrimed = true;
+          if (!state.running) {
+            backgroundMusic.pause();
+            try {
+              backgroundMusic.currentTime = 0;
+            } catch {
+              // Metadata may still be loading on the first touch.
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          backgroundMusic.muted = previousMuted;
+          backgroundMusic.volume = musicEnabled ? musicVolume : 0;
+        });
+    } catch {
+      backgroundMusic.muted = previousMuted;
+    }
+  }
+
+  function recoverGameAudioFromGesture() {
+    void resumeGameAudio();
+    if (!state.running) primeBackgroundMusic();
+    if (state.running && !state.paused && (musicRetryPending || backgroundMusic?.paused)) playBackgroundMusic();
+  }
+
+  function recoverGameAudioAfterInterruption() {
+    if (audioContext) void resumeGameAudio();
+    if (state.running && !state.paused && !document.hidden) playBackgroundMusic();
   }
 
   function scoreBreakdown() {
@@ -1761,8 +1839,15 @@
         if (String(playerNameInput.value || "").trim()) commitPlayerProfile({ focus: false });
       });
       playerNameInput.addEventListener("blur", () => {
-        phoneShell?.classList.remove("text-input-open");
-        stabilizeMobileViewport();
+        const finishBlur = () => {
+          phoneShell?.classList.remove("text-input-open");
+          stabilizeMobileViewport();
+        };
+        if (startButtonPressActive) {
+          window.setTimeout(finishBlur, 140);
+        } else {
+          finishBlur();
+        }
       });
     }
     const leaderboard = window.PaopaoLeaderboard;
@@ -2392,6 +2477,7 @@
   }
 
   function updateHud() {
+    lastHudFrameRefreshAt = state.elapsed;
     const exactWater = Math.max(0, Math.min(100, state.water));
     const openActive = state.openUntil > state.elapsed && state.running;
     const previousFullLifeCount = lastFullLifeCount;
@@ -2427,7 +2513,11 @@
       const segmentProgress = isFull ? 1 : isNextLife ? lifeChargeProgress : 0;
       const justCompleted = isFull && index === fullLifeCount - 1 && state.elapsed < lifeGainUntil;
       const chargingNow = isNextLife && segmentProgress > 0 && state.elapsed < waterGainUntil;
-      heart.src = redDotHeartSrc(segmentProgress, isNextLife);
+      const heartSourceKey = `${isNextLife ? "charge" : "life"}-${Math.round(segmentProgress * 100)}`;
+      if (heart.dataset.sourceKey !== heartSourceKey) {
+        heart.dataset.sourceKey = heartSourceKey;
+        heart.src = redDotHeartSrc(segmentProgress, isNextLife);
+      }
       heart.classList.toggle("charging", justCompleted || chargingNow);
       heart.classList.toggle("recovering", isNextLife && segmentProgress > 0);
       heart.classList.toggle("near-ready", isNextLife && segmentProgress >= 0.72);
@@ -2462,17 +2552,21 @@
       : state.combo > 1
         ? `x${state.combo}`
         : "";
-    scoreEl.textContent = String(state.correctBubbleCount);
-    timeEl.textContent = state.tutorialMode ? "练习" : formatTime(state.elapsed);
+    const scoreText = String(state.correctBubbleCount);
+    const timeText = state.tutorialMode ? "练习" : formatTime(state.elapsed);
+    if (scoreEl.textContent !== scoreText) scoreEl.textContent = scoreText;
+    if (timeEl.textContent !== timeText) timeEl.textContent = timeText;
     if (difficultyEl) {
-      difficultyEl.textContent = state.tutorialMode ? `教程 ${tutorialStepIndex + 1}/${tutorialSlides.length}` : `Lv ${displayDifficultyLevel()}`;
+      const difficultyText = state.tutorialMode ? `教程 ${tutorialStepIndex + 1}/${tutorialSlides.length}` : `Lv ${displayDifficultyLevel()}`;
+      if (difficultyEl.textContent !== difficultyText) difficultyEl.textContent = difficultyText;
     }
     const skillReady = state.clearSkillCharge >= 1 && state.clearSkillUses < clearSkillMaxUses;
     clearSkillButton.style.setProperty("--clear-charge", state.clearSkillCharge.toFixed(3));
     clearSkillButton.classList.toggle("ready", skillReady);
     clearSkillButton.disabled = !state.running || state.paused || !skillReady;
-    clearSkillValue.textContent =
+    const clearSkillText =
       state.clearSkillUses >= clearSkillMaxUses ? "DONE" : skillReady ? "READY" : `${Math.round(state.clearSkillCharge * 100)}%`;
+    if (clearSkillValue.textContent !== clearSkillText) clearSkillValue.textContent = clearSkillText;
     updateDebugPanel();
   }
 
@@ -2585,6 +2679,7 @@
     curtain.classList.add("hidden");
     endStats.textContent = "";
     lastFrameTime = performance.now();
+    nextFrameDeadline = 0;
     perfFrames = 0;
     perfLastTime = lastFrameTime;
     performanceWorkMs = currentTargetFrameMs() * 0.35;
@@ -3024,6 +3119,7 @@
     lastHudWater = 0;
     lastFullLifeCount = 0;
     lastFrameTime = performance.now();
+    nextFrameDeadline = 0;
     state.lastTime = lastFrameTime;
     makeFloatText(state.width * 0.5, state.height * 0.56, "复活", "#d8fffb", 1.08, {
       life: 0.72,
@@ -9765,7 +9861,10 @@
       endGame();
     }
 
-    updateHud();
+    const hudFrameMs = 1000 / clamp(currentPerformanceProfile().hudFps || 60, 20, 60);
+    if (state.elapsed - lastHudFrameRefreshAt >= hudFrameMs) {
+      updateHud();
+    }
   }
 
   function backgroundBoundaryGuideX(y, time) {
@@ -11771,12 +11870,18 @@
       return;
     }
 
-    if (lastFrameTime && now - lastFrameTime < currentTargetFrameMs() - 1) {
+    const targetStep = currentTargetFrameMs();
+    if (!nextFrameDeadline || now - nextFrameDeadline > targetStep * 4) {
+      nextFrameDeadline = now;
+    }
+    if (now + 0.5 < nextFrameDeadline) {
       scheduleLoop();
       return;
     }
+    do {
+      nextFrameDeadline += targetStep;
+    } while (nextFrameDeadline <= now);
 
-    const targetStep = currentTargetFrameMs();
     const elapsed = lastFrameTime ? now - lastFrameTime : targetStep;
     const dt = Math.min(0.05, Math.max(0, elapsed / 1000 || targetStep / 1000));
     lastFrameTime = now;
@@ -11807,15 +11912,151 @@
     scheduleLoop();
   }
 
+  function audioVoiceLimit() {
+    return isLikelyMobileDevice() ? 14 : 22;
+  }
+
+  function audioOutputFor(context) {
+    return context === audioContext && audioMasterGain ? audioMasterGain : context.destination;
+  }
+
+  function releaseSoundVoice(voice) {
+    const index = activeSoundVoices.indexOf(voice);
+    if (index >= 0) activeSoundVoices.splice(index, 1);
+    try {
+      voice.source.disconnect();
+      voice.gain.disconnect();
+    } catch {
+      // A source can already be disconnected after an iOS audio interruption.
+    }
+  }
+
+  function stopSoundVoice(voice) {
+    try {
+      voice.source.stop();
+    } catch {
+      // Stopping an already ended source is harmless.
+    }
+    releaseSoundVoice(voice);
+  }
+
+  function trimSoundVoices(priority = "pop") {
+    while (activeSoundVoices.length >= audioVoiceLimit()) {
+      const popVoice = activeSoundVoices.find((voice) => voice.priority === "pop");
+      if (!popVoice && priority === "pop") return false;
+      const candidate = popVoice ?? activeSoundVoices[0];
+      if (!candidate) return false;
+      stopSoundVoice(candidate);
+    }
+    return true;
+  }
+
+  function discardAudioContext(context) {
+    if (!context || context !== audioContext) return;
+    activeSoundVoices.slice().forEach(stopSoundVoice);
+    audioContext = undefined;
+    audioContextGeneration += 1;
+    audioMasterGain = null;
+    audioCompressor = null;
+    audioResumePromise = null;
+    soundPreloadStarted = false;
+    if (soundPreloadTimer) window.clearTimeout(soundPreloadTimer);
+    soundPreloadTimer = 0;
+    soundBuffers.clear();
+    soundLoaders.clear();
+  }
+
   function ensureAudioContext() {
-    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
-    audioContext.resume?.();
-    return audioContext;
+    if (audioContext?.state === "closed") discardAudioContext(audioContext);
+    if (audioContext) return audioContext;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    try {
+      audioContext = new AudioContextClass({ latencyHint: "interactive" });
+    } catch {
+      audioContext = new AudioContextClass();
+    }
+    audioContextGeneration += 1;
+    try {
+      audioMasterGain = audioContext.createGain();
+      audioMasterGain.gain.value = 0.96;
+      audioCompressor = audioContext.createDynamicsCompressor();
+      audioCompressor.threshold.value = -16;
+      audioCompressor.knee.value = 18;
+      audioCompressor.ratio.value = 4;
+      audioCompressor.attack.value = 0.004;
+      audioCompressor.release.value = 0.16;
+      audioMasterGain.connect(audioCompressor);
+      audioCompressor.connect(audioContext.destination);
+    } catch {
+      audioMasterGain = null;
+      audioCompressor = null;
+    }
+    const context = audioContext;
+    context.addEventListener?.("statechange", () => {
+      if (context !== audioContext) return;
+      if (context.state === "running") {
+        flushPendingSoundRequests();
+      } else if (context.state === "closed") {
+        discardAudioContext(context);
+      }
+    });
+    return context;
+  }
+
+  function resumeGameAudio() {
+    const context = ensureAudioContext();
+    if (!context) return Promise.resolve(false);
+    if (context.state === "running") {
+      flushPendingSoundRequests();
+      return Promise.resolve(true);
+    }
+    if (audioResumePromise) return audioResumePromise;
+    audioResumePromise = Promise.resolve(context.resume?.())
+      .then(() => {
+        const resumed = context === audioContext && context.state === "running";
+        if (resumed) flushPendingSoundRequests();
+        return resumed;
+      })
+      .catch(() => false)
+      .finally(() => {
+        if (context === audioContext) audioResumePromise = null;
+      });
+    return audioResumePromise;
+  }
+
+  function soundRequestIsFresh(request) {
+    return performance.now() - request.requestedAt <= request.maxAgeMs + request.delayOffset * 1000;
+  }
+
+  function queueSoundRequest(request) {
+    if (!soundRequestIsFresh(request)) return;
+    for (let index = pendingSoundRequests.length - 1; index >= 0; index -= 1) {
+      if (!soundRequestIsFresh(pendingSoundRequests[index])) pendingSoundRequests.splice(index, 1);
+    }
+    pendingSoundRequests.push(request);
+    while (pendingSoundRequests.length > maxPendingSoundRequests) {
+      const popIndex = pendingSoundRequests.findIndex((item) => item.priority === "pop");
+      pendingSoundRequests.splice(popIndex >= 0 ? popIndex : 0, 1);
+    }
+    void resumeGameAudio();
+  }
+
+  function flushPendingSoundRequests() {
+    if (!audioContext || audioContext.state !== "running" || pendingSoundRequests.length === 0) return;
+    const requests = pendingSoundRequests.splice(0, pendingSoundRequests.length);
+    requests.forEach((request) => {
+      if (soundRequestIsFresh(request)) startSoundRequest(request);
+    });
   }
 
   function playChargeWarningTick(intensity = 0) {
     try {
       const context = ensureAudioContext();
+      if (!context || context.state !== "running") {
+        void resumeGameAudio();
+        return;
+      }
       const now = context.currentTime;
       const oscillator = context.createOscillator();
       const gain = context.createGain();
@@ -11827,7 +12068,15 @@
       gain.gain.exponentialRampToValueAtTime(0.012 + amount * 0.018, now + 0.008);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
       oscillator.connect(gain);
-      gain.connect(context.destination);
+      gain.connect(audioOutputFor(context));
+      oscillator.addEventListener("ended", () => {
+        try {
+          oscillator.disconnect();
+          gain.disconnect();
+        } catch {
+          // The browser may already have released these short-lived nodes.
+        }
+      }, { once: true });
       oscillator.start(now);
       oscillator.stop(now + 0.08);
     } catch {
@@ -11887,13 +12136,19 @@
     if (soundLoaders.has(fileName)) {
       return soundLoaders.get(fileName);
     }
-    const loader = fetch(soundUrl(fileName))
+    const context = ensureAudioContext();
+    if (!context) return Promise.reject(new Error("Web Audio is unavailable"));
+    const generation = audioContextGeneration;
+    const loader = fetch(soundUrl(fileName), { cache: "force-cache" })
       .then((response) => {
         if (!response.ok) throw new Error(`Sound load failed: ${fileName}`);
         return response.arrayBuffer();
       })
-      .then((data) => ensureAudioContext().decodeAudioData(data))
+      .then((data) => context.decodeAudioData(data))
       .then((buffer) => {
+        if (context !== audioContext || generation !== audioContextGeneration || context.state === "closed") {
+          throw new Error("Audio context changed while decoding");
+        }
         soundBuffers.set(fileName, buffer);
         soundLoaders.delete(fileName);
         return buffer;
@@ -11907,48 +12162,99 @@
   }
 
   function preloadGameSounds() {
-    Object.values(soundFiles)
-      .flat()
-      .forEach((fileName) => {
-        loadSoundBuffer(fileName).catch(() => {});
-      });
+    if (soundPreloadStarted) return;
+    const context = ensureAudioContext();
+    if (!context) return;
+    soundPreloadStarted = true;
+    const preferred = [
+      ...soundFiles.start,
+      ...soundFiles.regular,
+      ...soundFiles.small,
+      ...soundFiles.big,
+      ...soundFiles.lifeMinus,
+    ];
+    const files = [...new Set([...preferred, ...Object.values(soundFiles).flat()])];
+    const preloadGeneration = audioContextGeneration;
+    const loadNextBatch = () => {
+      soundPreloadTimer = 0;
+      const batch = files.splice(0, 3);
+      if (!batch.length) return;
+      Promise.allSettled(batch.map((fileName) => loadSoundBuffer(fileName)))
+        .finally(() => {
+          if (files.length && preloadGeneration === audioContextGeneration && audioContext?.state !== "closed") {
+            soundPreloadTimer = window.setTimeout(loadNextBatch, 90);
+          }
+        });
+    };
+    loadNextBatch();
   }
 
-  function warmGameSoundFiles() {
-    Object.values(soundFiles)
-      .flat()
-      .forEach((fileName) => {
-        const audio = new Audio(soundUrl(fileName));
-        audio.preload = "auto";
-        audio.load();
-        warmAudioElements.push(audio);
-      });
-  }
+  function startSoundRequest(request) {
+    const context = audioContext;
+    if (!context || context.state !== "running") {
+      queueSoundRequest(request);
+      return;
+    }
+    if (!soundRequestIsFresh(request)) return;
 
-  function playSoundBuffer(fileName, { playbackRate = 1, volume = 0.82, delayOffset = 0 } = {}) {
-    try {
-      const context = ensureAudioContext();
-      const startSource = (buffer) => {
+    const startSource = (buffer) => {
+      if (context !== audioContext || context.state !== "running") {
+        queueSoundRequest(request);
+        return;
+      }
+      if (!soundRequestIsFresh(request)) return;
+      try {
+        if (!trimSoundVoices(request.priority)) return;
         const now = context.currentTime;
         const source = context.createBufferSource();
         const gain = context.createGain();
+        const voice = { source, gain, priority: request.priority };
         source.buffer = buffer;
-        source.playbackRate.setValueAtTime(clamp(playbackRate, 0.78, 1.12), now);
-        gain.gain.setValueAtTime(clamp(volume, 0, 1), now);
+        source.playbackRate.setValueAtTime(clamp(request.playbackRate, 0.78, 1.12), now);
+        gain.gain.setValueAtTime(clamp(request.volume, 0, 1), now);
         source.connect(gain);
-        gain.connect(context.destination);
-        source.start(Math.max(now, now + delayOffset));
+        gain.connect(audioOutputFor(context));
+        source.addEventListener("ended", () => releaseSoundVoice(voice), { once: true });
+        activeSoundVoices.push(voice);
+        source.start(now + Math.max(0, request.delayOffset));
+      } catch {
+        void resumeGameAudio();
+      }
+    };
+
+    const buffer = soundBuffers.get(request.fileName);
+    if (buffer) {
+      startSource(buffer);
+      return;
+    }
+    loadSoundBuffer(request.fileName)
+      .then(startSource)
+      .catch(() => {});
+  }
+
+  function playSoundBuffer(
+    fileName,
+    { playbackRate = 1, volume = 0.82, delayOffset = 0, priority = "event", maxAgeMs = 900 } = {},
+  ) {
+    try {
+      const context = ensureAudioContext();
+      if (!context) return;
+      const request = {
+        fileName,
+        playbackRate,
+        volume,
+        delayOffset: Math.max(0, delayOffset),
+        priority,
+        maxAgeMs,
+        requestedAt: performance.now(),
       };
-      const buffer = soundBuffers.get(fileName);
-      if (buffer) {
-        startSource(buffer);
+      if (context.state === "running") {
+        startSoundRequest(request);
       } else {
-        loadSoundBuffer(fileName)
-          .then(startSource)
-          .catch(() => {});
+        queueSoundRequest(request);
       }
     } catch {
-      audioContext = null;
+      void resumeGameAudio();
     }
   }
 
@@ -11958,8 +12264,7 @@
   }
 
   function nextPopPlaybackRate(delayOffset = 0) {
-    const context = ensureAudioContext();
-    const scheduledTime = context.currentTime + delayOffset;
+    const scheduledTime = performance.now() / 1000 + delayOffset;
     if (scheduledTime - lastPopSoundAt > comboPitchWindowSeconds) {
       popPitchStreak = 0;
     }
@@ -11974,18 +12279,18 @@
       const fileName = chooseSoundFile(group);
       const playbackRate = nextPopPlaybackRate(delayOffset);
       const volume = (group === "small" ? 0.78 : group === "big" ? 0.88 : 0.82) * clamp(volumeScale, 0.2, 1.2);
-      playSoundBuffer(fileName, { playbackRate, volume, delayOffset });
+      playSoundBuffer(fileName, { playbackRate, volume, delayOffset, priority: "pop", maxAgeMs: 280 });
     } catch {
-      audioContext = null;
+      void resumeGameAudio();
     }
   }
 
   function playEventSound(group, { playbackRate = 1, volume = 0.82, delayOffset = 0 } = {}) {
     try {
       const fileName = chooseSoundFile(group);
-      playSoundBuffer(fileName, { playbackRate, volume, delayOffset });
+      playSoundBuffer(fileName, { playbackRate, volume, delayOffset, priority: "event", maxAgeMs: 900 });
     } catch {
-      audioContext = null;
+      void resumeGameAudio();
     }
   }
 
@@ -12591,6 +12896,7 @@
     tutorialRun.practicing = true;
     state.paused = false;
     lastFrameTime = performance.now();
+    nextFrameDeadline = 0;
     state.lastTime = lastFrameTime;
     updateTutorialFocus();
     scheduleLoop();
@@ -12923,6 +13229,7 @@
     if (!state.running || !state.paused) return false;
     state.paused = false;
     lastFrameTime = performance.now();
+    nextFrameDeadline = 0;
     state.lastTime = lastFrameTime;
     updateHud();
     syncSettingsPanel();
@@ -13190,8 +13497,21 @@
   }
 
   initCustomPackDevPanel();
-  warmGameSoundFiles();
+  document.addEventListener(window.PointerEvent ? "pointerdown" : "touchstart", recoverGameAudioFromGesture, {
+    capture: true,
+    passive: true,
+  });
+  document.addEventListener("keydown", recoverGameAudioFromGesture, { capture: true });
+  window.addEventListener("focus", recoverGameAudioAfterInterruption, { passive: true });
+  window.addEventListener("pageshow", recoverGameAudioAfterInterruption, { passive: true });
+  startButton.addEventListener("pointerdown", () => {
+    startButtonPressActive = true;
+    window.setTimeout(() => {
+      startButtonPressActive = false;
+    }, 260);
+  }, { passive: true });
   startButton.addEventListener("click", () => {
+    startButtonPressActive = false;
     if (!commitPlayerProfile()) return;
     closeHomeLeaderboard({ restoreFocus: false });
     playerNameInput?.blur();
@@ -13269,6 +13589,8 @@
       return;
     }
     lastFrameTime = performance.now();
+    nextFrameDeadline = 0;
+    recoverGameAudioAfterInterruption();
     if (state.running && !state.paused) {
       scheduleLoop();
       playBackgroundMusic();

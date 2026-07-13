@@ -648,6 +648,9 @@
     if (!imageData) resize(width, height);
     const data = imageData.data;
     const frameState = buildFrameState(t);
+    const needsSeparateVisualField =
+      frameState.current.type === "pulse" ||
+      (frameState.transition > 0 && frameState.next?.type === "pulse");
     const band = 0.078 + Math.sin(t * 0.34) * 0.006;
     updateShadeCaches(t);
     let offset = 0;
@@ -655,7 +658,7 @@
       const ny = nyByY[y];
       for (let x = 0; x < lowWidth; x += 1) {
         const field = liquidField(nxByX[x], ny, frameState);
-        const visualField = visualLiquidField(nxByX[x], ny, frameState);
+        const visualField = needsSeparateVisualField ? visualLiquidField(nxByX[x], ny, frameState) : field;
         values[y * lowWidth + x] = field;
         const color = shadePixel(visualField, x, y, band);
         data[offset] = color[0];
@@ -908,7 +911,7 @@
 
   function setQuality(options = {}) {
     const nextScale = clamp(Number(options.scale ?? options.quality ?? qualityScale), 0.62, 1);
-    const frameFps = clamp(Number(options.fps ?? options.frameFps ?? 60), 24, 60);
+    const frameFps = clamp(Number(options.fps ?? options.frameFps ?? 60), 18, 60);
     const frameSkip = clamp(Math.round(Number(options.frameSkip ?? 1)), 1, 5);
     const nextFrameStep = (1 / frameFps) * frameSkip;
     const nextContoursEnabled = options.contours !== false;
