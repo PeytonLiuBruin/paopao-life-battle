@@ -10,6 +10,188 @@
   --safe-left: env(safe-area-inset-left, 0px);
 }
 
+/* Combo milestones stay lightweight and never intercept gameplay input. */
+.combo-fever-overlay,
+.combo-countdown-overlay,
+.combo-life-overlay {
+  position: absolute;
+  z-index: 8;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  letter-spacing: 0;
+}
+
+.combo-fever-overlay {
+  top: 30%;
+  min-height: 150px;
+  align-content: center;
+  color: rgba(255, 255, 255, 0.82);
+  background: linear-gradient(90deg, transparent, rgba(8, 44, 67, 0.1) 24%, rgba(255, 255, 255, 0.11) 50%, rgba(8, 44, 67, 0.1) 76%, transparent);
+  mix-blend-mode: screen;
+  animation: combo-fever-sweep 920ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.combo-fever-overlay span {
+  font-size: 15px;
+  font-weight: 1000;
+  line-height: 1;
+  text-shadow: 0 2px 14px rgba(13, 52, 73, 0.36);
+}
+
+.combo-fever-overlay strong {
+  font-size: 92px;
+  font-weight: 1000;
+  line-height: 0.9;
+  color: rgba(247, 255, 255, 0.3);
+  -webkit-text-stroke: 1px rgba(255, 255, 255, 0.44);
+  paint-order: stroke fill;
+  text-shadow: 0 12px 36px rgba(14, 77, 104, 0.22);
+}
+
+.combo-countdown-overlay {
+  top: 44%;
+  color: rgba(242, 255, 255, 0.9);
+  animation: combo-count-tick 118ms ease-out both;
+}
+
+.combo-countdown-overlay span {
+  font-size: 10px;
+  font-weight: 1000;
+  opacity: 0.68;
+}
+
+.combo-countdown-overlay strong {
+  font-size: 68px;
+  font-weight: 1000;
+  line-height: 0.92;
+  text-shadow: 0 4px 18px rgba(7, 42, 61, 0.42);
+}
+
+.combo-countdown-overlay.is-target {
+  color: #fff1a8;
+  animation-duration: 210ms;
+}
+
+.combo-life-overlay {
+  top: 23%;
+  gap: 3px;
+  color: #ecfffb;
+  animation: combo-life-reward 1080ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.combo-life-overlay span {
+  font-size: 10px;
+  font-weight: 1000;
+  color: rgba(225, 255, 250, 0.74);
+}
+
+.combo-life-overlay strong {
+  padding: 7px 16px;
+  border: 1px solid rgba(219, 255, 247, 0.7);
+  border-radius: 999px;
+  font-size: 28px;
+  font-weight: 1000;
+  background: rgba(15, 103, 99, 0.42);
+  box-shadow: 0 8px 24px rgba(2, 55, 66, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  text-shadow: 0 2px 10px rgba(5, 48, 58, 0.42);
+}
+
+@keyframes combo-fever-sweep {
+  0% { opacity: 0; transform: translateY(28px) scale(0.96); }
+  22% { opacity: 1; }
+  62% { opacity: 0.72; transform: translateY(-3px) scale(1); }
+  100% { opacity: 0; transform: translateY(-38px) scale(1.025); }
+}
+
+@keyframes combo-count-tick {
+  0% { opacity: 0; transform: translateY(8px) scale(0.88); }
+  45% { opacity: 1; transform: translateY(0) scale(1.03); }
+  100% { opacity: 0; transform: translateY(-7px) scale(1); }
+}
+
+@keyframes combo-life-reward {
+  0% { opacity: 0; transform: translateY(18px) scale(0.9); }
+  20%, 62% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-24px) scale(1.04); }
+}
+
+.curtain.result-mode > .result-confetti {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.result-confetti span {
+  position: absolute;
+  top: -18px;
+  left: var(--confetti-x);
+  width: var(--confetti-size);
+  height: calc(var(--confetti-size) * 1.65);
+  border-radius: 2px;
+  background: var(--confetti-color);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--confetti-color) 54%, transparent);
+  animation: result-confetti-fall var(--confetti-duration) linear var(--confetti-delay) infinite;
+}
+
+.result-confetti::before,
+.result-confetti::after {
+  position: absolute;
+  bottom: 3%;
+  width: 96px;
+  height: 96px;
+  content: "";
+  opacity: 0;
+  background: repeating-conic-gradient(from 214deg, transparent 0 9deg, rgba(255, 221, 102, 0.88) 10deg 13deg, transparent 14deg 22deg, rgba(95, 236, 239, 0.82) 23deg 26deg, transparent 27deg 36deg);
+  -webkit-mask: radial-gradient(circle at 50% 100%, transparent 0 20%, #000 22% 69%, transparent 71%);
+  mask: radial-gradient(circle at 50% 100%, transparent 0 20%, #000 22% 69%, transparent 71%);
+  animation: result-confetti-cannon 2400ms ease-out infinite;
+}
+
+.result-confetti::before { left: -8px; transform: rotate(20deg); }
+.result-confetti::after { right: -8px; transform: scaleX(-1) rotate(20deg); animation-delay: 1200ms; }
+
+.result-screen.is-top-five .result-summary,
+.result-screen.is-top-five .result-board {
+  box-shadow: 0 16px 38px rgba(0, 46, 84, 0.22), 0 0 0 2px rgba(255, 219, 112, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+@keyframes result-confetti-fall {
+  0% { transform: translate3d(0, -24px, 0) rotate(0deg); opacity: 0; }
+  8% { opacity: 0.94; }
+  72% { opacity: 0.88; }
+  100% { transform: translate3d(var(--confetti-drift), 1040px, 0) rotate(620deg); opacity: 0; }
+}
+
+@keyframes result-confetti-cannon {
+  0%, 68% { opacity: 0; scale: 0.7; }
+  72% { opacity: 0.92; scale: 0.86; }
+  88% { opacity: 0.7; scale: 1.06; }
+  100% { opacity: 0; scale: 1.16; }
+}
+
+.tutorial-result-cue.is-manual .tutorial-result-progress {
+  display: none;
+}
+
+@media (max-width: 340px) {
+  .combo-fever-overlay strong { font-size: 72px; }
+  .combo-countdown-overlay strong { font-size: 56px; }
+  .combo-life-overlay strong { font-size: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .combo-fever-overlay,
+  .combo-countdown-overlay,
+  .combo-life-overlay { animation-duration: 1ms; }
+  .result-confetti span:nth-child(n + 13) { display: none; }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -3654,6 +3836,12 @@ body {
   box-shadow: inset 0 0 0 8px rgba(255, 144, 166, 0.7);
 }
 
+.tutorial-result-cue.is-warning {
+  color: #fff7cb;
+  background: rgba(90, 57, 17, 0.46);
+  box-shadow: inset 0 0 0 8px rgba(255, 215, 104, 0.7);
+}
+
 .tutorial-result-icon {
   position: relative;
   width: 112px;
@@ -3691,6 +3879,28 @@ body {
 
 .tutorial-result-cue.is-error .tutorial-result-icon::after {
   transform: rotate(-45deg);
+}
+
+.tutorial-result-cue.is-warning .tutorial-result-icon::before,
+.tutorial-result-cue.is-warning .tutorial-result-icon::after {
+  position: absolute;
+  left: 50%;
+  content: "";
+  border-radius: 999px;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+
+.tutorial-result-cue.is-warning .tutorial-result-icon::before {
+  top: 24px;
+  width: 10px;
+  height: 48px;
+}
+
+.tutorial-result-cue.is-warning .tutorial-result-icon::after {
+  bottom: 21px;
+  width: 12px;
+  height: 12px;
 }
 
 .tutorial-result-cue strong {
@@ -4406,6 +4616,8 @@ body {
 
 .tutorial-frame[data-scene="charge"] .tutorial-bg-a,
 .tutorial-frame[data-scene="charge"] .tutorial-bg-b,
+.tutorial-frame[data-scene="chargeDemo"] .tutorial-bg-a,
+.tutorial-frame[data-scene="chargeDemo"] .tutorial-bg-b,
 .tutorial-frame[data-scene="bleach"] .tutorial-bg-a,
 .tutorial-frame[data-scene="bleach"] .tutorial-bg-b,
 .tutorial-frame[data-scene="cat"] .tutorial-bg-a,
@@ -4413,10 +4625,14 @@ body {
 .tutorial-frame[data-scene="power"] .tutorial-bg-a,
 .tutorial-frame[data-scene="power"] .tutorial-bg-b { width: 70%; opacity: 0.44; }
 
-.tutorial-frame[data-scene="charge"] .tutorial-bubble-main { left: calc(50% - 57px); top: calc(43% - 57px); width: 114px; animation: tutorial-charge 1.3s ease-in-out infinite alternate; }
+.tutorial-frame[data-scene="charge"] .tutorial-bubble-main,
+.tutorial-frame[data-scene="chargeDemo"] .tutorial-bubble-main { left: calc(50% - 57px); top: calc(43% - 57px); width: 114px; animation: tutorial-charge 1.3s ease-in-out infinite alternate; }
 .tutorial-frame[data-scene="charge"] .tutorial-bubble-second,
-.tutorial-frame[data-scene="charge"] .tutorial-bubble-third { display: none; }
+.tutorial-frame[data-scene="charge"] .tutorial-bubble-third,
+.tutorial-frame[data-scene="chargeDemo"] .tutorial-bubble-second,
+.tutorial-frame[data-scene="chargeDemo"] .tutorial-bubble-third { display: none; }
 .tutorial-frame[data-scene="charge"] .tutorial-gesture { left: calc(50% - 22px); top: calc(43% - 22px); width: 44px; }
+.tutorial-frame[data-scene="chargeDemo"] .tutorial-gesture { display: none; }
 
 .tutorial-frame[data-scene="drag"] .tutorial-bubble-main { left: 16%; top: 36%; width: 116px; height: 67px; aspect-ratio: auto; border-radius: 48% 56% 46% 52%; }
 .tutorial-frame[data-scene="drag"] .tutorial-bubble-second,
@@ -4475,7 +4691,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tutorial-frame[data-scene="charge"] .tutorial-bubble-main { animation: none; }
+  .tutorial-frame[data-scene="charge"] .tutorial-bubble-main,
+  .tutorial-frame[data-scene="chargeDemo"] .tutorial-bubble-main { animation: none; }
 }
 
 /* Real-game tutorial: paused canvas behind the lesson, live input for validation */

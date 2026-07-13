@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.11";
+  const buildVersion = "1.4.12";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -96,7 +96,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.11`;
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=${buildVersion}`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -404,6 +404,9 @@
     cat: ["meow.mp3", "meow_2.mp3"],
     lifeMinus: ["life_minus.mp3"],
     decolor: ["decolor.mp3"],
+    fever: ["fever.mp3"],
+    combo: ["combo.mp3"],
+    cheer: ["cheer.mp3"],
   };
   const soundBuffers = new Map();
   const soundLoaders = new Map();
@@ -424,6 +427,10 @@
   let introRunning = false;
   let resultSyncSequence = 0;
   let leaderboardWatchStop = null;
+  let comboCountdownQueue = [];
+  let comboCountdownTimer = 0;
+  let comboCountdownActive = false;
+  let resultTopFiveCelebratedRunId = "";
   let musicEnabled = true;
   let musicVolume = 0.1;
   let tutorialStepIndex = 0;
@@ -440,6 +447,8 @@
     deadlineAt: 0,
     retryReason: "",
     resolveAt: 0,
+    chargeDemoPhase: "",
+    chargeDemoExplodedAt: 0,
   };
   let frameRequest = 0;
   let lastFrameTime = 0;
@@ -1920,11 +1929,103 @@
     chargeClearSkill(clearSkillChargeForBubble(bubble));
   }
 
+  function removeComboCelebration(className) {
+    phoneShell?.querySelector(`.${className}`)?.remove();
+  }
+
+  function showComboFever(comboValue) {
+    removeComboCelebration("combo-fever-overlay");
+    const overlay = document.createElement("div");
+    overlay.className = "combo-fever-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+    const kicker = document.createElement("span");
+    kicker.textContent = "FEVER";
+    const value = document.createElement("strong");
+    value.textContent = `${comboValue}+`;
+    overlay.append(kicker, value);
+    phoneShell?.append(overlay);
+    window.setTimeout(() => overlay.remove(), 920);
+  }
+
+  function drainComboCountdownQueue() {
+    if (comboCountdownActive || comboCountdownQueue.length <= 0) return;
+    comboCountdownActive = true;
+    const item = comboCountdownQueue.shift();
+    removeComboCelebration("combo-countdown-overlay");
+    const overlay = document.createElement("div");
+    overlay.className = "combo-countdown-overlay";
+    overlay.classList.toggle("is-target", item.value === item.target);
+    overlay.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = item.value === item.target ? "COMBO!" : "COMBO";
+    const value = document.createElement("strong");
+    value.textContent = item.value === item.target ? `${item.value}!` : String(item.value);
+    overlay.append(label, value);
+    phoneShell?.append(overlay);
+    comboCountdownTimer = window.setTimeout(() => {
+      overlay.remove();
+      comboCountdownActive = false;
+      comboCountdownTimer = 0;
+      drainComboCountdownQueue();
+    }, item.value === item.target ? 210 : 118);
+  }
+
+  function enqueueComboCountdown(value, target) {
+    comboCountdownQueue.push({ value, target });
+    drainComboCountdownQueue();
+  }
+
+  function clearComboCelebrations() {
+    comboCountdownQueue = [];
+    comboCountdownActive = false;
+    if (comboCountdownTimer) {
+      window.clearTimeout(comboCountdownTimer);
+      comboCountdownTimer = 0;
+    }
+    removeComboCelebration("combo-countdown-overlay");
+    removeComboCelebration("combo-fever-overlay");
+    removeComboCelebration("combo-life-overlay");
+  }
+
+  function showComboLifeReward(comboValue, gained) {
+    removeComboCelebration("combo-life-overlay");
+    const overlay = document.createElement("div");
+    overlay.className = "combo-life-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+    const combo = document.createElement("span");
+    combo.textContent = `${comboValue} COMBO`;
+    const reward = document.createElement("strong");
+    reward.textContent = gained > 0.001 ? "+1 生命" : "生命已满";
+    overlay.append(combo, reward);
+    phoneShell?.append(overlay);
+    window.setTimeout(() => overlay.remove(), 1080);
+  }
+
+  function handleComboMilestone(comboValue) {
+    if (!state.running || state.tutorialMode || comboValue < 100) return;
+    const nextTwoHundred = Math.ceil(comboValue / 200) * 200;
+    if (comboValue >= nextTwoHundred - 5 && comboValue <= nextTwoHundred) {
+      enqueueComboCountdown(comboValue, nextTwoHundred);
+    }
+    if (comboValue % 100 === 0) {
+      showComboFever(comboValue);
+      playEventSound("fever", { volume: comboValue % 300 === 0 ? 0.48 : 0.58 });
+    }
+    if (comboValue % 300 === 0) {
+      const gained = addWater(heartWater);
+      showComboLifeReward(comboValue, gained);
+      playEventSound("combo", { volume: 0.74, delayOffset: 0.07 });
+      state.flash = Math.max(state.flash, 0.1);
+      updateHud();
+    }
+  }
+
   function registerCombo({ chargeSkill = true } = {}) {
     state.combo += 1;
     state.bestCombo = Math.max(state.bestCombo, state.combo);
     state.comboPulse = 1;
     state.comboUntil = Number.POSITIVE_INFINITY;
+    handleComboMilestone(state.combo);
     if (chargeSkill) {
       state.bombComboProgress += 1;
       if (state.combo >= 14 && state.bombComboProgress >= state.bombComboTarget) {
@@ -1952,6 +2053,7 @@
     state.combo = 0;
     state.comboPulse = 0;
     state.comboUntil = 0;
+    clearComboCelebrations();
     resetPopPitchChain();
     resetBombComboTimer();
   }
@@ -2097,6 +2199,7 @@
     const startPaused = Boolean(options?.startPaused);
     const leaderboardEligible = options?.leaderboardEligible !== false;
     stopGlobalLeaderboardWatch();
+    clearResultCelebration();
     pauseBackgroundMusic({ reset: true });
     resetRewardedAdOverlay();
     state.running = true;
@@ -2112,6 +2215,7 @@
     state.invulnerableUntil = 0;
     state.runCreatedAt = Date.now();
     state.runRecordId = `run-${state.runCreatedAt}-${Math.random().toString(36).slice(2, 8)}`;
+    resultTopFiveCelebratedRunId = "";
     state.leaderboardEligible = leaderboardEligible;
     state.runStartLevel = 1;
     lastHudWater = null;
@@ -2222,6 +2326,46 @@
     if (performance >= 8) return "A";
     if (performance >= 5) return "B";
     return "C";
+  }
+
+  function clearResultCelebration() {
+    curtain.querySelector(".result-confetti")?.remove();
+    endStats.querySelector(".result-screen")?.classList.remove("is-top-five");
+  }
+
+  function syncResultTopFiveCelebration(boardData) {
+    const earnedTopFive = Boolean(
+      boardData?.source === "global" &&
+      boardData.rank >= 1 &&
+      boardData.rank <= 5 &&
+      boardData.isCurrentBest !== false,
+    );
+    if (!earnedTopFive) {
+      clearResultCelebration();
+      return;
+    }
+    endStats.querySelector(".result-screen")?.classList.add("is-top-five");
+    if (!curtain.querySelector(".result-confetti")) {
+      const confetti = document.createElement("div");
+      confetti.className = "result-confetti";
+      confetti.setAttribute("aria-hidden", "true");
+      const colors = ["#ffd45f", "#55e7ee", "#ff77a8", "#f8fdff", "#86ffbd"];
+      for (let index = 0; index < 34; index += 1) {
+        const piece = document.createElement("span");
+        piece.style.setProperty("--confetti-x", `${(index * 29 + 7) % 100}%`);
+        piece.style.setProperty("--confetti-delay", `${-((index * 173) % 2600)}ms`);
+        piece.style.setProperty("--confetti-duration", `${2200 + (index % 7) * 180}ms`);
+        piece.style.setProperty("--confetti-drift", `${-42 + (index % 9) * 11}px`);
+        piece.style.setProperty("--confetti-color", colors[index % colors.length]);
+        piece.style.setProperty("--confetti-size", `${5 + (index % 4) * 2}px`);
+        confetti.append(piece);
+      }
+      curtain.append(confetti);
+    }
+    if (resultTopFiveCelebratedRunId !== state.runRecordId) {
+      resultTopFiveCelebratedRunId = state.runRecordId;
+      playEventSound("cheer", { volume: 0.2 });
+    }
   }
 
   function buildResultScreen(stats, localBoard) {
@@ -2434,6 +2578,7 @@
     homeButton.append(homeLabel);
     homeButton.addEventListener("click", () => {
       stopGlobalLeaderboardWatch();
+      clearResultCelebration();
       pauseBackgroundMusic({ reset: true });
       curtain.classList.remove("result-mode");
       titleMark.textContent = "泡泡乐";
@@ -2475,6 +2620,7 @@
   function renderGlobalLeaderboard(stats, boardData, syncToken) {
     if (!canRenderGlobalLeaderboard(syncToken)) return false;
     endStats.replaceChildren(buildResultScreen(stats, boardData));
+    syncResultTopFiveCelebration(boardData);
     curtain.scrollTop = 0;
     return true;
   }
@@ -2578,6 +2724,8 @@
   function finishRewardedReviveAd() {
     if (!rewardedAdActive) return false;
     stopGlobalLeaderboardWatch();
+    clearResultCelebration();
+    resultTopFiveCelebratedRunId = "";
     resetRewardedAdOverlay();
     curtain.classList.remove("result-mode");
     curtain.classList.add("hidden");
@@ -2620,6 +2768,7 @@
     state.running = false;
     state.paused = false;
     closeSettings({ resume: false });
+    clearResultCelebration();
     state.dragPointerId = null;
     state.dragBubbleUid = null;
     curtain.classList.add("result-mode");
@@ -7657,6 +7806,16 @@
     if (bubble.chargeResolved) return;
     bubble.chargeResolved = true;
     state.bubbles.splice(index, 1);
+    if (tutorialRun.active && bubble.tutorialDemonstration) {
+      pushPointerFx("miss", bubble.x, bubble.y, 1.04);
+      makePunctureSplash(bubble, bubble.x, bubble.y, whiteTone, Math.round(18 + bubble.radius * 0.32), false, false);
+      makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, "爆炸", "#f8fdff", 1.08, {
+        stroke: "rgba(50, 18, 38, 0.66)",
+        shadow: "rgba(255,255,255,0.24)",
+      });
+      playPop("big");
+      return;
+    }
     noteWrongAction();
     resetCombo();
     const tookDamage = applyHeartPenalty(chargeBubblePenalty);
@@ -8805,6 +8964,10 @@
       if (!bubble.isCharge || bubble.chargeResolved || bubble.stageTransitionOut || bubble.age < 0) continue;
       const hitRadius = bubble.radius + (isTap ? 9 : 15) + touchSlop;
       if ((x - bubble.x) ** 2 + (y - bubble.y) ** 2 > hitRadius * hitRadius) continue;
+      if (bubble.tutorialDemonstration) {
+        if (tutorialRun.active) tutorialLiveFeedback.textContent = "先观察它变大，这一颗不用点";
+        return true;
+      }
       const progress = chargeInteractionProgress(bubble);
       if (progress < 0 || (!isTap && progress < 0.56)) return true;
       popChargeBubble(bubble, index, x, y);
@@ -11572,10 +11735,16 @@
       instruction: "找出两个同色泡泡并点掉", success: "正确，你认出了同色泡泡。",
     },
     {
-      scene: "charge", kicker: "蓄力泡", title: "它在变大，马上点掉",
-      copy: "蓄力泡会越长越大，最后发抖并爆炸。看见后轻点一次。",
-      tip: "在爆炸前点掉它", label: "变大前点掉",
-      instruction: "趁它还没爆炸，点一下", success: "正确，你阻止了蓄力泡爆炸。",
+      scene: "chargeDemo", kicker: "蓄力泡", title: "先看一次：它会越长越大",
+      copy: "这不是普通泡泡。它会从小点慢慢膨胀，快爆时会发抖。先观察，不要点击。",
+      tip: "先看它蓄力和爆炸", label: "先观察危险变化",
+      instruction: "先观察，不要点击", success: "你看到了完整的爆炸过程。下一颗由你处理。",
+    },
+    {
+      scene: "charge", kicker: "蓄力泡", title: "现在轮到你：爆炸前点掉",
+      copy: "看见它变大就准备点击。开始发抖说明时间快到了，只需要轻点一次。",
+      tip: "发抖前点掉最安全", label: "爆炸前点击",
+      instruction: "在它爆炸前轻点一次", success: "正确，你在爆炸前处理了蓄力泡。",
     },
     {
       scene: "dragBlue", kicker: "拖动泡", title: "按住蓝泡，拖到粉色区域",
@@ -11590,10 +11759,10 @@
       instruction: "按住粉泡，沿箭头拖到蓝色", success: "正确，你已经会双向拖动了。",
     },
     {
-      scene: "pulse", kicker: "脉冲泡", title: "先等，亮起来再点",
-      copy: "圆环碰到泡泡时，它会亮起来。只在亮起的短时间里点击。",
-      tip: "等圆环碰到泡泡", label: "亮起时点击",
-      instruction: "等泡泡亮起，再点一下", success: "时机正确，你跟上了脉冲。",
+      scene: "pulse", kicker: "脉冲泡", title: "圆环碰到泡泡时，才可以点",
+      copy: "脉冲泡不是蓄力泡，先不要点。反色圆环会向外扩散；圆环边缘碰到泡泡时，泡泡会突然亮起。只在亮起的这一瞬间点一下，提前或错过都算失误。",
+      tip: "没亮时别点 · 亮起马上点", label: "等圆环碰到它",
+      instruction: "先等圆环，泡泡亮起后马上点", success: "时机正确。记住：圆环碰到、泡泡亮起、再点击。",
     },
     {
       scene: "bleach", kicker: "无色泡", title: "白色泡泡，连续点三次",
@@ -11786,6 +11955,8 @@
     tutorialRun.deadlineAt = 0;
     tutorialRun.retryReason = "";
     tutorialRun.resolveAt = 0;
+    tutorialRun.chargeDemoPhase = "";
+    tutorialRun.chargeDemoExplodedAt = 0;
 
     if (scene === "pulse") {
       configureTutorialBackground(10);
@@ -11848,9 +12019,12 @@
       return;
     }
 
-    if (scene === "charge") {
+    if (scene === "chargeDemo" || scene === "charge") {
+      const demonstration = scene === "chargeDemo";
       const point = { x: state.width * 0.5, y: state.height * 0.54 };
-      addTutorialBubble("charge", {
+      const warningSeconds = demonstration ? 0.65 : 0.8;
+      const fuseSeconds = demonstration ? 4 : 5.2;
+      const bubble = addTutorialBubble("charge", {
         x: point.x,
         y: point.y,
         target: point,
@@ -11858,10 +12032,15 @@
         radius: 38,
         initialRadius: 5,
         speed: 0,
-        chargeWarningSeconds: 0.9,
-        chargeFuseSeconds: 6.4,
-        chargeExplodeAt: state.elapsed + 7300,
+        chargeWarningSeconds: warningSeconds,
+        chargeFuseSeconds: fuseSeconds,
+        chargeExplodeAt: state.elapsed + (warningSeconds + fuseSeconds) * 1000,
       });
+      if (bubble && demonstration) {
+        bubble.tutorialDemonstration = true;
+        tutorialRun.expectedPops = 0;
+        tutorialRun.chargeDemoPhase = "watch";
+      }
       return;
     }
 
@@ -12018,7 +12197,7 @@
     tutorialLiveFeedback.textContent = "";
     tutorialLive.classList.remove("is-success", "is-error");
     tutorialResultCue.hidden = true;
-    tutorialResultCue.classList.remove("is-success", "is-error");
+    tutorialResultCue.classList.remove("is-success", "is-error", "is-warning", "is-manual");
     tutorialLive.dataset.ready = "false";
     delete tutorialLive.dataset.destinationX;
     delete tutorialLive.dataset.destinationY;
@@ -12143,6 +12322,26 @@
       tutorialRun.transitionTimer = 0;
     }
     tutorialResultCue.hidden = true;
+    tutorialResultCue.classList.remove("is-manual");
+    if (outcome === "charge-demo-resume") {
+      const bubble = state.bubbles.find((item) => tutorialRun.targets.includes(item.uid));
+      if (!bubble) {
+        prepareTutorialStep({ showExplanation: false });
+        beginTutorialPractice();
+        return;
+      }
+      tutorialRun.chargeDemoPhase = "explode";
+      tutorialRun.practicing = true;
+      bubble.chargeExplodeAt = state.elapsed + 680;
+      tutorialLiveTitle.textContent = "现在看它爆炸";
+      tutorialLiveHint.textContent = "下一颗由你亲手处理";
+      tutorialLiveFeedback.textContent = "它已经来不及了，注意爆炸水花";
+      state.paused = false;
+      lastFrameTime = performance.now();
+      state.lastTime = lastFrameTime;
+      scheduleLoop();
+      return;
+    }
     if (outcome === "retry") {
       prepareTutorialStep({ showExplanation: false });
       beginTutorialPractice();
@@ -12156,19 +12355,24 @@
     prepareTutorialStep();
   }
 
-  function showTutorialOutcome(kind, title, text) {
+  function showTutorialOutcome(kind, title, text, options = {}) {
+    const autoAdvance = options.autoAdvance !== false;
     state.paused = true;
     tutorialRun.pendingOutcome = kind;
     tutorialResultCue.hidden = false;
     tutorialResultCue.classList.toggle("is-success", kind === "success");
     tutorialResultCue.classList.toggle("is-error", kind === "retry");
+    tutorialResultCue.classList.toggle("is-warning", kind === "charge-demo-resume");
+    tutorialResultCue.classList.toggle("is-manual", !autoAdvance);
     tutorialResultTitle.textContent = title;
     tutorialResultText.textContent = text;
-    tutorialResultNext.textContent = kind === "success" ? "继续下一步" : "重新试一次";
+    tutorialResultNext.textContent = options.buttonLabel ?? (kind === "success" ? "继续下一步" : "重新试一次");
     tutorialResultProgress.style.animation = "none";
-    tutorialResultProgress.getBoundingClientRect();
-    tutorialResultProgress.style.animation = "tutorial-result-countdown 3s linear forwards";
-    tutorialRun.transitionTimer = window.setTimeout(finishTutorialOutcome, 3000);
+    if (autoAdvance) {
+      tutorialResultProgress.getBoundingClientRect();
+      tutorialResultProgress.style.animation = "tutorial-result-countdown 3s linear forwards";
+      tutorialRun.transitionTimer = window.setTimeout(finishTutorialOutcome, 3000);
+    }
   }
 
   function completeTutorialPractice() {
@@ -12201,6 +12405,37 @@
     if (!tutorialRun.active || !tutorialRun.practicing) return;
     updateTutorialFocus();
     const activeTarget = state.bubbles.find((bubble) => tutorialRun.targets.includes(bubble.uid));
+    const scene = tutorialSlides[tutorialStepIndex].scene;
+    if (scene === "chargeDemo") {
+      tutorialLive.dataset.ready = "false";
+      if (tutorialRun.chargeDemoPhase === "watch" && activeTarget?.chargeGrowthProgress >= 0.84) {
+        tutorialRun.chargeDemoPhase = "paused";
+        tutorialFocus.hidden = true;
+        tutorialLiveFeedback.textContent = "暂停：它已经发抖，马上要爆了";
+        showTutorialOutcome(
+          "charge-demo-resume",
+          "马上要爆了",
+          "泡泡已经胀大并开始发抖。正式游戏里要在这之前点掉。现在先看它爆炸一次。",
+          { autoAdvance: false, buttonLabel: "看它爆炸" },
+        );
+        return;
+      }
+      if (tutorialRun.chargeDemoPhase === "explode") {
+        if (activeTarget) return;
+        if (tutorialRun.chargeDemoExplodedAt <= 0) {
+          tutorialRun.chargeDemoExplodedAt = state.elapsed;
+          tutorialLiveFeedback.textContent = "它爆炸了。下一颗轮到你。";
+          tutorialFocus.hidden = true;
+          return;
+        }
+        if (state.elapsed - tutorialRun.chargeDemoExplodedAt >= 760) {
+          tutorialStepIndex += 1;
+          prepareTutorialStep({ showExplanation: false });
+          beginTutorialPractice();
+        }
+      }
+      return;
+    }
     tutorialLive.dataset.ready = activeTarget && !activeTarget.isDrag ? String(canPopBubble(activeTarget)) : "true";
     if (activeTarget?.tutorialDestination) {
       tutorialLive.dataset.destinationX = activeTarget.tutorialDestination.x.toFixed(2);
@@ -12219,7 +12454,6 @@
       return;
     }
     if (!tutorialRun.expectedMistake && popped >= tutorialRun.expectedPops) {
-      const scene = tutorialSlides[tutorialStepIndex].scene;
       const animationWait = scene === "power" ? 1500 : scene === "skill" ? 1250 : 0;
       if (animationWait > 0) {
         if (tutorialRun.resolveAt <= 0) {
@@ -12233,14 +12467,12 @@
       return;
     }
     if (tutorialRun.deadlineAt > 0 && state.elapsed >= tutorialRun.deadlineAt) {
-      const scene = tutorialSlides[tutorialStepIndex].scene;
       retryTutorialPractice(scene === "skill"
         ? "要点击右上角发光的“清屏 READY”按钮"
         : "炸弹泡飞走了。认准带引线的炸弹泡并及时点击");
       return;
     }
     if (missing > popped) {
-      const scene = tutorialSlides[tutorialStepIndex].scene;
       retryTutorialPractice(scene === "power"
         ? "炸弹泡飞走了。认准带引线的炸弹泡并及时点击"
         : "目标泡泡没有完成，请照着提示再试一次");
