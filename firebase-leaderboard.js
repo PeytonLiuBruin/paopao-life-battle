@@ -127,9 +127,13 @@
       place,
       name: normalizeName(record.username) || "泡泡玩家",
       level: clampInteger(record.level, 1, 100),
+      hitCount: clampInteger(record.hitCount, 0, 100000),
+      bestCombo: clampInteger(record.bestCombo, 0, 10000),
+      elapsed: clampInteger(record.elapsed, 0, 86400000),
       score: `${clampInteger(record.hitCount, 0, 100000)}个`,
       tone: isCurrent ? "me" : tone,
       isCurrent,
+      pinned: false,
       praise: isCurrent
         ? place === 1
           ? "你就是全球第一"
@@ -141,12 +145,42 @@
     };
   }
 
-  function leaderboardContext(rawValue, uid) {
+  function normalizedLeaderboardRecords(rawValue) {
     const rawRecords = rawValue && typeof rawValue === "object" ? rawValue : {};
-    const records = Object.entries(rawRecords)
+    return Object.entries(rawRecords)
       .map(([recordUid, record]) => normalizeScore(record, recordUid))
       .filter(isVisibleCompetitiveRecord)
       .sort(compareRecords);
+  }
+
+  function publicLeaderboardContext(rawValue, uid, limit = 10) {
+    const records = normalizedLeaderboardRecords(rawValue);
+    const currentIndex = records.findIndex((record) => record.uid === uid);
+    const rank = currentIndex >= 0 ? currentIndex + 1 : null;
+    const tones = ["violet", "mint", "rose", "indigo"];
+    const visibleLimit = clampInteger(limit, 1, 50);
+    const leaderboard = records
+      .slice(0, visibleLimit)
+      .map((record, index) => resultItem(record, index + 1, uid, tones[index % tones.length]));
+    if (currentIndex >= visibleLimit) {
+      leaderboard.push({
+        ...resultItem(records[currentIndex], rank, uid, "me"),
+        pinned: true,
+      });
+    }
+
+    return {
+      source: "global",
+      current: currentIndex >= 0 ? { ...records[currentIndex], id: uid } : null,
+      records,
+      rank,
+      totalCount: records.length,
+      leaderboard,
+    };
+  }
+
+  function leaderboardContext(rawValue, uid) {
+    const records = normalizedLeaderboardRecords(rawValue);
     const currentIndex = records.findIndex((record) => record.uid === uid);
     if (currentIndex < 0) throw new Error("成绩尚未写入");
     const current = records[currentIndex];
@@ -179,6 +213,12 @@
     return leaderboardContext(snapshot.val(), auth.currentUser.uid);
   }
 
+  async function loadPublicLeaderboard(limit = 10) {
+    const { auth, databaseSdk, db } = await contextPromise;
+    const snapshot = await databaseSdk.get(databaseSdk.ref(db, "leaderboard"));
+    return publicLeaderboardContext(snapshot.val(), auth.currentUser.uid, limit);
+  }
+
   async function watchLeaderboard(onChange, onError) {
     const { auth, databaseSdk, db } = await contextPromise;
     return databaseSdk.onValue(
@@ -190,6 +230,15 @@
           onError?.(error);
         }
       },
+      (error) => onError?.(error),
+    );
+  }
+
+  async function watchPublicLeaderboard(onChange, onError, limit = 10) {
+    const { auth, databaseSdk, db } = await contextPromise;
+    return databaseSdk.onValue(
+      databaseSdk.ref(db, "leaderboard"),
+      (snapshot) => onChange(publicLeaderboardContext(snapshot.val(), auth.currentUser.uid, limit)),
       (error) => onError?.(error),
     );
   }
@@ -210,7 +259,9 @@
     setPlayerName,
     submitBestScore,
     loadLeaderboard,
+    loadPublicLeaderboard,
     watchLeaderboard,
+    watchPublicLeaderboard,
     submitAndLoad,
   };
   ready.then(

@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
   <title>泡泡乐 DEMO</title>
-    <link rel="stylesheet" href="./styles.css?v=1.4.12" />
+    <link rel="stylesheet" href="./styles.css?v=1.4.14" />
   </head>
   <body>
   <main class="phone-shell" aria-label="泡泡乐 DEMO 游戏">
@@ -75,15 +75,6 @@
           </button>
         </header>
 
-        <div class="settings-stage">
-          <label for="settingsLevel">关卡选择</label>
-          <div class="settings-level-control">
-            <select id="settingsLevel" aria-label="选择关卡"></select>
-            <button id="settingsJump" type="button">进入</button>
-          </div>
-          <span id="settingsStageMeta" class="settings-stage-meta">Lv 1 · 中央水波</span>
-        </div>
-
         <div class="settings-audio">
           <div class="settings-audio-heading">
             <label for="musicVolume">背景音乐</label>
@@ -94,6 +85,33 @@
               <span class="speaker-icon" aria-hidden="true"></span>
             </button>
             <input id="musicVolume" type="range" min="0" max="100" step="1" value="10" aria-label="背景音乐音量" />
+          </div>
+        </div>
+
+        <div class="settings-admin">
+          <button
+            id="settingsAdminToggle"
+            class="settings-admin-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="settingsAdminPanel"
+          >
+            <span class="settings-admin-mark" aria-hidden="true">A</span>
+            <span class="settings-admin-copy">
+              <strong>管理员模式</strong>
+              <small>测试工具 · 跳关不计榜</small>
+            </span>
+            <span class="settings-admin-chevron" aria-hidden="true"></span>
+          </button>
+          <div id="settingsAdminPanel" class="settings-admin-panel" hidden>
+            <div class="settings-stage">
+              <label for="settingsLevel">测试关卡</label>
+              <div class="settings-level-control">
+                <select id="settingsLevel" aria-label="选择测试关卡"></select>
+                <button id="settingsJump" type="button">进入</button>
+              </div>
+              <span id="settingsStageMeta" class="settings-stage-meta">Lv 1 · 中央水波</span>
+            </div>
           </div>
         </div>
 
@@ -134,10 +152,50 @@
           <div class="start-actions">
             <button id="startButton" class="primary-button" type="button"><strong>开始挑战</strong><span>进入 Level 1</span></button>
             <button id="tutorialButton" class="tutorial-button" type="button"><span class="tutorial-play" aria-hidden="true">?</span><strong>新手教程</strong><small>约 1 分钟</small></button>
+            <button id="leaderboardButton" class="leaderboard-button" type="button" aria-controls="leaderboardOverlay" aria-expanded="false">
+              <span class="leaderboard-button-icon" aria-hidden="true"><i></i></span>
+              <strong>查看排行榜</strong>
+              <small>全球实时榜</small>
+            </button>
           </div>
           <p class="start-footnote">建议开启声音</p>
         </div>
         <div id="endStats" class="end-stats"></div>
+      </section>
+      <section
+        id="leaderboardOverlay"
+        class="leaderboard-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="leaderboardTitle"
+        aria-hidden="true"
+        hidden
+      >
+        <div class="leaderboard-sheet">
+          <header class="home-leaderboard-header">
+            <div>
+              <span>LIVE RANKING</span>
+              <h2 id="leaderboardTitle">全球排行榜</h2>
+            </div>
+            <div class="home-leaderboard-header-actions">
+              <small id="leaderboardCount">实时更新</small>
+              <button id="leaderboardClose" type="button" aria-label="关闭排行榜">&times;</button>
+            </div>
+          </header>
+          <div id="leaderboardLoading" class="home-leaderboard-loading" role="status">正在连接全球榜...</div>
+          <div
+            id="leaderboardList"
+            class="home-leaderboard-list"
+            role="list"
+            aria-label="全球排名，左右滑动查看"
+            aria-live="polite"
+            tabindex="0"
+          ></div>
+          <footer class="home-leaderboard-footer">
+            <span id="leaderboardMe">完成一局后，你的最佳成绩会自动上榜</span>
+            <button id="leaderboardRefresh" type="button">刷新</button>
+          </footer>
+        </div>
       </section>
       <section id="tutorialOverlay" class="tutorial-overlay" aria-label="新手教程" aria-hidden="true" hidden>
         <header class="tutorial-header">
@@ -207,8 +265,8 @@
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./firebase-leaderboard.js?v=1.4.12" defer></script>
-    <script src="./background-engine.js?v=1.4.12" defer></script>
-    <script src="./game.js?v=1.4.12" defer></script>
+    <script src="./firebase-leaderboard.js?v=1.4.14" defer></script>
+    <script src="./background-engine.js?v=1.4.14" defer></script>
+    <script src="./game.js?v=1.4.14" defer></script>
   </body>
 </html>

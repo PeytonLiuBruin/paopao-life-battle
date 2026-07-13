@@ -4,13 +4,21 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.12";
+  const buildVersion = "1.4.14";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const tutorialButton = document.getElementById("tutorialButton");
+  const leaderboardButton = document.getElementById("leaderboardButton");
   const playerNameInput = document.getElementById("playerNameInput");
   const leaderboardStatus = document.getElementById("leaderboardStatus");
+  const leaderboardOverlay = document.getElementById("leaderboardOverlay");
+  const leaderboardCloseButton = document.getElementById("leaderboardClose");
+  const leaderboardRefreshButton = document.getElementById("leaderboardRefresh");
+  const leaderboardList = document.getElementById("leaderboardList");
+  const leaderboardLoading = document.getElementById("leaderboardLoading");
+  const leaderboardCount = document.getElementById("leaderboardCount");
+  const leaderboardMe = document.getElementById("leaderboardMe");
   const tutorialOverlay = document.getElementById("tutorialOverlay");
   const tutorialCloseButton = document.getElementById("tutorialClose");
   const tutorialFrame = document.getElementById("tutorialFrame");
@@ -61,6 +69,8 @@
   const settingsPanel = document.getElementById("settingsPanel");
   const settingsCloseButton = document.getElementById("settingsClose");
   const settingsStatus = document.getElementById("settingsStatus");
+  const settingsAdminToggle = document.getElementById("settingsAdminToggle");
+  const settingsAdminPanel = document.getElementById("settingsAdminPanel");
   const settingsLevelSelect = document.getElementById("settingsLevel");
   const settingsJumpButton = document.getElementById("settingsJump");
   const settingsStageMeta = document.getElementById("settingsStageMeta");
@@ -427,6 +437,9 @@
   let introRunning = false;
   let resultSyncSequence = 0;
   let leaderboardWatchStop = null;
+  let homeLeaderboardWatchStop = null;
+  let homeLeaderboardSyncSequence = 0;
+  let homeLeaderboardScrollFrame = 0;
   let comboCountdownQueue = [];
   let comboCountdownTimer = 0;
   let comboCountdownActive = false;
@@ -1814,6 +1827,274 @@
     }
   }
 
+  function stopHomeLeaderboardWatch() {
+    if (typeof homeLeaderboardWatchStop === "function") homeLeaderboardWatchStop();
+    homeLeaderboardWatchStop = null;
+  }
+
+  function homeLeaderboardIsOpen() {
+    return Boolean(leaderboardOverlay && !leaderboardOverlay.hidden);
+  }
+
+  function localHomeLeaderboardBoard() {
+    const records = loadLocalLeaderboardRecords();
+    const playerName = loadExplicitPlayerName();
+    const currentIndex = playerName ? records.findIndex((record) => record.name === playerName) : -1;
+    const leaderboard = records.slice(0, 15).map((record, index) => ({
+      place: index + 1,
+      name: record.name,
+      level: record.level,
+      hitCount: record.hitCount,
+      bestCombo: record.bestCombo,
+      elapsed: record.elapsed,
+      score: formatLocalBubbleCount(record.hitCount),
+      isCurrent: index === currentIndex,
+      pinned: false,
+    }));
+    if (currentIndex >= 15) {
+      const record = records[currentIndex];
+      leaderboard.push({
+        place: currentIndex + 1,
+        name: record.name,
+        level: record.level,
+        hitCount: record.hitCount,
+        bestCombo: record.bestCombo,
+        elapsed: record.elapsed,
+        score: formatLocalBubbleCount(record.hitCount),
+        isCurrent: true,
+        pinned: true,
+      });
+    }
+    return {
+      source: "local",
+      totalCount: records.length,
+      rank: currentIndex >= 0 ? currentIndex + 1 : null,
+      leaderboard,
+    };
+  }
+
+  function setHomeLeaderboardLoading(message = "正在连接全球榜...") {
+    if (leaderboardLoading) {
+      leaderboardLoading.hidden = false;
+      leaderboardLoading.textContent = message;
+    }
+    if (leaderboardList) {
+      leaderboardList.hidden = true;
+      leaderboardList.replaceChildren();
+    }
+    if (leaderboardCount) leaderboardCount.textContent = "读取前 15 名";
+    if (leaderboardRefreshButton) leaderboardRefreshButton.disabled = true;
+  }
+
+  function updateHomeLeaderboardRange() {
+    if (!leaderboardList || !leaderboardCount || leaderboardList.hidden) return;
+    const cards = Array.from(leaderboardList.querySelectorAll(".home-leaderboard-row"));
+    if (!cards.length) {
+      leaderboardCount.textContent = "暂无排名";
+      return;
+    }
+    const firstStep = cards.length > 1
+      ? Math.max(1, cards[1].offsetLeft - cards[0].offsetLeft)
+      : Math.max(1, cards[0].offsetWidth);
+    const maxFirst = Math.max(0, cards.length - Math.min(5, cards.length));
+    const firstIndex = clamp(Math.round(leaderboardList.scrollLeft / firstStep), 0, maxFirst);
+    const visibleCards = cards.slice(firstIndex, firstIndex + 5);
+    const normalCards = visibleCards.filter((card) => card.dataset.pinned !== "true");
+    const pinnedCard = visibleCards.find((card) => card.dataset.pinned === "true");
+    const rankedCount = Math.max(0, Math.round(Number(leaderboardList.dataset.rankedCount) || 0));
+    const firstPlace = Number(normalCards[0]?.dataset.place || 0);
+    const lastPlace = Number(normalCards.at(-1)?.dataset.place || 0);
+    if (pinnedCard) {
+      const pinnedPlace = Math.max(1, Math.round(Number(pinnedCard.dataset.place) || 1));
+      leaderboardCount.textContent = normalCards.length ? `${firstPlace}–${lastPlace} · 我 #${pinnedPlace}` : `我的排名 #${pinnedPlace}`;
+    } else if (normalCards.length) {
+      leaderboardCount.textContent = `${firstPlace}–${lastPlace} / ${rankedCount}`;
+    }
+  }
+
+  function scheduleHomeLeaderboardRangeUpdate() {
+    if (homeLeaderboardScrollFrame) return;
+    homeLeaderboardScrollFrame = window.requestAnimationFrame(() => {
+      homeLeaderboardScrollFrame = 0;
+      updateHomeLeaderboardRange();
+    });
+  }
+
+  function renderHomeLeaderboard(board, options = {}) {
+    if (!leaderboardList || !homeLeaderboardIsOpen()) return;
+    const items = Array.isArray(board?.leaderboard) ? board.leaderboard.slice(0, 16) : [];
+    const isLocal = board?.source === "local";
+    const previousScrollLeft = leaderboardList.scrollLeft;
+    leaderboardList.replaceChildren();
+    leaderboardList.hidden = false;
+    if (leaderboardLoading) leaderboardLoading.hidden = true;
+    if (leaderboardRefreshButton) leaderboardRefreshButton.disabled = false;
+    const count = Math.max(0, Math.round(Number(board?.totalCount) || 0));
+    leaderboardList.dataset.rankedCount = String(Math.min(15, count));
+    leaderboardList.classList.toggle("is-empty", items.length === 0);
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "home-leaderboard-empty";
+      empty.textContent = options.error
+        ? "全球榜暂时连接不上，完成一局后仍会保存在本机。"
+        : "排行榜还没有成绩，来成为第一名吧。";
+      leaderboardList.append(empty);
+    } else {
+      items.forEach((item, index) => {
+        const place = Math.max(1, Math.round(Number(item.place) || index + 1));
+        const row = document.createElement("article");
+        row.className = `home-leaderboard-row rank-${Math.min(place, 4)}`;
+        row.classList.toggle("is-me", Boolean(item.isCurrent));
+        row.classList.toggle("is-pinned", Boolean(item.pinned));
+        row.dataset.place = String(place);
+        row.dataset.pinned = String(Boolean(item.pinned));
+        row.setAttribute("role", "listitem");
+
+        const rank = document.createElement("span");
+        rank.className = "home-leaderboard-place";
+        rank.textContent = String(place);
+
+        const player = document.createElement("div");
+        player.className = "home-leaderboard-player";
+        const name = document.createElement("strong");
+        name.textContent = normalizePlayerName(item.name || "泡泡玩家");
+        const detail = document.createElement("small");
+        const combo = Math.max(0, Math.round(Number(item.bestCombo) || 0));
+        const elapsed = Math.max(0, Math.round(Number(item.elapsed) || 0));
+        detail.textContent = item.pinned ? "我的历史最佳" : combo > 0 ? `连击 x${combo}` : elapsed > 0 ? `存活 ${formatTime(elapsed)}` : "节奏挑战者";
+        player.append(name, detail);
+
+        const score = document.createElement("div");
+        score.className = "home-leaderboard-score";
+        const level = document.createElement("strong");
+        level.textContent = `Lv ${Math.max(1, Math.round(Number(item.level) || 1))}`;
+        const bubbles = document.createElement("small");
+        const hitCount = Math.max(0, Math.round(Number(item.hitCount) || 0));
+        bubbles.textContent = item.score || `${hitCount}个`;
+        score.append(level, bubbles);
+
+        row.append(rank, player, score);
+        leaderboardList.append(row);
+      });
+    }
+
+    if (leaderboardMe) {
+      const population = isLocal ? `本机 ${count} 条记录` : `全球 ${count} 位玩家`;
+      leaderboardMe.textContent = board?.rank
+        ? board.rank > 15
+          ? `${population} · 你的第 ${board.rank} 名已固定在最右侧`
+          : `${population} · 你的历史最佳是第 ${board.rank} 名`
+        : isLocal
+          ? `${population} · 联网后自动切换全球榜`
+          : count > 0
+            ? `${population} · 左右滑动查看${count > 15 ? "前 15 名" : "全部排名"}`
+            : "完成一局，成为排行榜第一名";
+    }
+    leaderboardList.scrollLeft = previousScrollLeft;
+    scheduleHomeLeaderboardRangeUpdate();
+  }
+
+  function canUpdateHomeLeaderboard(syncToken) {
+    return syncToken === homeLeaderboardSyncSequence && homeLeaderboardIsOpen();
+  }
+
+  async function loadHomeLeaderboard() {
+    const syncToken = ++homeLeaderboardSyncSequence;
+    stopHomeLeaderboardWatch();
+    setHomeLeaderboardLoading();
+    const leaderboard = window.PaopaoLeaderboard;
+    if (!leaderboard?.loadPublicLeaderboard) {
+      renderHomeLeaderboard(localHomeLeaderboardBoard(), { error: true });
+      return;
+    }
+    try {
+      const board = await leaderboard.loadPublicLeaderboard(15);
+      if (!canUpdateHomeLeaderboard(syncToken)) return;
+      renderHomeLeaderboard(board);
+      if (leaderboard.watchPublicLeaderboard) {
+        const stop = await leaderboard.watchPublicLeaderboard(
+          (liveBoard) => {
+            if (canUpdateHomeLeaderboard(syncToken)) renderHomeLeaderboard(liveBoard);
+          },
+          (error) => console.warn("Homepage leaderboard listener paused.", error),
+          15,
+        );
+        if (canUpdateHomeLeaderboard(syncToken)) homeLeaderboardWatchStop = stop;
+        else stop?.();
+      }
+    } catch (error) {
+      console.warn("Homepage leaderboard unavailable; showing local history.", error);
+      if (canUpdateHomeLeaderboard(syncToken)) renderHomeLeaderboard(localHomeLeaderboardBoard(), { error: true });
+    }
+  }
+
+  function openHomeLeaderboard() {
+    if (!leaderboardOverlay || state.running || curtain.classList.contains("result-mode")) return;
+    if (settingsAreOpen()) closeSettings({ resume: false });
+    leaderboardOverlay.hidden = false;
+    leaderboardOverlay.setAttribute("aria-hidden", "false");
+    leaderboardButton?.setAttribute("aria-expanded", "true");
+    phoneShell?.classList.add("leaderboard-open");
+    window.requestAnimationFrame(() => leaderboardCloseButton?.focus());
+    loadHomeLeaderboard();
+  }
+
+  function closeHomeLeaderboard({ restoreFocus = true } = {}) {
+    if (!leaderboardOverlay) return;
+    homeLeaderboardSyncSequence += 1;
+    stopHomeLeaderboardWatch();
+    leaderboardOverlay.hidden = true;
+    leaderboardOverlay.setAttribute("aria-hidden", "true");
+    leaderboardButton?.setAttribute("aria-expanded", "false");
+    phoneShell?.classList.remove("leaderboard-open");
+    if (restoreFocus && !state.running) leaderboardButton?.focus();
+  }
+
+  function initHomeLeaderboardControls() {
+    let mouseDragStart = null;
+    leaderboardButton?.addEventListener("click", openHomeLeaderboard);
+    leaderboardCloseButton?.addEventListener("click", () => closeHomeLeaderboard());
+    leaderboardRefreshButton?.addEventListener("click", loadHomeLeaderboard);
+    leaderboardOverlay?.addEventListener("click", (event) => {
+      if (event.target === leaderboardOverlay) closeHomeLeaderboard();
+    });
+    leaderboardList?.addEventListener("scroll", scheduleHomeLeaderboardRangeUpdate, { passive: true });
+    leaderboardList?.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
+      mouseDragStart = { x: event.clientX, scrollLeft: leaderboardList.scrollLeft };
+      leaderboardList.setPointerCapture?.(event.pointerId);
+    });
+    leaderboardList?.addEventListener("pointermove", (event) => {
+      if (!mouseDragStart || event.pointerType !== "mouse") return;
+      leaderboardList.scrollLeft = mouseDragStart.scrollLeft - (event.clientX - mouseDragStart.x);
+    });
+    const finishMouseLeaderboardDrag = (event) => {
+      if (!mouseDragStart) return;
+      mouseDragStart = null;
+      try {
+        leaderboardList.releasePointerCapture?.(event.pointerId);
+      } catch {
+        // The browser may have released capture after leaving the sheet.
+      }
+    };
+    leaderboardList?.addEventListener("pointerup", finishMouseLeaderboardDrag);
+    leaderboardList?.addEventListener("pointercancel", finishMouseLeaderboardDrag);
+    leaderboardList?.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      leaderboardList.scrollBy({
+        left: leaderboardList.clientWidth * (event.key === "ArrowRight" ? 1 : -1),
+        behavior: "smooth",
+      });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !homeLeaderboardIsOpen()) return;
+      event.preventDefault();
+      closeHomeLeaderboard();
+    });
+  }
+
   function currentLocalLeaderboardRecord(stats) {
     const createdAt = state.runCreatedAt || Date.now();
     const id = state.runRecordId || `run-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2198,6 +2479,7 @@
   function resetGame(options = {}) {
     const startPaused = Boolean(options?.startPaused);
     const leaderboardEligible = options?.leaderboardEligible !== false;
+    closeHomeLeaderboard({ restoreFocus: false });
     stopGlobalLeaderboardWatch();
     clearResultCelebration();
     pauseBackgroundMusic({ reset: true });
@@ -12244,6 +12526,7 @@
 
   function openTutorial() {
     if (!tutorialOverlay || state.running) return;
+    closeHomeLeaderboard({ restoreFocus: false });
     tutorialStepIndex = 0;
     startTutorialSession();
   }
@@ -12576,6 +12859,13 @@
     settingsJumpButton.textContent = `进入 Lv ${level}`;
   }
 
+  function setSettingsAdminOpen(open) {
+    const expanded = Boolean(open);
+    settingsAdminToggle?.setAttribute("aria-expanded", String(expanded));
+    if (settingsAdminPanel) settingsAdminPanel.hidden = !expanded;
+    settingsPanel?.classList.toggle("admin-open", expanded);
+  }
+
   function syncSettingsPanel() {
     if (!settingsPanel) return;
     const playing = state.running;
@@ -12647,6 +12937,8 @@
 
   function openSettings() {
     if (!settingsPanel || settingsAreOpen() || (introRunning && !state.running)) return;
+    closeHomeLeaderboard({ restoreFocus: false });
+    setSettingsAdminOpen(false);
     if (settingsLevelSelect) {
       settingsLevelSelect.value = String(displayDifficultyLevel());
     }
@@ -12663,6 +12955,7 @@
 
   function closeSettings({ resume = true } = {}) {
     if (!settingsPanel) return;
+    setSettingsAdminOpen(false);
     settingsPanel.classList.remove("open");
     settingsPanel.setAttribute("aria-hidden", "true");
     settingsScrim?.classList.remove("open");
@@ -12699,6 +12992,10 @@
     }
     settingsLevelSelect.value = String(displayDifficultyLevel());
     settingsLevelSelect.addEventListener("change", updateSettingsStageMeta);
+    setSettingsAdminOpen(false);
+    settingsAdminToggle?.addEventListener("click", () => {
+      setSettingsAdminOpen(settingsAdminToggle.getAttribute("aria-expanded") !== "true");
+    });
     settingsButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -12896,6 +13193,7 @@
   warmGameSoundFiles();
   startButton.addEventListener("click", () => {
     if (!commitPlayerProfile()) return;
+    closeHomeLeaderboard({ restoreFocus: false });
     playerNameInput?.blur();
     phoneShell?.classList.remove("text-input-open");
     stabilizeMobileViewport();
@@ -12982,6 +13280,7 @@
 
   resize();
   initLeaderboardProfile();
+  initHomeLeaderboardControls();
   loadMusicPreferences();
   syncMusicControls();
   initSettingsControls();
