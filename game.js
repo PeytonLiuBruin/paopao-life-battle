@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.15";
+  const buildVersion = "1.4.16";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -410,9 +410,9 @@
 
   let audioContext;
   let audioMasterGain = null;
-  let audioCompressor = null;
   let audioResumePromise = null;
   let audioContextGeneration = 0;
+  let audioGestureUnlocked = false;
   let soundPreloadStarted = false;
   let soundPreloadTimer = 0;
   let musicPlayPromise = null;
@@ -1742,7 +1742,7 @@
   }
 
   function recoverGameAudioFromGesture() {
-    void resumeGameAudio();
+    unlockGameAudioFromGesture();
     if (!state.running) primeBackgroundMusic();
     if (state.running && !state.paused && (musicRetryPending || backgroundMusic?.paused)) playBackgroundMusic();
   }
@@ -11957,7 +11957,7 @@
     audioContext = undefined;
     audioContextGeneration += 1;
     audioMasterGain = null;
-    audioCompressor = null;
+    audioGestureUnlocked = false;
     audioResumePromise = null;
     soundPreloadStarted = false;
     if (soundPreloadTimer) window.clearTimeout(soundPreloadTimer);
@@ -11980,25 +11980,20 @@
     try {
       audioMasterGain = audioContext.createGain();
       audioMasterGain.gain.value = 0.96;
-      audioCompressor = audioContext.createDynamicsCompressor();
-      audioCompressor.threshold.value = -16;
-      audioCompressor.knee.value = 18;
-      audioCompressor.ratio.value = 4;
-      audioCompressor.attack.value = 0.004;
-      audioCompressor.release.value = 0.16;
-      audioMasterGain.connect(audioCompressor);
-      audioCompressor.connect(audioContext.destination);
+      audioMasterGain.connect(audioContext.destination);
     } catch {
       audioMasterGain = null;
-      audioCompressor = null;
     }
     const context = audioContext;
     context.addEventListener?.("statechange", () => {
       if (context !== audioContext) return;
       if (context.state === "running") {
+        audioGestureUnlocked = true;
         flushPendingSoundRequests();
       } else if (context.state === "closed") {
         discardAudioContext(context);
+      } else {
+        audioGestureUnlocked = false;
       }
     });
     return context;
@@ -12015,7 +12010,10 @@
     audioResumePromise = Promise.resolve(context.resume?.())
       .then(() => {
         const resumed = context === audioContext && context.state === "running";
-        if (resumed) flushPendingSoundRequests();
+        if (resumed) {
+          audioGestureUnlocked = true;
+          flushPendingSoundRequests();
+        }
         return resumed;
       })
       .catch(() => false)
@@ -12023,6 +12021,31 @@
         if (context === audioContext) audioResumePromise = null;
       });
     return audioResumePromise;
+  }
+
+  function unlockGameAudioFromGesture() {
+    const context = ensureAudioContext();
+    if (!context) return;
+    if (!audioGestureUnlocked) {
+      try {
+        const silentBuffer = context.createBuffer(1, 1, 22050);
+        const source = context.createBufferSource();
+        source.buffer = silentBuffer;
+        source.connect(audioOutputFor(context));
+        source.onended = () => {
+          try {
+            source.disconnect();
+          } catch {
+            // The browser may release the unlock source itself.
+          }
+        };
+        source.start(0);
+        audioGestureUnlocked = true;
+      } catch {
+        audioGestureUnlocked = false;
+      }
+    }
+    void resumeGameAudio();
   }
 
   function soundRequestIsFresh(request) {
@@ -12053,10 +12076,8 @@
   function playChargeWarningTick(intensity = 0) {
     try {
       const context = ensureAudioContext();
-      if (!context || context.state !== "running") {
-        void resumeGameAudio();
-        return;
-      }
+      if (!context) return;
+      if (context.state !== "running") void resumeGameAudio();
       const now = context.currentTime;
       const oscillator = context.createOscillator();
       const gain = context.createGain();
@@ -12069,14 +12090,14 @@
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
       oscillator.connect(gain);
       gain.connect(audioOutputFor(context));
-      oscillator.addEventListener("ended", () => {
+      oscillator.onended = () => {
         try {
           oscillator.disconnect();
           gain.disconnect();
         } catch {
           // The browser may already have released these short-lived nodes.
         }
-      }, { once: true });
+      };
       oscillator.start(now);
       oscillator.stop(now + 0.08);
     } catch {
@@ -12177,12 +12198,12 @@
     const preloadGeneration = audioContextGeneration;
     const loadNextBatch = () => {
       soundPreloadTimer = 0;
-      const batch = files.splice(0, 3);
+      const batch = files.splice(0, 4);
       if (!batch.length) return;
       Promise.allSettled(batch.map((fileName) => loadSoundBuffer(fileName)))
         .finally(() => {
           if (files.length && preloadGeneration === audioContextGeneration && audioContext?.state !== "closed") {
-            soundPreloadTimer = window.setTimeout(loadNextBatch, 90);
+            soundPreloadTimer = window.setTimeout(loadNextBatch, 70);
           }
         });
     };
@@ -12190,15 +12211,12 @@
   }
 
   function startSoundRequest(request) {
-    const context = audioContext;
-    if (!context || context.state !== "running") {
-      queueSoundRequest(request);
-      return;
-    }
+    const context = ensureAudioContext();
+    if (!context) return;
     if (!soundRequestIsFresh(request)) return;
 
     const startSource = (buffer) => {
-      if (context !== audioContext || context.state !== "running") {
+      if (context !== audioContext || context.state === "closed") {
         queueSoundRequest(request);
         return;
       }
@@ -12214,9 +12232,10 @@
         gain.gain.setValueAtTime(clamp(request.volume, 0, 1), now);
         source.connect(gain);
         gain.connect(audioOutputFor(context));
-        source.addEventListener("ended", () => releaseSoundVoice(voice), { once: true });
+        source.onended = () => releaseSoundVoice(voice);
         activeSoundVoices.push(voice);
         source.start(now + Math.max(0, request.delayOffset));
+        if (context.state !== "running") void resumeGameAudio();
       } catch {
         void resumeGameAudio();
       }
@@ -12234,7 +12253,7 @@
 
   function playSoundBuffer(
     fileName,
-    { playbackRate = 1, volume = 0.82, delayOffset = 0, priority = "event", maxAgeMs = 900 } = {},
+    { playbackRate = 1, volume = 0.82, delayOffset = 0, priority = "event", maxAgeMs = 1600 } = {},
   ) {
     try {
       const context = ensureAudioContext();
@@ -12248,11 +12267,8 @@
         maxAgeMs,
         requestedAt: performance.now(),
       };
-      if (context.state === "running") {
-        startSoundRequest(request);
-      } else {
-        queueSoundRequest(request);
-      }
+      startSoundRequest(request);
+      if (context.state !== "running") void resumeGameAudio();
     } catch {
       void resumeGameAudio();
     }
@@ -12279,7 +12295,7 @@
       const fileName = chooseSoundFile(group);
       const playbackRate = nextPopPlaybackRate(delayOffset);
       const volume = (group === "small" ? 0.78 : group === "big" ? 0.88 : 0.82) * clamp(volumeScale, 0.2, 1.2);
-      playSoundBuffer(fileName, { playbackRate, volume, delayOffset, priority: "pop", maxAgeMs: 280 });
+      playSoundBuffer(fileName, { playbackRate, volume, delayOffset, priority: "pop", maxAgeMs: 800 });
     } catch {
       void resumeGameAudio();
     }
@@ -12288,7 +12304,7 @@
   function playEventSound(group, { playbackRate = 1, volume = 0.82, delayOffset = 0 } = {}) {
     try {
       const fileName = chooseSoundFile(group);
-      playSoundBuffer(fileName, { playbackRate, volume, delayOffset, priority: "event", maxAgeMs: 900 });
+      playSoundBuffer(fileName, { playbackRate, volume, delayOffset, priority: "event", maxAgeMs: 1800 });
     } catch {
       void resumeGameAudio();
     }
@@ -13501,6 +13517,7 @@
     capture: true,
     passive: true,
   });
+  document.addEventListener("click", recoverGameAudioFromGesture, { capture: true, passive: true });
   document.addEventListener("keydown", recoverGameAudioFromGesture, { capture: true });
   window.addEventListener("focus", recoverGameAudioAfterInterruption, { passive: true });
   window.addEventListener("pageshow", recoverGameAudioAfterInterruption, { passive: true });
