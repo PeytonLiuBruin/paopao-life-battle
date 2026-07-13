@@ -26,6 +26,7 @@
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 10);
+  const internalTestNamePattern = /^(?:audit|probe|\?{2,})$/i;
 
   function normalizeScore(input, uid, fallbackName = "泡泡玩家") {
     const level = clampInteger(input?.level, 1, 100);
@@ -51,6 +52,13 @@
       Number(right.rankScore || 0) - Number(left.rankScore || 0) ||
       Number(right.elapsed || 0) - Number(left.elapsed || 0)
     );
+  }
+
+  function isVisibleCompetitiveRecord(record) {
+    if (!record) return false;
+    const username = normalizeName(record.username);
+    if (internalTestNamePattern.test(username)) return false;
+    return record.level <= 1 || record.hitCount > 0;
   }
 
   const contextPromise = modulesPromise.then(async ([appSdk, authSdk, databaseSdk]) => {
@@ -80,6 +88,7 @@
     const { auth, databaseSdk, db } = await contextPromise;
     const uid = auth.currentUser.uid;
     const incoming = normalizeScore(input, uid);
+    if (!isVisibleCompetitiveRecord(incoming)) throw new Error("成绩不符合正式挑战规则");
     const scoreRef = databaseSdk.ref(db, `leaderboard/${uid}`);
     const transaction = await databaseSdk.runTransaction(
       scoreRef,
@@ -136,6 +145,7 @@
     const rawRecords = rawValue && typeof rawValue === "object" ? rawValue : {};
     const records = Object.entries(rawRecords)
       .map(([recordUid, record]) => normalizeScore(record, recordUid))
+      .filter(isVisibleCompetitiveRecord)
       .sort(compareRecords);
     const currentIndex = records.findIndex((record) => record.uid === uid);
     if (currentIndex < 0) throw new Error("成绩尚未写入");

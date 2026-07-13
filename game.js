@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.10";
+  const buildVersion = "1.4.11";
   const buildLabel = `DEMO ${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -96,7 +96,7 @@
       const colorName = colorIndex === 0 ? "blue" : "pink";
       for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
         const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.10`;
+        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=1.4.11`;
         bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
       }
     }
@@ -290,6 +290,8 @@
     invulnerableUntil: 0,
     runRecordId: "",
     runCreatedAt: 0,
+    leaderboardEligible: true,
+    runStartLevel: 1,
     wrongStreak: 0,
     lastUsefulActionAt: 0,
     combo: 0,
@@ -1726,12 +1728,19 @@
   function initLeaderboardProfile() {
     if (playerNameInput) {
       playerNameInput.value = loadExplicitPlayerName();
+      playerNameInput.addEventListener("focus", () => {
+        phoneShell?.classList.add("text-input-open");
+      });
       playerNameInput.addEventListener("input", () => {
         playerNameInput.classList.remove("is-invalid");
         if (leaderboardStatus?.dataset.tone === "error") setLeaderboardStatus("完成后自动上传最佳成绩", "");
       });
       playerNameInput.addEventListener("change", () => {
         if (String(playerNameInput.value || "").trim()) commitPlayerProfile({ focus: false });
+      });
+      playerNameInput.addEventListener("blur", () => {
+        phoneShell?.classList.remove("text-input-open");
+        stabilizeMobileViewport();
       });
     }
     const leaderboard = window.PaopaoLeaderboard;
@@ -1765,6 +1774,10 @@
     };
   }
 
+  function isPlausibleRankedRecord(record) {
+    return Boolean(record) && (record.level <= 1 || record.hitCount > 0);
+  }
+
   function compareLocalLeaderboardRecords(left, right) {
     return (
       right.level - left.level ||
@@ -1784,7 +1797,7 @@
       if (!Array.isArray(parsed)) return [];
       return parsed
         .map(normalizeLocalLeaderboardRecord)
-        .filter(Boolean)
+        .filter(isPlausibleRankedRecord)
         .sort(compareLocalLeaderboardRecords)
         .slice(0, localLeaderboardLimit);
     } catch {
@@ -1864,6 +1877,13 @@
   function saveLocalLeaderboardResult(stats) {
     const currentRecord = currentLocalLeaderboardRecord(stats);
     const previousRecords = loadLocalLeaderboardRecords().filter((record) => record.id !== currentRecord.id);
+    if (!state.leaderboardEligible) {
+      return {
+        ...buildLocalLeaderboardContext([currentRecord], currentRecord),
+        source: "practice",
+        unranked: true,
+      };
+    }
     const rankedRecords = [currentRecord, ...previousRecords].sort(compareLocalLeaderboardRecords);
     try {
       window.localStorage.setItem(
@@ -2075,6 +2095,7 @@
 
   function resetGame(options = {}) {
     const startPaused = Boolean(options?.startPaused);
+    const leaderboardEligible = options?.leaderboardEligible !== false;
     stopGlobalLeaderboardWatch();
     pauseBackgroundMusic({ reset: true });
     resetRewardedAdOverlay();
@@ -2091,6 +2112,8 @@
     state.invulnerableUntil = 0;
     state.runCreatedAt = Date.now();
     state.runRecordId = `run-${state.runCreatedAt}-${Math.random().toString(36).slice(2, 8)}`;
+    state.leaderboardEligible = leaderboardEligible;
+    state.runStartLevel = 1;
     lastHudWater = null;
     lastFullLifeCount = heartCount;
     lifeGainUntil = 0;
@@ -2214,6 +2237,7 @@
     const totalCount = boardData.totalCount;
     const leaderboard = boardData.leaderboard;
     const isGlobalBoard = boardData.source === "global";
+    const isPracticeBoard = boardData.source === "practice";
     const rankingRecord = isGlobalBoard ? boardData.current : null;
     const rankingLevel = rankingRecord?.level ?? level;
     const rankingHitCount = rankingRecord?.hitCount ?? hitCount;
@@ -2237,7 +2261,7 @@
     summaryTop.className = "result-summary-top";
     const eyebrow = document.createElement("div");
     eyebrow.className = "result-eyebrow";
-    eyebrow.textContent = rank === 1 ? "本局最佳表现" : "本局表现";
+    eyebrow.textContent = isPracticeBoard ? "跳关练习" : rank === 1 ? "本局最佳表现" : "本局表现";
     const gradeBadge = document.createElement("div");
     gradeBadge.className = "result-grade";
     const gradeLabel = document.createElement("span");
@@ -2259,9 +2283,11 @@
     const runRank = document.createElement("div");
     runRank.className = "result-run-rank";
     const runRankValue = document.createElement("strong");
-    runRankValue.textContent = `#${rank}`;
+    runRankValue.textContent = isPracticeBoard ? "--" : `#${rank}`;
     const runRankLabel = document.createElement("span");
-    runRankLabel.textContent = isGlobalBoard
+    runRankLabel.textContent = isPracticeBoard
+      ? "练习局"
+      : isGlobalBoard
       ? boardData.isCurrentBest === false
         ? "历史最佳"
         : "全球排名"
@@ -2277,7 +2303,10 @@
     chase.className = "result-chase";
     const chaseMain = document.createElement("strong");
     const chaseSub = document.createElement("span");
-    if (aheadRecord) {
+    if (isPracticeBoard) {
+      chaseMain.textContent = "本局不计入排行榜";
+      chaseSub.textContent = "从 Level 1 正式开始才会记录成绩";
+    } else if (aheadRecord) {
       if (aheadRecord.level > rankingLevel) {
         const timeGap = Math.max(1000, aheadRecord.elapsed - rankingElapsed + 1000);
         chaseMain.textContent = `再坚持 ${formatTime(timeGap)}`;
@@ -2322,9 +2351,11 @@
     const boardTitle = document.createElement("div");
     boardTitle.className = "result-board-title";
     const boardMain = document.createElement("strong");
-    boardMain.textContent = isGlobalBoard ? "全球排名" : "本地排名";
+    boardMain.textContent = isPracticeBoard ? "练习成绩" : isGlobalBoard ? "全球排名" : "本地排名";
     const boardSub = document.createElement("span");
-    if (totalCount <= 1) {
+    if (isPracticeBoard) {
+      boardSub.textContent = "关卡选择只用于练习，不上传成绩";
+    } else if (totalCount <= 1) {
       boardSub.textContent = isGlobalBoard ? "你是全球榜首位玩家" : "首局记录已保存";
     } else if (rank === 1) {
       boardSub.textContent = isGlobalBoard ? `你就是全球第一 / 共 ${totalCount} 人` : `你就是本机最强 / 共 ${totalCount} 局`;
@@ -2418,7 +2449,7 @@
     const retryLabel = document.createElement("strong");
     retryLabel.textContent = "再来一局";
     const retryGoal = document.createElement("span");
-    retryGoal.textContent = `冲击 Level ${level + 1}`;
+    retryGoal.textContent = isPracticeBoard ? "从 Level 1 正式开始" : `冲击 Level ${level + 1}`;
     retryButton.append(retryLabel, retryGoal);
     retryButton.addEventListener("click", () => playStartTransition({ quick: true }));
     actions.append(homeButton, retryButton);
@@ -2451,6 +2482,10 @@
   async function syncGlobalLeaderboardResult(stats, localBoard, syncToken) {
     const leaderboard = window.PaopaoLeaderboard;
     if (!leaderboard || !localBoard?.current) return;
+    if (!state.leaderboardEligible || localBoard.source === "practice") {
+      setLeaderboardStatus("跳关练习不计入排行榜", "offline");
+      return;
+    }
     stopGlobalLeaderboardWatch();
     setLeaderboardStatus("正在上传本局成绩", "syncing");
     try {
@@ -12018,7 +12053,7 @@
   }
 
   function startTutorialSession() {
-    resetGame({ startPaused: true });
+    resetGame({ startPaused: true, leaderboardEligible: false });
     state.tutorialMode = true;
     state.paused = true;
     tutorialRun.active = true;
@@ -12410,7 +12445,7 @@
   function startAtSettingsLevel() {
     const targetLevel = selectedSettingsLevel();
     closeSettings({ resume: false });
-    resetGame({ startPaused: true });
+    resetGame({ startPaused: true, leaderboardEligible: false });
     jumpToDebugLevel(targetLevel);
     resumeGame();
   }
@@ -12505,8 +12540,10 @@
   function jumpToDebugLevel(level) {
     const targetLevel = Math.max(1, Math.round(level));
     if (!state.running) {
-      resetGame();
+      resetGame({ leaderboardEligible: false });
     }
+    state.leaderboardEligible = false;
+    state.runStartLevel = targetLevel;
     clearRuntimeEffects();
     resetCombo({ recovery: false });
     state.comboRecoveryUntil = 0;
@@ -12627,6 +12664,9 @@
   warmGameSoundFiles();
   startButton.addEventListener("click", () => {
     if (!commitPlayerProfile()) return;
+    playerNameInput?.blur();
+    phoneShell?.classList.remove("text-input-open");
+    stabilizeMobileViewport();
     playStartTransition();
   });
   tutorialButton?.addEventListener("click", openTutorial);
@@ -12667,6 +12707,20 @@
   function scheduleViewportResize() {
     if (viewportResizeRequest) return;
     viewportResizeRequest = window.requestAnimationFrame(applyViewportResize);
+  }
+
+  function stabilizeMobileViewport() {
+    if (!isLikelyMobileDevice()) return;
+    const restore = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollLeft = 0;
+      document.documentElement.scrollTop = 0;
+      document.body.scrollLeft = 0;
+      document.body.scrollTop = 0;
+      scheduleViewportResize();
+    };
+    window.requestAnimationFrame(restore);
+    window.setTimeout(restore, 180);
   }
 
   window.addEventListener("resize", scheduleViewportResize, { passive: true });
