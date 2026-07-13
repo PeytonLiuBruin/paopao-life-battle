@@ -4,8 +4,8 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.16";
-  const buildLabel = `DEMO ${buildVersion}`;
+  const buildVersion = "1.4.18";
+  const buildLabel = `DEMO · v${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
   const tutorialButton = document.getElementById("tutorialButton");
@@ -78,7 +78,7 @@
   const settingsPauseIcon = document.getElementById("settingsPauseIcon");
   const settingsPauseLabel = document.getElementById("settingsPauseLabel");
   const settingsHomeButton = document.getElementById("settingsHome");
-  const backgroundMusic = document.getElementById("backgroundMusic");
+  let backgroundMusic = document.getElementById("backgroundMusic");
   const musicToggleButton = document.getElementById("musicToggle");
   const musicVolumeInput = document.getElementById("musicVolume");
   const musicVolumeValue = document.getElementById("musicVolumeValue");
@@ -267,6 +267,7 @@
   const playerNameStorageKey = "paopao.playerName.v1";
   const musicEnabledStorageKey = "paopao.musicEnabled.v1";
   const musicVolumeStorageKey = "paopao.musicVolume.v2";
+  const backgroundMusicUrl = "./assets/music/bgm.mp3";
   const localLeaderboardLimit = 80;
   const customPackSchema = "paopao-bubble-pack@1";
   const fairMatchDwell = 2.5;
@@ -416,8 +417,15 @@
   let soundPreloadStarted = false;
   let soundPreloadTimer = 0;
   let musicPlayPromise = null;
+  let musicPrimePromise = null;
   let musicRetryPending = false;
   let backgroundMusicPrimed = false;
+  let musicMediaSource = null;
+  let musicGainNode = null;
+  let musicGraphContext = null;
+  let musicLoadRetryTimer = 0;
+  let musicLoadAttempts = 0;
+  let musicResumePosition = 0;
   const soundFiles = {
     start: ["start.mp3"],
     small: ["bubble_pop_small_1.mp3"],
@@ -493,6 +501,8 @@
   let waterGainUntil = 0;
   let waterShockUntil = 0;
   let waterCriticalUntil = 0;
+  let fullLifeFeedbackUntil = 0;
+  let nextFullLifeFeedbackAt = Number.NEGATIVE_INFINITY;
   const heartSrcCache = new Map();
   let performanceTier = initialPerformanceTier();
   let initialTier = performanceTier;
@@ -1652,11 +1662,137 @@
     }
   }
 
-  function syncMusicControls() {
-    if (backgroundMusic) {
-      backgroundMusic.loop = false;
-      backgroundMusic.volume = musicEnabled ? musicVolume : 0;
+  function musicPlaybackAllowed() {
+    const settingsPreview = state.paused && settingsAreOpen();
+    return Boolean(
+      backgroundMusic &&
+      musicEnabled &&
+      state.running &&
+      (!state.paused || settingsPreview) &&
+      !state.tutorialMode &&
+      !rewardedAdActive &&
+      !document.hidden
+    );
+  }
+
+  function applyMusicVolume({ immediate = false } = {}) {
+    if (!backgroundMusic) return;
+    const target = musicEnabled ? clamp(musicVolume, 0, 1) : 0;
+    const routed = musicGainNode && musicGraphContext === audioContext && audioContext?.state !== "closed";
+    if (routed) {
+      const now = audioContext.currentTime;
+      musicGainNode.gain.cancelScheduledValues(now);
+      if (immediate) musicGainNode.gain.setValueAtTime(target, now);
+      else musicGainNode.gain.setTargetAtTime(target, now, 0.018);
+      backgroundMusic.volume = 1;
+    } else {
+      backgroundMusic.volume = target;
     }
+  }
+
+  function ensureBackgroundMusicGraph(context = audioContext) {
+    if (!backgroundMusic || !context || context.state === "closed") return false;
+    if (musicMediaSource && musicGainNode && musicGraphContext === context) {
+      applyMusicVolume({ immediate: true });
+      return true;
+    }
+    if (musicMediaSource || musicGraphContext) return false;
+    try {
+      musicMediaSource = context.createMediaElementSource(backgroundMusic);
+      musicGainNode = context.createGain();
+      musicGraphContext = context;
+      musicMediaSource.connect(musicGainNode);
+      musicGainNode.connect(audioMasterGain ?? context.destination);
+      applyMusicVolume({ immediate: true });
+      return true;
+    } catch {
+      musicMediaSource = null;
+      musicGainNode = null;
+      musicGraphContext = null;
+      applyMusicVolume({ immediate: true });
+      return false;
+    }
+  }
+
+  function clearBackgroundMusicReload() {
+    if (!musicLoadRetryTimer) return;
+    window.clearTimeout(musicLoadRetryTimer);
+    musicLoadRetryTimer = 0;
+  }
+
+  function scheduleBackgroundMusicReload() {
+    if (!backgroundMusic || musicLoadRetryTimer || musicLoadAttempts >= 2 || backgroundMusic.ended) return;
+    musicRetryPending = true;
+    musicResumePosition = Number.isFinite(backgroundMusic.currentTime) ? backgroundMusic.currentTime : musicResumePosition;
+    const delay = 700 + musicLoadAttempts * 900;
+    musicLoadRetryTimer = window.setTimeout(() => {
+      musicLoadRetryTimer = 0;
+      if (!backgroundMusic || !musicEnabled) return;
+      musicLoadAttempts += 1;
+      const resumeAt = musicResumePosition;
+      backgroundMusic.src = `${backgroundMusicUrl}?v=${buildVersion}&retry=${musicLoadAttempts}`;
+      backgroundMusic.preload = "auto";
+      backgroundMusic.addEventListener("loadedmetadata", () => {
+        if (resumeAt > 0 && Number.isFinite(backgroundMusic.duration)) {
+          try {
+            backgroundMusic.currentTime = Math.min(resumeAt, Math.max(0, backgroundMusic.duration - 0.1));
+          } catch {
+            // Some mobile browsers only allow seeking after canplay.
+          }
+        }
+      }, { once: true });
+      backgroundMusic.load();
+      if (musicPlaybackAllowed()) playBackgroundMusic();
+    }, delay);
+  }
+
+  function initBackgroundMusic() {
+    if (!backgroundMusic) return;
+    backgroundMusic.loop = false;
+    backgroundMusic.preload = "metadata";
+    backgroundMusic.addEventListener("canplay", () => {
+      clearBackgroundMusicReload();
+      musicLoadAttempts = 0;
+      musicRetryPending = false;
+      if (musicPlaybackAllowed() && backgroundMusic.paused) playBackgroundMusic();
+    });
+    backgroundMusic.addEventListener("playing", () => {
+      clearBackgroundMusicReload();
+      musicLoadAttempts = 0;
+      musicRetryPending = false;
+    });
+    backgroundMusic.addEventListener("stalled", scheduleBackgroundMusicReload);
+    backgroundMusic.addEventListener("error", scheduleBackgroundMusicReload);
+    backgroundMusic.addEventListener("ended", () => {
+      musicRetryPending = false;
+      musicResumePosition = 0;
+    });
+    if (!backgroundMusic.getAttribute("src")) backgroundMusic.src = `${backgroundMusicUrl}?v=${buildVersion}`;
+    backgroundMusic.load();
+  }
+
+  function rebuildBackgroundMusicElement() {
+    if (!backgroundMusic?.parentNode) return;
+    const replacement = backgroundMusic.cloneNode(false);
+    replacement.id = "backgroundMusic";
+    replacement.loop = false;
+    replacement.preload = "auto";
+    replacement.src = `${backgroundMusicUrl}?v=${buildVersion}&recover=${Date.now()}`;
+    backgroundMusic.pause();
+    backgroundMusic.replaceWith(replacement);
+    backgroundMusic = replacement;
+    musicMediaSource = null;
+    musicGainNode = null;
+    musicGraphContext = null;
+    musicPlayPromise = null;
+    musicPrimePromise = null;
+    backgroundMusicPrimed = false;
+    musicResumePosition = 0;
+    initBackgroundMusic();
+  }
+
+  function syncMusicControls() {
+    applyMusicVolume({ immediate: true });
     if (musicToggleButton) {
       musicToggleButton.classList.toggle("is-muted", !musicEnabled);
       musicToggleButton.setAttribute("aria-pressed", String(musicEnabled));
@@ -1669,6 +1805,8 @@
   function pauseBackgroundMusic({ reset = false } = {}) {
     if (!backgroundMusic) return;
     musicRetryPending = false;
+    clearBackgroundMusicReload();
+    musicResumePosition = reset ? 0 : Number.isFinite(backgroundMusic.currentTime) ? backgroundMusic.currentTime : 0;
     backgroundMusic.pause();
     if (reset) {
       try {
@@ -1680,8 +1818,15 @@
   }
 
   function playBackgroundMusic({ restart = false } = {}) {
-    if (!backgroundMusic || !musicEnabled || !state.running || state.paused || state.tutorialMode || rewardedAdActive) return;
+    if (!musicPlaybackAllowed()) return;
+    backgroundMusic.preload = "auto";
+    const context = ensureAudioContext();
+    if (context) {
+      ensureBackgroundMusicGraph(context);
+      if (context.state !== "running") void resumeGameAudio();
+    }
     if (restart) {
+      musicResumePosition = 0;
       try {
         backgroundMusic.currentTime = 0;
       } catch {
@@ -1690,7 +1835,10 @@
     } else if (backgroundMusic.ended) {
       return;
     }
-    backgroundMusic.volume = musicVolume;
+    applyMusicVolume({ immediate: true });
+    if (backgroundMusic.networkState === HTMLMediaElement.NETWORK_NO_SOURCE || backgroundMusic.error) {
+      scheduleBackgroundMusicReload();
+    }
     if (!backgroundMusic.paused) {
       musicRetryPending = false;
       return;
@@ -1701,9 +1849,11 @@
       musicPlayPromise = Promise.resolve(playResult)
         .then(() => {
           musicRetryPending = false;
+          musicLoadAttempts = 0;
         })
         .catch(() => {
           musicRetryPending = true;
+          if (backgroundMusic.error) scheduleBackgroundMusicReload();
         })
         .finally(() => {
           musicPlayPromise = null;
@@ -1711,15 +1861,20 @@
     } catch {
       musicRetryPending = true;
       musicPlayPromise = null;
+      if (backgroundMusic.error) scheduleBackgroundMusicReload();
     }
   }
 
   function primeBackgroundMusic() {
-    if (!backgroundMusic || backgroundMusicPrimed || !musicEnabled || state.running) return;
+    if (!backgroundMusic || backgroundMusicPrimed || musicPrimePromise || !musicEnabled || state.running) return;
+    backgroundMusic.preload = "auto";
+    if (backgroundMusic.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) backgroundMusic.load();
+    const context = ensureAudioContext();
+    if (context) ensureBackgroundMusicGraph(context);
     const previousMuted = backgroundMusic.muted;
     backgroundMusic.muted = true;
     try {
-      Promise.resolve(backgroundMusic.play())
+      musicPrimePromise = Promise.resolve(backgroundMusic.play())
         .then(() => {
           backgroundMusicPrimed = true;
           if (!state.running) {
@@ -1731,25 +1886,29 @@
             }
           }
         })
-        .catch(() => {})
+        .catch(() => {
+          musicRetryPending = true;
+        })
         .finally(() => {
           backgroundMusic.muted = previousMuted;
-          backgroundMusic.volume = musicEnabled ? musicVolume : 0;
+          applyMusicVolume({ immediate: true });
+          musicPrimePromise = null;
         });
     } catch {
       backgroundMusic.muted = previousMuted;
+      musicPrimePromise = null;
     }
   }
 
   function recoverGameAudioFromGesture() {
     unlockGameAudioFromGesture();
     if (!state.running) primeBackgroundMusic();
-    if (state.running && !state.paused && (musicRetryPending || backgroundMusic?.paused)) playBackgroundMusic();
+    if (musicPlaybackAllowed() && (musicRetryPending || backgroundMusic?.paused)) playBackgroundMusic();
   }
 
   function recoverGameAudioAfterInterruption() {
     if (audioContext) void resumeGameAudio();
-    if (state.running && !state.paused && !document.hidden) playBackgroundMusic();
+    if (musicPlaybackAllowed()) playBackgroundMusic();
   }
 
   function scoreBreakdown() {
@@ -1768,6 +1927,13 @@
   function normalizePlayerName(value) {
     const normalized = String(value ?? "").replace(/[\r\n\t]/g, " ").replace(/\s+/g, " ").trim().slice(0, 10);
     return normalized || "你";
+  }
+
+  function leaderboardPlayerKey(value) {
+    return normalizePlayerName(value)
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .replace(/[\s\u200b-\u200d\ufeff]+/g, "");
   }
 
   function loadPlayerName() {
@@ -1798,7 +1964,9 @@
     try {
       window.localStorage.setItem(playerNameStorageKey, name);
       if (currentId) {
-        const records = loadLocalLeaderboardRecords().map((record) => record.id === currentId ? { ...record, name } : record);
+        const records = dedupeLocalLeaderboardRecords(
+          loadLocalLeaderboardRecords().map((record) => record.id === currentId ? { ...record, name } : record),
+        );
         window.localStorage.setItem(localLeaderboardStorageKey, JSON.stringify(records.slice(0, localLeaderboardLimit)));
       }
     } catch {
@@ -1896,17 +2064,31 @@
     );
   }
 
+  function dedupeLocalLeaderboardRecords(records) {
+    const unique = new Map();
+    records
+      .filter(isPlausibleRankedRecord)
+      .sort(compareLocalLeaderboardRecords)
+      .forEach((record) => {
+        const key = leaderboardPlayerKey(record.name) || `id:${record.id}`;
+        if (!unique.has(key)) unique.set(key, record);
+      });
+    return Array.from(unique.values()).sort(compareLocalLeaderboardRecords).slice(0, localLeaderboardLimit);
+  }
+
   function loadLocalLeaderboardRecords() {
     try {
       const raw = window.localStorage.getItem(localLeaderboardStorageKey);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return parsed
+      const cleaned = dedupeLocalLeaderboardRecords(parsed
         .map(normalizeLocalLeaderboardRecord)
-        .filter(isPlausibleRankedRecord)
-        .sort(compareLocalLeaderboardRecords)
-        .slice(0, localLeaderboardLimit);
+        .filter(isPlausibleRankedRecord));
+      if (cleaned.length !== parsed.length) {
+        window.localStorage.setItem(localLeaderboardStorageKey, JSON.stringify(cleaned));
+      }
+      return cleaned;
     } catch {
       return [];
     }
@@ -1924,7 +2106,8 @@
   function localHomeLeaderboardBoard() {
     const records = loadLocalLeaderboardRecords();
     const playerName = loadExplicitPlayerName();
-    const currentIndex = playerName ? records.findIndex((record) => record.name === playerName) : -1;
+    const currentKey = leaderboardPlayerKey(playerName);
+    const currentIndex = currentKey ? records.findIndex((record) => leaderboardPlayerKey(record.name) === currentKey) : -1;
     const leaderboard = records.slice(0, 15).map((record, index) => ({
       place: index + 1,
       name: record.name,
@@ -2259,7 +2442,9 @@
         unranked: true,
       };
     }
-    const rankedRecords = [currentRecord, ...previousRecords].sort(compareLocalLeaderboardRecords);
+    const rankedRecords = dedupeLocalLeaderboardRecords([currentRecord, ...previousRecords]);
+    const currentKey = leaderboardPlayerKey(currentRecord.name);
+    const currentBest = rankedRecords.find((record) => leaderboardPlayerKey(record.name) === currentKey) ?? currentRecord;
     try {
       window.localStorage.setItem(
         localLeaderboardStorageKey,
@@ -2268,7 +2453,7 @@
     } catch {
       // Ranking still works for this result if local storage is unavailable.
     }
-    return buildLocalLeaderboardContext(rankedRecords, currentRecord);
+    return buildLocalLeaderboardContext(rankedRecords, currentBest);
   }
 
   function comboProgress() {
@@ -2375,13 +2560,14 @@
     }
     if (comboValue % 100 === 0) {
       showComboFever(comboValue);
-      playEventSound("fever", { volume: comboValue % 300 === 0 ? 0.48 : 0.58 });
+      playEventSound("fever", { volume: comboValue % 200 === 0 ? 0.48 : 0.58 });
     }
-    if (comboValue % 300 === 0) {
+    if (comboValue % 200 === 0) {
       const gained = addWater(heartWater);
       showComboLifeReward(comboValue, gained);
       playEventSound("combo", { volume: 0.74, delayOffset: 0.07 });
       state.flash = Math.max(state.flash, 0.1);
+      if (gained <= 0.001) confirmFullLife();
       updateHud();
     }
   }
@@ -2492,9 +2678,10 @@
         }
       }
     }
-    const fullLifeCount = clamp(Math.floor((exactWater + 0.001) / heartWater), 0, heartCount);
-    const lifeChargeProgress =
-      fullLifeCount >= heartCount ? 1 : clamp((exactWater - fullLifeCount * heartWater) / heartWater, 0, 1);
+    const exactLifeUnits = clamp(exactWater / heartWater, 0, heartCount);
+    const lifeSegments = Array.from({ length: heartCount }, (_, index) => clamp(exactLifeUnits - index, 0, 1));
+    const fullLifeCount = lifeSegments.filter((segment) => segment >= 0.9995).length;
+    const lifeChargeProgress = fullLifeCount >= heartCount ? 1 : lifeSegments[fullLifeCount] ?? 0;
     if (state.running && fullLifeCount === 1 && previousFullLifeCount > 1) {
       waterCriticalUntil = Math.max(waterCriticalUntil, state.elapsed + 720);
       navigator.vibrate?.([18, 34, 18]);
@@ -2508,9 +2695,9 @@
     lastFullLifeCount = fullLifeCount;
     lastHudWater = exactWater;
     heartBubbles.forEach((heart, index) => {
-      const isFull = index < fullLifeCount;
-      const isNextLife = fullLifeCount < heartCount && index === fullLifeCount;
-      const segmentProgress = isFull ? 1 : isNextLife ? lifeChargeProgress : 0;
+      const segmentProgress = lifeSegments[index] ?? 0;
+      const isFull = segmentProgress >= 0.9995;
+      const isNextLife = !isFull && segmentProgress > 0;
       const justCompleted = isFull && index === fullLifeCount - 1 && state.elapsed < lifeGainUntil;
       const chargingNow = isNextLife && segmentProgress > 0 && state.elapsed < waterGainUntil;
       const heartSourceKey = `${isNextLife ? "charge" : "life"}-${Math.round(segmentProgress * 100)}`;
@@ -2521,6 +2708,8 @@
       heart.classList.toggle("charging", justCompleted || chargingNow);
       heart.classList.toggle("recovering", isNextLife && segmentProgress > 0);
       heart.classList.toggle("near-ready", isNextLife && segmentProgress >= 0.72);
+      heart.dataset.lifeState = isFull ? "full" : isNextLife ? "charging" : "empty";
+      heart.style.order = String(index);
       heart.style.setProperty("--heart-fill", segmentProgress.toFixed(4));
     });
     heartMeter.setAttribute("aria-valuenow", (exactWater / heartWater).toFixed(2));
@@ -2537,6 +2726,7 @@
     waterBlock.classList.toggle("gain", state.running && state.elapsed < waterGainUntil);
     waterBlock.classList.toggle("shock", state.running && state.elapsed < waterShockUntil);
     waterBlock.classList.toggle("critical-flash", state.running && state.elapsed < waterCriticalUntil);
+    waterBlock.classList.toggle("full-confirm", state.running && state.elapsed < fullLifeFeedbackUntil);
     comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
     const rank = comboRank();
     comboChip.dataset.rank = rank;
@@ -2600,6 +2790,8 @@
     waterGainUntil = 0;
     waterShockUntil = 0;
     waterCriticalUntil = 0;
+    fullLifeFeedbackUntil = 0;
+    nextFullLifeFeedbackAt = Number.NEGATIVE_INFINITY;
     state.wrongStreak = 0;
     state.lastUsefulActionAt = 0;
     resetCombo({ recovery: false });
@@ -3221,6 +3413,12 @@
     const before = state.water;
     state.water = Math.min(100, state.water + applied);
     return state.water - before;
+  }
+
+  function confirmFullLife() {
+    if (state.elapsed < nextFullLifeFeedbackAt) return;
+    fullLifeFeedbackUntil = state.elapsed + 620;
+    nextFullLifeFeedbackAt = state.elapsed + 1500;
   }
 
   function waterOpportunityValue(bubble) {
@@ -8357,7 +8555,7 @@
     makeFloatText(x, y, text, style.color, style.scale * scaleBoost, {
       fontFamily: '"Brush Script MT", "Segoe Script", "Comic Sans MS", "Arial Rounded MT Bold", cursive',
       italic: true,
-      stroke: "rgba(15, 25, 37, 0.64)",
+      stroke: "rgba(18, 74, 88, 0.46)",
       shadow: style.shadow,
       life: 0.92,
       vy: -38,
@@ -8499,7 +8697,11 @@
       color: "#fff6d6",
       power: 0.92,
     });
-    makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, appliedWaterGain > 0 ? "+1" : "MAX", "#fff6d6", 1.08);
+    if (appliedWaterGain > 0) {
+      makeFloatText(bubble.x, bubble.y - bubble.radius * 0.9, "+1", "#fff6d6", 1.08);
+    } else {
+      confirmFullLife();
+    }
     for (let i = 0; i < 14; i += 1) {
       makeParticle(bubble.x, bubble.y, i % 2 === 0 ? "#fff6d6" : "#f4c1d6", rand(58, 172), rand(0, Math.PI * 2), rand(0.26, 0.56), i % 5 === 0);
     }
@@ -8767,17 +8969,16 @@
 
     state.score += scoreGain;
     const appliedWaterGain = addWater(waterGain);
+    if (appliedWaterGain <= 0) confirmFullLife();
     state.flash = Math.max(state.flash, bubble.isSuper ? 0.46 : isSmall ? 0.16 : 0.28);
     makeFloatText(
       bubble.x,
       bubble.y - bubble.radius * 0.72,
       bubble.isWhite
         ? "+1分"
-        : appliedWaterGain <= 0
-          ? "MAX"
-          : state.combo > 1
-            ? `x${state.combo}`
-            : "+",
+        : state.combo > 1
+          ? `x${state.combo}`
+          : "+",
       isOpen ? openTone.light : color.light,
       Math.min(1.34, 0.96 + state.combo * 0.012),
     );
@@ -11469,8 +11670,8 @@
       ctx.font = `${floater.italic ? "italic " : ""}1000 ${size}px ${fontFamily}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.lineWidth = Math.max(3.2, size * (floater.fontFamily ? 0.16 : 0.2));
-      ctx.strokeStyle = floater.stroke ?? "rgba(20, 48, 66, 0.26)";
+      ctx.lineWidth = Math.max(1.35, size * (floater.fontFamily ? 0.1 : 0.075));
+      ctx.strokeStyle = floater.stroke ?? "rgba(15, 62, 78, 0.34)";
       ctx.shadowColor = colorWithAlpha(floater.shadow ?? "#ffffff", (floater.shadow ? 0.46 : 0.16) * alpha);
       ctx.shadowBlur = floater.shadow ? 14 : 10;
       ctx.fillStyle = floater.color;
@@ -11668,14 +11869,14 @@
 
   function drawBuildVersion() {
     ctx.save();
-    ctx.font = "800 9px \"Arial Rounded MT Bold\", \"PingFang SC\", \"Microsoft YaHei UI\", ui-rounded, sans-serif";
-    ctx.textAlign = "center";
+    ctx.globalAlpha = 0.58;
+    ctx.font = "700 8px \"Arial Rounded MT Bold\", \"PingFang SC\", \"Microsoft YaHei UI\", ui-rounded, sans-serif";
+    ctx.textAlign = "right";
     ctx.textBaseline = "bottom";
-    ctx.lineWidth = 2.4;
-    ctx.strokeStyle = "rgba(20, 48, 66, 0.34)";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
-    ctx.strokeText(buildLabel, state.width * 0.5, state.height - 8);
-    ctx.fillText(buildLabel, state.width * 0.5, state.height - 8);
+    ctx.shadowColor = "rgba(17, 65, 80, 0.18)";
+    ctx.shadowBlur = 2;
+    ctx.fillStyle = "rgba(248, 254, 255, 0.92)";
+    ctx.fillText(buildLabel, state.width - 9, state.height - 9);
     ctx.restore();
   }
 
@@ -11844,6 +12045,7 @@
 
   function draw() {
     drawBackground();
+    drawBuildVersion();
     drawRhythmBreath();
     drawDifficultyBanners();
     drawWaterStressOverlay();
@@ -11857,7 +12059,6 @@
     drawClearBursts();
     drawParticles();
     drawFloaters();
-    drawBuildVersion();
     drawMistakeFlash();
     drawReviveInvulnerability();
     drawFlash();
@@ -11953,6 +12154,7 @@
 
   function discardAudioContext(context) {
     if (!context || context !== audioContext) return;
+    const rebuildMusicGraph = musicGraphContext === context;
     activeSoundVoices.slice().forEach(stopSoundVoice);
     audioContext = undefined;
     audioContextGeneration += 1;
@@ -11964,6 +12166,7 @@
     soundPreloadTimer = 0;
     soundBuffers.clear();
     soundLoaders.clear();
+    if (rebuildMusicGraph) rebuildBackgroundMusicElement();
   }
 
   function ensureAudioContext() {
@@ -11984,6 +12187,7 @@
     } catch {
       audioMasterGain = null;
     }
+    ensureBackgroundMusicGraph(audioContext);
     const context = audioContext;
     context.addEventListener?.("statechange", () => {
       if (context !== audioContext) return;
@@ -12160,12 +12364,21 @@
     const context = ensureAudioContext();
     if (!context) return Promise.reject(new Error("Web Audio is unavailable"));
     const generation = audioContextGeneration;
-    const loader = fetch(soundUrl(fileName), { cache: "force-cache" })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Sound load failed: ${fileName}`);
-        return response.arrayBuffer();
-      })
-      .then((data) => context.decodeAudioData(data))
+    const loader = (async () => {
+      let lastError = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await fetch(soundUrl(fileName), { cache: attempt === 0 ? "force-cache" : "reload" });
+          if (!response.ok) throw new Error(`Sound load failed: ${fileName}`);
+          const data = await response.arrayBuffer();
+          return await context.decodeAudioData(data);
+        } catch (error) {
+          lastError = error;
+          if (context !== audioContext || generation !== audioContextGeneration || context.state === "closed") break;
+        }
+      }
+      throw lastError ?? new Error(`Sound decode failed: ${fileName}`);
+    })()
       .then((buffer) => {
         if (context !== audioContext || generation !== audioContextGeneration || context.state === "closed") {
           throw new Error("Audio context changed while decoding");
@@ -12248,7 +12461,10 @@
     }
     loadSoundBuffer(request.fileName)
       .then(startSource)
-      .catch(() => {});
+      .catch(() => {
+        request.retryCount = Math.max(0, Number(request.retryCount) || 0) + 1;
+        if (request.retryCount <= 1 && soundRequestIsFresh(request)) queueSoundRequest(request);
+      });
   }
 
   function playSoundBuffer(
@@ -12266,6 +12482,7 @@
         priority,
         maxAgeMs,
         requestedAt: performance.now(),
+        retryCount: 0,
       };
       startSoundRequest(request);
       if (context.state !== "running") void resumeGameAudio();
@@ -13274,6 +13491,7 @@
     settingsButton?.setAttribute("aria-label", "关闭设置");
     phoneShell?.classList.add("settings-open");
     syncSettingsPanel();
+    if (musicEnabled && state.running) playBackgroundMusic();
   }
 
   function closeSettings({ resume = true } = {}) {
@@ -13410,6 +13628,8 @@
     waterGainUntil = 0;
     waterShockUntil = 0;
     waterCriticalUntil = 0;
+    fullLifeFeedbackUntil = 0;
+    nextFullLifeFeedbackAt = Number.NEGATIVE_INFINITY;
     state.difficultyTier = Math.max(0, targetLevel - 1);
     state.nextPowerAt = state.elapsed + 26000;
     state.nextBombAt = state.elapsed;
@@ -13621,6 +13841,7 @@
   initLeaderboardProfile();
   initHomeLeaderboardControls();
   loadMusicPreferences();
+  initBackgroundMusic();
   syncMusicControls();
   initSettingsControls();
   initDebugControls();

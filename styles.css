@@ -337,9 +337,12 @@ body {
   gap: 2px;
   min-width: 0;
   height: clamp(32px, 7.6vw, 42px);
+  direction: ltr;
+  flex-direction: row;
 }
 
 .heart-bubble {
+  flex: 0 0 auto;
   width: clamp(35px, 8.3vw, 46px);
   aspect-ratio: 1.1;
   object-fit: contain;
@@ -376,6 +379,18 @@ body {
 
 .water-block.shock .heart-meter {
   animation: life-hit 420ms cubic-bezier(0.14, 1.18, 0.24, 1);
+}
+
+.water-block.full-confirm .heart-bubble {
+  animation: life-full-confirm 620ms cubic-bezier(0.16, 0.86, 0.2, 1);
+}
+
+.water-block.full-confirm .heart-bubble:nth-child(2) {
+  animation-delay: 55ms;
+}
+
+.water-block.full-confirm .heart-bubble:nth-child(3) {
+  animation-delay: 110ms;
 }
 
 .water-block .caption {
@@ -2245,6 +2260,21 @@ body {
 
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes life-full-confirm {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 2px 5px rgba(15, 33, 43, 0.24));
+  }
+
+  42% {
+    transform: scale(1.055);
+    filter:
+      drop-shadow(0 2px 5px rgba(15, 33, 43, 0.2))
+      drop-shadow(0 0 8px rgba(188, 250, 255, 0.68));
   }
 }
 

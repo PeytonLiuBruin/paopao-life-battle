@@ -26,7 +26,13 @@
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 10);
+  const playerNameKey = (value) =>
+    normalizeName(value)
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .replace(/[\s\u200b-\u200d\ufeff]+/g, "");
   const internalTestNamePattern = /^(?:audit|probe|\?{2,})$/i;
+  let activePlayerName = "";
 
   function normalizeScore(input, uid, fallbackName = "泡泡玩家") {
     const level = clampInteger(input?.level, 1, 100);
@@ -61,6 +67,31 @@
     return record.level <= 1 || record.hitCount > 0;
   }
 
+  function recordMatchesPlayer(record, uid, username = activePlayerName) {
+    if (!record) return false;
+    if (record.uid === uid || record.aliasUids?.includes(uid)) return true;
+    const key = playerNameKey(username);
+    return Boolean(key && playerNameKey(record.username) === key);
+  }
+
+  function dedupeLeaderboardRecords(records) {
+    // Anonymous auth keeps one row per browser install; this merge covers the same name arriving from another device.
+    const grouped = new Map();
+    records
+      .filter(isVisibleCompetitiveRecord)
+      .sort(compareRecords)
+      .forEach((record) => {
+        const key = playerNameKey(record.username) || `uid:${record.uid}`;
+        const existing = grouped.get(key);
+        if (!existing) {
+          grouped.set(key, { ...record, aliasUids: [record.uid] });
+          return;
+        }
+        if (!existing.aliasUids.includes(record.uid)) existing.aliasUids.push(record.uid);
+      });
+    return Array.from(grouped.values()).sort(compareRecords);
+  }
+
   const contextPromise = modulesPromise.then(async ([appSdk, authSdk, databaseSdk]) => {
     const app = appSdk.initializeApp(firebaseConfig);
     const auth = authSdk.getAuth(app);
@@ -72,6 +103,7 @@
   async function setPlayerName(value) {
     const username = normalizeName(value);
     if (!username) throw new Error("请输入昵称");
+    activePlayerName = username;
     const { auth, databaseSdk, db } = await contextPromise;
     const scoreRef = databaseSdk.ref(db, `leaderboard/${auth.currentUser.uid}`);
     const snapshot = await databaseSdk.get(scoreRef);
@@ -88,7 +120,14 @@
     const { auth, databaseSdk, db } = await contextPromise;
     const uid = auth.currentUser.uid;
     const incoming = normalizeScore(input, uid);
+    activePlayerName = incoming.username;
     if (!isVisibleCompetitiveRecord(incoming)) throw new Error("成绩不符合正式挑战规则");
+    const boardSnapshot = await databaseSdk.get(databaseSdk.ref(db, "leaderboard"));
+    const existingBest = normalizedLeaderboardRecords(boardSnapshot.val())
+      .find((record) => playerNameKey(record.username) === playerNameKey(incoming.username));
+    if (existingBest && existingBest.uid !== uid && compareRecords(incoming, existingBest) >= 0) {
+      return { record: existingBest, isCurrentBest: false };
+    }
     const scoreRef = databaseSdk.ref(db, `leaderboard/${uid}`);
     const transaction = await databaseSdk.runTransaction(
       scoreRef,
@@ -121,8 +160,8 @@
     };
   }
 
-  function resultItem(record, place, uid, tone) {
-    const isCurrent = record.uid === uid;
+  function resultItem(record, place, uid, tone, username = activePlayerName) {
+    const isCurrent = recordMatchesPlayer(record, uid, username);
     return {
       place,
       name: normalizeName(record.username) || "泡泡玩家",
@@ -147,24 +186,23 @@
 
   function normalizedLeaderboardRecords(rawValue) {
     const rawRecords = rawValue && typeof rawValue === "object" ? rawValue : {};
-    return Object.entries(rawRecords)
-      .map(([recordUid, record]) => normalizeScore(record, recordUid))
-      .filter(isVisibleCompetitiveRecord)
-      .sort(compareRecords);
+    return dedupeLeaderboardRecords(
+      Object.entries(rawRecords).map(([recordUid, record]) => normalizeScore(record, recordUid)),
+    );
   }
 
-  function publicLeaderboardContext(rawValue, uid, limit = 10) {
+  function publicLeaderboardContext(rawValue, uid, limit = 10, username = activePlayerName) {
     const records = normalizedLeaderboardRecords(rawValue);
-    const currentIndex = records.findIndex((record) => record.uid === uid);
+    const currentIndex = records.findIndex((record) => recordMatchesPlayer(record, uid, username));
     const rank = currentIndex >= 0 ? currentIndex + 1 : null;
     const tones = ["violet", "mint", "rose", "indigo"];
     const visibleLimit = clampInteger(limit, 1, 50);
     const leaderboard = records
       .slice(0, visibleLimit)
-      .map((record, index) => resultItem(record, index + 1, uid, tones[index % tones.length]));
+      .map((record, index) => resultItem(record, index + 1, uid, tones[index % tones.length], username));
     if (currentIndex >= visibleLimit) {
       leaderboard.push({
-        ...resultItem(records[currentIndex], rank, uid, "me"),
+        ...resultItem(records[currentIndex], rank, uid, "me", username),
         pinned: true,
       });
     }
@@ -179,9 +217,9 @@
     };
   }
 
-  function leaderboardContext(rawValue, uid) {
+  function leaderboardContext(rawValue, uid, username = activePlayerName) {
     const records = normalizedLeaderboardRecords(rawValue);
-    const currentIndex = records.findIndex((record) => record.uid === uid);
+    const currentIndex = records.findIndex((record) => recordMatchesPlayer(record, uid, username));
     if (currentIndex < 0) throw new Error("成绩尚未写入");
     const current = records[currentIndex];
     const rank = currentIndex + 1;
@@ -190,9 +228,9 @@
       totalCount <= 1 ? 100 : Math.max(0, Math.min(100, Math.round(((totalCount - rank) / (totalCount - 1)) * 100)));
     const topRecords = records.slice(0, 4);
     const tones = ["violet", "mint", "rose", "indigo"];
-    const leaderboard = topRecords.map((record, index) => resultItem(record, index + 1, uid, tones[index % tones.length]));
+    const leaderboard = topRecords.map((record, index) => resultItem(record, index + 1, uid, tones[index % tones.length], username));
     if (!leaderboard.some((item) => item.isCurrent)) {
-      leaderboard.push(resultItem(current, rank, uid, "me"));
+      leaderboard.push(resultItem(current, rank, uid, "me", username));
     }
 
     return {
