@@ -3062,6 +3062,39 @@ body {
   font-size: 11px;
 }
 
+.result-chase.is-new-best {
+  display: grid;
+  align-content: center;
+  align-items: center;
+  gap: 1px;
+  border: 1px solid rgba(30, 164, 175, 0.2);
+  background: linear-gradient(90deg, rgba(209, 250, 246, 0.72), rgba(255, 247, 210, 0.5));
+  box-shadow: inset 3px 0 0 rgba(27, 174, 178, 0.72);
+}
+
+.result-chase.is-new-best strong {
+  color: #128f99;
+}
+
+.result-chase.is-personal-best {
+  display: grid;
+  align-content: center;
+  align-items: center;
+  gap: 1px;
+  border: 1px solid rgba(61, 111, 135, 0.12);
+  background: rgba(222, 239, 244, 0.58);
+  box-shadow: inset 3px 0 0 rgba(74, 126, 148, 0.38);
+}
+
+.result-chase.is-personal-best strong {
+  color: #3c6f84;
+}
+
+.result-screen[data-result-status="new-best"] .result-eyebrow,
+.result-screen[data-result-status="first-record"] .result-eyebrow {
+  color: #138f9a;
+}
+
 .result-metrics {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
@@ -3193,6 +3226,13 @@ body {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.62),
     0 7px 16px rgba(13, 94, 126, 0.18);
+}
+
+.result-rank-card.is-me.is-personal-best {
+  background: linear-gradient(160deg, rgba(64, 175, 197, 0.78), rgba(43, 119, 157, 0.86));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.54),
+    0 5px 12px rgba(22, 87, 113, 0.14);
 }
 
 .result-avatar {

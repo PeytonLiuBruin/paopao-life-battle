@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.18";
+  const buildVersion = "1.4.19";
   const buildLabel = `DEMO · v${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -2064,6 +2064,16 @@
     );
   }
 
+  function compareLocalCompetitiveResults(left, right) {
+    return (
+      right.level - left.level ||
+      right.hitCount - left.hitCount ||
+      right.bestCombo - left.bestCombo ||
+      right.elapsed - left.elapsed ||
+      right.total - left.total
+    );
+  }
+
   function dedupeLocalLeaderboardRecords(records) {
     const unique = new Map();
     records
@@ -2440,10 +2450,20 @@
         ...buildLocalLeaderboardContext([currentRecord], currentRecord),
         source: "practice",
         unranked: true,
+        runRecord: currentRecord,
+        personalBest: currentRecord,
+        previousBest: null,
+        isCurrentBest: false,
+        isNewPersonalBest: false,
+        isFirstPersonalRecord: false,
       };
     }
-    const rankedRecords = dedupeLocalLeaderboardRecords([currentRecord, ...previousRecords]);
     const currentKey = leaderboardPlayerKey(currentRecord.name);
+    const previousBest = previousRecords
+      .filter((record) => leaderboardPlayerKey(record.name) === currentKey)
+      .sort(compareLocalLeaderboardRecords)[0] ?? null;
+    const isNewPersonalBest = !previousBest || compareLocalCompetitiveResults(currentRecord, previousBest) < 0;
+    const rankedRecords = dedupeLocalLeaderboardRecords([currentRecord, ...previousRecords]);
     const currentBest = rankedRecords.find((record) => leaderboardPlayerKey(record.name) === currentKey) ?? currentRecord;
     try {
       window.localStorage.setItem(
@@ -2453,7 +2473,16 @@
     } catch {
       // Ranking still works for this result if local storage is unavailable.
     }
-    return buildLocalLeaderboardContext(rankedRecords, currentBest);
+    return {
+      ...buildLocalLeaderboardContext(rankedRecords, currentBest),
+      source: "local",
+      runRecord: currentRecord,
+      personalBest: currentBest,
+      previousBest,
+      isCurrentBest: isNewPersonalBest,
+      isNewPersonalBest,
+      isFirstPersonalRecord: isNewPersonalBest && !previousBest,
+    };
   }
 
   function comboProgress() {
@@ -2907,7 +2936,7 @@
       boardData?.source === "global" &&
       boardData.rank >= 1 &&
       boardData.rank <= 5 &&
-      boardData.isCurrentBest !== false,
+      boardData.isNewPersonalBest === true,
     );
     if (!earnedTopFive) {
       clearResultCelebration();
@@ -2951,7 +2980,11 @@
     const leaderboard = boardData.leaderboard;
     const isGlobalBoard = boardData.source === "global";
     const isPracticeBoard = boardData.source === "practice";
-    const rankingRecord = isGlobalBoard ? boardData.current : null;
+    const isNewPersonalBest = !isPracticeBoard && boardData.isNewPersonalBest === true;
+    const isFirstPersonalRecord = isNewPersonalBest && boardData.isFirstPersonalRecord === true;
+    const rankingRecord = boardData.personalBest ?? boardData.current ?? null;
+    const previousBest = boardData.previousBest ?? (!isNewPersonalBest ? rankingRecord : null);
+    const hasPreviousBest = !isPracticeBoard && Boolean(previousBest);
     const rankingLevel = rankingRecord?.level ?? level;
     const rankingHitCount = rankingRecord?.hitCount ?? hitCount;
     const rankingElapsed = rankingRecord?.elapsed ?? state.elapsed;
@@ -2961,6 +2994,11 @@
     const root = document.createElement("div");
     root.className = "result-screen";
     root.dataset.grade = grade;
+    root.dataset.resultStatus = isPracticeBoard
+      ? "practice"
+      : isNewPersonalBest
+        ? isFirstPersonalRecord ? "first-record" : "new-best"
+        : hasPreviousBest ? "personal-best" : "result";
 
     const halo = document.createElement("div");
     halo.className = "result-halo";
@@ -2974,7 +3012,13 @@
     summaryTop.className = "result-summary-top";
     const eyebrow = document.createElement("div");
     eyebrow.className = "result-eyebrow";
-    eyebrow.textContent = isPracticeBoard ? "跳关练习" : rank === 1 ? "本局最佳表现" : "本局表现";
+    eyebrow.textContent = isPracticeBoard
+      ? "跳关练习"
+      : isFirstPersonalRecord
+        ? "首个个人纪录"
+        : isNewPersonalBest
+          ? "新个人纪录"
+          : "本局表现";
     const gradeBadge = document.createElement("div");
     gradeBadge.className = "result-grade";
     const gradeLabel = document.createElement("span");
@@ -3001,14 +3045,14 @@
     runRankLabel.textContent = isPracticeBoard
       ? "练习局"
       : isGlobalBoard
-      ? boardData.isCurrentBest === false
-        ? "历史最佳"
+      ? !isNewPersonalBest && hasPreviousBest
+        ? "个人最佳排名"
         : "全球排名"
-      : rank === 1
-        ? totalCount <= 1
-          ? "首局记录"
-          : "本地最佳"
-        : "本地排名";
+      : !isNewPersonalBest && hasPreviousBest
+        ? "个人最佳排名"
+        : rank === 1
+          ? totalCount <= 1 ? "首局记录" : "本地最佳"
+          : "本地排名";
     runRank.append(runRankValue, runRankLabel);
     hero.append(levelLine, runRank);
 
@@ -3019,6 +3063,16 @@
     if (isPracticeBoard) {
       chaseMain.textContent = "本局不计入排行榜";
       chaseSub.textContent = "从 Level 1 正式开始才会记录成绩";
+    } else if (!isNewPersonalBest && hasPreviousBest) {
+      chase.classList.add("is-personal-best");
+      chaseMain.textContent = "本局未刷新纪录";
+      chaseSub.textContent = `个人最佳 · Lv ${rankingLevel} · ${rankingHitCount} 个 · ${formatTime(rankingElapsed)}`;
+    } else if (isNewPersonalBest) {
+      chase.classList.add("is-new-best");
+      chaseMain.textContent = isFirstPersonalRecord ? "个人纪录已建立" : "刷新个人最佳！";
+      chaseSub.textContent = isGlobalBoard
+        ? `新纪录 · 当前全球第 ${rank} 名`
+        : `新纪录 · 当前本地第 ${rank} 名`;
     } else if (aheadRecord) {
       if (aheadRecord.level > rankingLevel) {
         const timeGap = Math.max(1000, aheadRecord.elapsed - rankingElapsed + 1000);
@@ -3068,6 +3122,10 @@
     const boardSub = document.createElement("span");
     if (isPracticeBoard) {
       boardSub.textContent = "关卡选择只用于练习，不上传成绩";
+    } else if (!isNewPersonalBest && hasPreviousBest) {
+      boardSub.textContent = isGlobalBoard
+        ? `个人最佳仍为全球第 ${rank} 名`
+        : `个人最佳仍为本地第 ${rank} 名`;
     } else if (totalCount <= 1) {
       boardSub.textContent = isGlobalBoard ? "你是全球榜首位玩家" : "首局记录已保存";
     } else if (rank === 1) {
@@ -3089,6 +3147,7 @@
       const card = document.createElement("article");
       card.className = `result-rank-card tone-${item.tone}`;
       if (item.tone === "me") card.classList.add("is-me");
+      if (item.isCurrent && hasPreviousBest && !isNewPersonalBest) card.classList.add("is-personal-best");
       const place = document.createElement("b");
       place.textContent = String(item.place);
       const avatar = document.createElement("span");
@@ -3114,10 +3173,19 @@
       const score = document.createElement("strong");
       score.textContent = `第${item.level}关 · ${item.score}`;
       card.append(place, avatar, name, score);
-      if (item.isCurrent && item.praise) {
+      const praiseText = item.isCurrent
+        ? !isNewPersonalBest && hasPreviousBest
+          ? "个人最佳"
+          : isFirstPersonalRecord
+            ? "首个个人纪录"
+            : isNewPersonalBest
+              ? "本局刷新个人最佳"
+              : item.praise
+        : "";
+      if (praiseText) {
         const praise = document.createElement("small");
         praise.className = "result-rank-praise";
-        praise.textContent = item.praise;
+        praise.textContent = praiseText;
         card.append(praise);
       }
       rankList.append(card);
@@ -3163,7 +3231,11 @@
     const retryLabel = document.createElement("strong");
     retryLabel.textContent = "再来一局";
     const retryGoal = document.createElement("span");
-    retryGoal.textContent = isPracticeBoard ? "从 Level 1 正式开始" : `冲击 Level ${level + 1}`;
+    retryGoal.textContent = isPracticeBoard
+      ? "从 Level 1 正式开始"
+      : !isNewPersonalBest && hasPreviousBest
+        ? `冲击个人最佳 Lv ${rankingLevel}`
+        : `冲击 Level ${level + 1}`;
     retryButton.append(retryLabel, retryGoal);
     retryButton.addEventListener("click", () => playStartTransition({ quick: true }));
     actions.append(homeButton, retryButton);
@@ -3204,21 +3276,28 @@
     stopGlobalLeaderboardWatch();
     setLeaderboardStatus("正在上传本局成绩", "syncing");
     try {
+      const runRecord = localBoard.runRecord ?? localBoard.current;
       const globalBoard = await leaderboard.submitAndLoad({
         username: loadPlayerName(),
-        level: localBoard.current.level,
-        hitCount: localBoard.current.hitCount,
-        bestCombo: localBoard.current.bestCombo,
-        elapsed: localBoard.current.elapsed,
-        total: localBoard.current.total,
+        level: runRecord.level,
+        hitCount: runRecord.hitCount,
+        bestCombo: runRecord.bestCombo,
+        elapsed: runRecord.elapsed,
+        total: runRecord.total,
       });
       if (!canRenderGlobalLeaderboard(syncToken)) return;
       setLeaderboardStatus("成绩已同步到全球榜", "online");
       renderGlobalLeaderboard(stats, globalBoard, syncToken);
       if (leaderboard.watchLeaderboard) {
-        const isCurrentBest = globalBoard.isCurrentBest;
+        const resultMeta = {
+          submittedRecord: globalBoard.submittedRecord,
+          previousBest: globalBoard.previousBest,
+          isCurrentBest: globalBoard.isCurrentBest === true,
+          isNewPersonalBest: globalBoard.isNewPersonalBest === true,
+          isFirstPersonalRecord: globalBoard.isFirstPersonalRecord === true,
+        };
         const stop = await leaderboard.watchLeaderboard(
-          (liveBoard) => renderGlobalLeaderboard(stats, { ...liveBoard, isCurrentBest }, syncToken),
+          (liveBoard) => renderGlobalLeaderboard(stats, { ...liveBoard, ...resultMeta }, syncToken),
           (error) => console.warn("Realtime leaderboard listener paused.", error),
         );
         if (canRenderGlobalLeaderboard(syncToken)) leaderboardWatchStop = stop;

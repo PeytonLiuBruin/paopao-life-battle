@@ -60,6 +60,15 @@
     );
   }
 
+  function sameCompetitiveResult(left, right) {
+    return Boolean(
+      left &&
+      right &&
+      Number(left.rankScore || 0) === Number(right.rankScore || 0) &&
+      Number(left.elapsed || 0) === Number(right.elapsed || 0)
+    );
+  }
+
   function isVisibleCompetitiveRecord(record) {
     if (!record) return false;
     const username = normalizeName(record.username);
@@ -123,10 +132,24 @@
     activePlayerName = incoming.username;
     if (!isVisibleCompetitiveRecord(incoming)) throw new Error("成绩不符合正式挑战规则");
     const boardSnapshot = await databaseSdk.get(databaseSdk.ref(db, "leaderboard"));
-    const existingBest = normalizedLeaderboardRecords(boardSnapshot.val())
-      .find((record) => playerNameKey(record.username) === playerNameKey(incoming.username));
-    if (existingBest && existingBest.uid !== uid && compareRecords(incoming, existingBest) >= 0) {
-      return { record: existingBest, isCurrentBest: false };
+    const incomingNameKey = playerNameKey(incoming.username);
+    const previousBest = normalizedLeaderboardRecords(boardSnapshot.val())
+      .filter((record) => (
+        playerNameKey(record.username) === incomingNameKey ||
+        record.uid === uid ||
+        record.aliasUids?.includes(uid)
+      ))
+      .sort(compareRecords)[0] ?? null;
+    const isNewPersonalBest = !previousBest || compareRecords(incoming, previousBest) < 0;
+    if (!isNewPersonalBest) {
+      return {
+        record: previousBest,
+        submittedRecord: incoming,
+        previousBest,
+        isCurrentBest: false,
+        isNewPersonalBest: false,
+        isFirstPersonalRecord: false,
+      };
     }
     const scoreRef = databaseSdk.ref(db, `leaderboard/${uid}`);
     const transaction = await databaseSdk.runTransaction(
@@ -154,9 +177,14 @@
     );
     if (!transaction.committed || !transaction.snapshot.exists()) throw new Error("成绩写入失败");
     const record = normalizeScore(transaction.snapshot.val(), uid, incoming.username);
+    const acceptedAsNewBest = sameCompetitiveResult(record, incoming);
     return {
       record,
-      isCurrentBest: record.rankScore === incoming.rankScore && record.elapsed === incoming.elapsed,
+      submittedRecord: incoming,
+      previousBest,
+      isCurrentBest: acceptedAsNewBest,
+      isNewPersonalBest: acceptedAsNewBest,
+      isFirstPersonalRecord: acceptedAsNewBest && !previousBest,
     };
   }
 
@@ -284,7 +312,16 @@
   async function submitAndLoad(input) {
     const submission = await submitBestScore(input);
     const board = await loadLeaderboard();
-    return { ...board, isCurrentBest: submission.isCurrentBest };
+    const resultIsVisibleBest = sameCompetitiveResult(board.current, submission.submittedRecord);
+    const isNewPersonalBest = submission.isNewPersonalBest === true && resultIsVisibleBest;
+    return {
+      ...board,
+      submittedRecord: submission.submittedRecord,
+      previousBest: submission.previousBest,
+      isCurrentBest: isNewPersonalBest,
+      isNewPersonalBest,
+      isFirstPersonalRecord: isNewPersonalBest && submission.isFirstPersonalRecord === true,
+    };
   }
 
   const ready = contextPromise.then(async ({ auth, databaseSdk, db }) => {
