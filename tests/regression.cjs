@@ -479,7 +479,7 @@ test("released drag shape rebounds independently of the bubble's position and ve
     meshPullX: 1, meshPullY: 0, skinPhase: 0, wobble: 0, wobbleSpeed: 1,
   };
   const stretched = normal({ ...fixture, dragStretch: 0.9 });
-  const rest = normal({ ...fixture, uid: 12, dragStretch: 0 });
+  const rest = normal({ ...fixture, dragStretch: 0 });
   const material = c.window.PaopaoBubbleMaterial;
   const radiusAtPull = bubble => {
     const options = c.meshOptionsForBubble(bubble);

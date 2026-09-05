@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.6.0";
+  const buildVersion = "1.6.1";
   let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
@@ -8766,7 +8766,7 @@
     const distance = Math.hypot(dx, dy);
     const fallbackAngle = Number.isFinite(bubble.skinPhase) ? bubble.skinPhase : -Math.PI * 0.5;
     state.membraneSnaps.push({
-      mesh: usesGlassMesh(bubble), surfaceAge: bubble.age, phase: bubble.skinPhase || 0,
+      mesh: usesGlassMesh(bubble), seed: bubble.uid, wind: bubble.meshWind || 0, surfaceAge: bubble.age, phase: bubble.skinPhase || 0,
       x: bubble.x,
       y: bubble.y,
       radius: Math.max(8, bubble.radius || bubble.baseRadius || 24),
@@ -9477,6 +9477,16 @@
     for (const bubble of bodies) {
       const vx = (bubble.x - (bubble.meshLastX ?? bubble.x)) / Math.max(dt, 0.001);
       const vy = (bubble.y - (bubble.meshLastY ?? bubble.y)) / Math.max(dt, 0.001);
+      // Spatially coherent breeze; each membrane responds with its own inertia.
+      const phase = bubble.skinPhase || 0;
+      const windTime = state.elapsed / 1000;
+      const windTarget = Math.sin(windTime * 1.13 + bubble.x * 0.007 + phase * 0.3) * 0.65
+        + Math.sin(windTime * 2.03 - bubble.y * 0.005 + phase) * 0.25;
+      const acceleration = clamp((vx - (bubble.meshFlowX ?? vx)) / 260, -0.4, 0.4);
+      const gust = window.PaopaoBubbleMaterial.stepSpring((bubble.meshWind || 0) - windTarget - acceleration,
+        bubble.meshWindVelocity || 0, dt);
+      bubble.meshWind = windTarget + acceleration + gust.position;
+      bubble.meshWindVelocity = gust.velocity;
       const blend = 1 - Math.exp(-dt * 7);
       bubble.meshFlowX = (bubble.meshFlowX ?? bubble.vx ?? 0) + (vx - (bubble.meshFlowX ?? bubble.vx ?? 0)) * blend;
       bubble.meshFlowY = (bubble.meshFlowY ?? bubble.vy ?? 0) + (vy - (bubble.meshFlowY ?? bubble.vy ?? 0)) * blend;
@@ -10424,9 +10434,9 @@
 
   function meshOptionsForBubble(bubble, alpha = 1) {
     return {
-      age: bubble.age, phase: bubble.skinPhase, alpha,
-      speed: Math.hypot(bubble.meshFlowX || bubble.vx || 0, bubble.meshFlowY || bubble.vy || 0),
-      flowDirection: [bubble.meshFlowX || bubble.vx || 0, -(bubble.meshFlowY || bubble.vy || 0), 25],
+      age: bubble.age, phase: bubble.skinPhase, seed: bubble.uid, wind: bubble.meshWind || 0, alpha,
+      speed: Math.hypot(bubble.meshFlowX ?? bubble.vx ?? 0, bubble.meshFlowY ?? bubble.vy ?? 0),
+      flowDirection: [bubble.meshFlowX ?? bubble.vx ?? 0, -(bubble.meshFlowY ?? bubble.vy ?? 0), 25],
       pressure: bubble.isDrag ? -(bubble.dragStretch || 0) * 0.12 : (bubble.wallSquash || 0) * 0.72,
       contactDirection: bubble.isDrag
         ? [bubble.meshPullX ?? bubble.dragHintX ?? 1, -(bubble.meshPullY ?? bubble.dragHintY ?? 0), 0.2]
@@ -10455,7 +10465,7 @@
       const t = clamp(snap.age / snap.life, 0, 1);
       entries.push({ tone: { color: snap.color, deep: snap.deep, light: snap.light },
         x: snap.x, y: snap.y, r: snap.radius * (1 + t * 0.09),
-        options: { age: snap.surfaceAge + snap.age, phase: snap.phase, alpha: (1 - t) * 0.9,
+        options: { age: snap.surfaceAge + snap.age, phase: snap.phase, seed: snap.seed, wind: snap.wind, alpha: (1 - t) * 0.9,
           pressure: 0.2 * Math.sin(Math.PI * t), burst: smoothstep(0.08, 0.92, t),
           contactDirection: [Math.cos(snap.angle) * 0.72, -Math.sin(snap.angle) * 0.72, 0.7],
           reducedMotion: reducedMotion.matches,

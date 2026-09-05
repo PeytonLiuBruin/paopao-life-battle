@@ -38,18 +38,38 @@
   const mesh = createMesh();
   const softwareMesh = createMesh(20, 14);
 
+  // Deterministic individuality: no per-frame randomness or shared animation cycle.
+  function personality(seed = 0) {
+    const noise = (n) => { const value = Math.sin(seed * 127.1 + n * 311.7) * 43758.5453; return value - Math.floor(value); };
+    return {
+      softness: 0.65 + noise(1) * 0.7,
+      rate: 0.65 + noise(2) * 0.7,
+      biasA: (noise(3) - 0.5) * 0.05,
+      biasB: (noise(4) - 0.5) * 0.035,
+      axisA: normalize([noise(5) - 0.5, noise(6) - 0.5, noise(7) - 0.5]),
+      axisB: normalize([noise(8) - 0.5, noise(9) - 0.5, noise(10) - 0.5]),
+      waveAxis: normalize([noise(11) - 0.5, noise(12) - 0.5, noise(13) - 0.5]),
+    };
+  }
+
   function parameters(options = {}) {
-    const time = options.age || 0;
-    const phase = options.phase || 0;
+    const time = options.age || 0, phase = options.phase || 0;
+    const individual = personality(options.seed ?? phase);
     const motion = options.reducedMotion ? 0 : 1;
     const speed = clamp((options.speed || 0) / 180, 0, 1);
+    const wind = clamp(options.wind || 0, -1, 1);
+    const t = time * individual.rate;
     return {
-      a: motion * (0.032 * Math.sin(time * 3.1 + phase) + speed * 0.016),
-      b: motion * 0.026 * Math.sin(time * 4.3 + phase * 1.71),
-      c: motion * 0.011 * Math.sin(time * 6.2 + phase * 0.73),
+      a: motion * (individual.biasA + individual.softness * (0.023 * Math.sin(t * 2.1 + phase) + speed * 0.014 + wind * 0.026)),
+      b: motion * (individual.biasB + individual.softness * 0.023 * Math.sin(t * 3.07 + phase * 1.71)),
+      c: motion * individual.softness * 0.012 * Math.sin(t * 4.31 + phase * 0.73),
+      axisA: individual.axisA, axisB: individual.axisB,
+      waveAxis: individual.waveAxis,
+      waveAmplitude: motion * individual.softness * (0.009 + Math.abs(wind) * 0.009),
+      wavePhase: t * 3.4 + phase,
       pressure: motion * clamp(options.pressure || 0, -0.15, 0.3),
       direction: normalize(options.contactDirection || [-0.6, 0.4, 0.7]),
-      flow: normalize(options.flowDirection || axisA),
+      flow: normalize(options.flowDirection || individual.axisA),
     };
   }
 
@@ -57,14 +77,18 @@
   // supports numeric geometry validation and a real triangle-mesh CPU fallback.
   function sampleSurface(direction, options = {}) {
     const n = normalize(direction), p = options.parameters || parameters(options);
-    const a = dot(n, p.flow), b = dot(n, axisB), c = dot(n, axisA);
+    const localA = p.axisA || axisA, localB = p.axisB || axisB;
+    const waveAxis = p.waveAxis || axisA, amplitude = p.waveAmplitude || 0, phase = p.wavePhase || 0;
+    const waveAngle = 4.2 * dot(n, waveAxis) - phase;
+    const wave = amplitude * (Math.sin(waveAngle) + Math.sin(phase) * Math.sin(4.2) / 4.2);
+    const a = dot(n, p.flow), b = dot(n, localB), c = dot(n, localA);
     const lobe = Math.exp(8 * (dot(n, p.direction) - 1));
     const f = 1 + p.a * (3 * a * a - 1) / 2 + p.b * (5 * b * b * b - 3 * b) / 2
-      + p.c * (35 * c ** 4 - 30 * c * c + 3) / 8 - p.pressure * (lobe - pressureMean);
+      + p.c * (35 * c ** 4 - 30 * c * c + 3) / 8 - p.pressure * (lobe - pressureMean) + wave;
     const gradient = n.map((_, i) => p.a * 3 * a * p.flow[i]
-      + p.b * (15 * b * b - 3) / 2 * axisB[i]
-      + p.c * (140 * c ** 3 - 60 * c) / 8 * axisA[i]
-      - p.pressure * 8 * lobe * p.direction[i]);
+      + p.b * (15 * b * b - 3) / 2 * localB[i]
+      + p.c * (140 * c ** 3 - 60 * c) / 8 * localA[i]
+      - p.pressure * 8 * lobe * p.direction[i] + amplitude * 4.2 * Math.cos(waveAngle) * waveAxis[i]);
     const radialGradient = dot(n, gradient);
     const normal = normalize(n.map((v, i) => f * v - gradient[i] + v * radialGradient));
     return { position: n.map((v) => v * f), normal };
@@ -80,23 +104,29 @@
     uniform float uPressure;
     uniform vec3 uContact;
     uniform vec3 uFlow;
+    uniform vec3 uAxisA;
+    uniform vec3 uAxisB;
+    uniform vec3 uWaveAxis;
+    uniform vec2 uWave;
     varying vec3 vNormal;
     varying vec3 vPosition;
     varying vec3 vDirection;
     void main() {
       vec3 n = normalize(aDirection);
-      vec3 a0 = normalize(vec3(0.8, 0.5, 0.32));
-      vec3 a1 = normalize(vec3(-0.4, 0.84, 0.38));
+      vec3 a0 = uAxisA;
+      vec3 a1 = uAxisB;
       float s0 = dot(n, uFlow), s1 = dot(n, a1), s2 = dot(n, a0);
       float lobe = exp(8.0 * (dot(n, uContact) - 1.0));
+      float waveAngle = 4.2 * dot(n, uWaveAxis) - uWave.y;
+      float wave = uWave.x * (sin(waveAngle) + sin(uWave.y) * sin(4.2) / 4.2);
       float f = 1.0 + uModes.x * (3.0 * s0 * s0 - 1.0) * 0.5
         + uModes.y * (5.0 * s1 * s1 * s1 - 3.0 * s1) * 0.5
         + uModes.z * (35.0 * (s2 * s2 * s2 * s2) - 30.0 * s2 * s2 + 3.0) * 0.125
-        - uPressure * (lobe - 0.062499993);
+        - uPressure * (lobe - 0.062499993) + wave;
       vec3 g = 3.0 * uModes.x * s0 * uFlow
         + uModes.y * (15.0 * s1 * s1 - 3.0) * 0.5 * a1
         + uModes.z * (140.0 * s2 * s2 * s2 - 60.0 * s2) * 0.125 * a0
-        - uPressure * 8.0 * lobe * uContact;
+        - uPressure * 8.0 * lobe * uContact + uWave.x * 4.2 * cos(waveAngle) * uWaveAxis;
       vec3 p = n * f;
       vNormal = normalize(f * n - (g - n * dot(n, g)));
       vPosition = p;
@@ -227,7 +257,7 @@
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
       this.attribute = gl.getAttribLocation(program, "aDirection");
       this.uniforms = {};
-      for (const name of ["Resolution", "Center", "Radius", "Modes", "Pressure", "Contact", "Flow", "Background", "Tint", "Deep", "Alpha", "Preview", "Burst", "Ready"]) {
+      for (const name of ["Resolution", "Center", "Radius", "Modes", "Pressure", "Contact", "Flow", "Background", "Tint", "Deep", "Alpha", "Preview", "Burst", "Ready", "AxisA", "AxisB", "WaveAxis", "Wave"]) {
         this.uniforms[name] = gl.getUniformLocation(program, `u${name}`);
       }
       this.background = gl.createTexture();
@@ -288,6 +318,10 @@
         gl.uniform1f(u.Pressure, p.pressure);
         gl.uniform3fv(u.Contact, p.direction);
         gl.uniform3fv(u.Flow, p.flow);
+        gl.uniform3fv(u.AxisA, p.axisA);
+        gl.uniform3fv(u.AxisB, p.axisB);
+        gl.uniform3fv(u.WaveAxis, p.waveAxis);
+        gl.uniform2f(u.Wave, p.waveAmplitude, p.wavePhase);
         gl.uniform3fv(u.Tint, rgb(entry.tone.color));
         gl.uniform3fv(u.Deep, rgb(entry.tone.deep));
         gl.uniform1f(u.Alpha, clamp(o.alpha ?? 1, 0, 1));
@@ -370,7 +404,7 @@
   }
 
   const api = {
-    draw, renderScene, stepSpring, createMesh, sampleSurface, parameters,
+    draw, renderScene, stepSpring, createMesh, sampleSurface, parameters, personality,
     shaders: { vertex: vertexShader, fragment: fragmentShader },
     diagnostics: () => ({ backend, vertices: mesh.positions.length / 3, triangles: mesh.indices.length / 3, lastError }),
   };

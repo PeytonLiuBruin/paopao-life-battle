@@ -130,6 +130,46 @@ test('GPU vertex shader displaces actual 3D vertices and supplies surface normal
   assert.match(vertex,/gl_Position\s*=\s*vec4\([^;]*-p\.z/s);
 });
 
+test('same-color bubbles retain distinct deterministic shapes and rhythms', () => {
+  const options={age:2.4,phase:0,speed:80,wind:0.4};
+  const profiles=Array.from({length:16},(_,seed)=>material.personality(seed));
+  assert.equal(new Set(profiles.map(p=>p.rate)).size,16);
+  assert.equal(new Set(profiles.map(p=>p.softness)).size,16);
+  const shapes=profiles.map((_,seed)=>Array.from({length:12},(_,i)=>position(directionAt(i,12),material.parameters({...options,seed}))));
+  assert.equal(new Set(shapes.map(JSON.stringify)).size,16);
+  assert.deepEqual(material.parameters({...options,seed:7}),material.parameters({...options,seed:7}));
+});
+
+test('traveling ripples have accurate normals across different bubble personalities', () => {
+  const epsilon=1e-5;
+  for(let seed=0;seed<8;seed++){
+    const p=material.parameters({seed,age:3.2,wind:.8,pressure:.18});
+    for(let i=0;i<64;i++){
+      const n=directionAt(i,64), tangent=unit(cross(Math.abs(n[1])<.9?[0,1,0]:[1,0,0],n)),bitangent=cross(n,tangent);
+      const derivative=t=>sub(position(add(n,mul(t,epsilon)),p),position(sub(n,mul(t,epsilon)),p));
+      const numeric=unit(cross(derivative(tangent),derivative(bitangent)));
+      assert(dot(numeric,material.sampleSurface(n,{parameters:p}).normal)>1-1e-9);
+    }
+  }
+});
+
+test('wind changes the surface and individualized deformation stays subtle', () => {
+  let difference=0;
+  for(let seed=0;seed<12;seed++){
+    const calm=material.parameters({seed,age:4,wind:0});
+    const blown=material.parameters({seed,age:4,wind:1});
+    let volume=0;
+    for(let i=0;i<1000;i++){
+      const n=directionAt(i,1000),radius=Math.hypot(...position(n,blown));
+      assert(radius>.85&&radius<1.15);
+      volume+=radius**3;
+      difference+=Math.hypot(...sub(position(n,calm),position(n,blown)));
+    }
+    assert(Math.abs(volume/1000-1)<.02);
+  }
+  assert(difference>10);
+});
+
 let failed=0;
 for(const [name,fn] of tests){try{fn();console.log(`PASS ${name}`);}catch(error){failed++;console.error(`FAIL ${name}\n${error.stack}`);}}
 console.log(`${tests.length-failed}/${tests.length} geometry checks passed`);
