@@ -25,12 +25,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify gameplay regressions
+      - name: Verify gameplay and 3D membrane
         run: |
           node --check game.js
           node --check bubble-material.js
           node --check background-engine.js
           node tests/regression.cjs
+          node tests/mesh.cjs
+          node tests/webgl.cjs
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

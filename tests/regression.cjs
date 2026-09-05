@@ -360,6 +360,144 @@ test("floating feedback accepts rgba shadows and multiplies their opacity", () =
   assert.equal(c.colorWithAlpha("#339fdf", 0.5), "rgba(51, 159, 223, 0.5)");
 });
 
+// Mesh integration: exercise production batching, contact and drag functions.
+function meshIntegrationContext(names, extra = {}) {
+  const palette = [
+    { color: "#339fdf", deep: "#2474bd", light: "#ccf3ff" },
+    { color: "#ef86c1", deep: "#bc4c93", light: "#ffe1f2" },
+  ];
+  return sandbox(names, {
+    palette, whiteTone: { color: "#ffffff", deep: "#dddddd" },
+    clearTone: { color: "#bbffff", deep: "#77bbbb" },
+    openTone: { color: "#ccaaff", deep: "#9977cc" },
+    reducedMotion: { matches: false }, canPopBubble: () => true,
+    ctx: {}, window: { PaopaoBubbleMaterial: require(path.join(checkout, "bubble-material.js")) },
+    ...extra,
+  });
+}
+
+test("mesh batch preserves reveal, transition, drag fade and rupture alpha in one scene", () => {
+  const calls = [];
+  const c = meshIntegrationContext(["usesGlassMesh", "meshOptionsForBubble", "renderGlassMeshes"], {
+    window: { PaopaoBubbleMaterial: { renderScene: (context, entries, options) => { calls.push({ context, entries, options }); return true; } } },
+  });
+  c.state.bubbles = [
+    normal({ x: 73, spawnRevealSeconds: 2, age: 1, stageTransitionOut: true, transitionAlpha: 0.4, wallSquash: -0.1 }),
+    normal({ uid: 2, isDrag: true, dragSourceColorIndex: 1, dragFade: 0.5, dragStretch: 0.8 }),
+    normal({ uid: 3, isWhite: true }),
+    normal({ uid: 4, age: -1 }),
+    normal({ uid: 5, isBomb: true }),
+    normal({ uid: 6, isBleach: true }),
+    normal({ uid: 7, stageTransitionOut: true, transitionAlpha: 0 }),
+  ];
+  c.state.membraneSnaps = [
+    { mesh: true, x: 20, y: 30, radius: 20, color: "#339fdf", deep: "#2474bd", light: "#ccf3ff", surfaceAge: 1, phase: 0, age: 0.08, life: 0.16, angle: 0 },
+    { mesh: false, age: 0.08, life: 0.16 },
+  ];
+  assert.equal(c.renderGlassMeshes(), true);
+  assert.equal(calls.length, 1);
+  const { entries, options, context } = calls[0];
+  assert.equal(context, c.ctx);
+  assert.equal(options.width, 400); assert.equal(options.height, 700);
+  assert.equal(entries.length, 4);
+  assert.equal(entries[0].x, 73);
+  assert.ok(Math.abs(entries[0].r - 13.4) < 1e-12);
+  assert.ok(Math.abs(entries[0].options.alpha - 0.2) < 1e-12);
+  assert.ok(entries[0].options.pressure < 0, "signed rebound survives batching");
+  assert.equal(entries[1].tone, c.palette[1]);
+  assert.ok(Math.abs(entries[1].options.alpha - 0.55) < 1e-12);
+  assert.ok(entries[1].options.pressure < 0, "pull elongation reaches the mesh");
+  assert.equal(entries[2].tone, c.whiteTone);
+  assert.ok(Math.abs(entries[3].options.alpha - 0.45) < 1e-12);
+  assert.ok(Math.abs(entries[3].options.burst - 0.5) < 1e-12);
+});
+
+test("a completed mesh batch suppresses duplicate bodies while retaining unbatched special fallback", () => {
+  let individualDraws = 0;
+  const c = meshIntegrationContext(["usesGlassMesh", "meshOptionsForBubble", "drawBubbleMeshBody"], {
+    glassPassActive: true,
+    window: { PaopaoBubbleMaterial: { draw: () => { individualDraws += 1; } } },
+  });
+  for (const bubble of [normal(), normal({ isDrag: true })]) {
+    assert.equal(c.drawBubbleMeshBody(bubble, c.palette[0], 90, 100, 20, 1), true);
+  }
+  for (const extra of [{ isBomb: true }, { isBleach: true }]) {
+    assert.equal(c.drawBubbleMeshBody(normal(extra), c.palette[0], 90, 100, 20, 1), false,
+      "pending special texture must reach the existing fallback body");
+  }
+  assert.equal(individualDraws, 0);
+});
+
+test("local contact dents both facing sides without altering game trajectories", () => {
+  const c = meshIntegrationContext(["usesGlassMesh", "updateJellyMotion", "meshOptionsForBubble"]);
+  const left = normal({ x: 100, y: 100, uid: 1, meshLastX: 95, meshLastY: 103, vx: 20, vy: 0 });
+  const right = normal({ x: 138, y: 100, uid: 2 });
+  const pending = normal({ x: 70, y: 100, uid: 3, age: -1 });
+  c.state.bubbles = [left, right, pending];
+  const trajectories = c.state.bubbles.map(b => [b.x, b.y, b.vx, b.vy]);
+  c.updateJellyMotion(1 / 60);
+  assert.ok(left.wallSquash > 0 && right.wallSquash > 0);
+  assert.equal(left.meshContactUid, right.uid);
+  assert.equal(right.meshContactUid, left.uid);
+  assert.ok(c.meshOptionsForBubble(left).contactDirection[0] > 0);
+  assert.ok(c.meshOptionsForBubble(right).contactDirection[0] < 0);
+  assert.ok(left.meshFlowX > left.vx);
+  assert.ok(left.meshFlowY < 0);
+  assert.equal(pending.wallSquash, undefined);
+  assert.deepEqual(c.state.bubbles.map(b => [b.x, b.y, b.vx, b.vy]), trajectories);
+});
+
+test("persistent neighbor contact allows spring recovery instead of restarting each frame", () => {
+  const c = meshIntegrationContext(["usesGlassMesh", "updateJellyMotion", "decayWallSquash"]);
+  const left = normal({ x: 100, y: 100, uid: 1 }), right = normal({ x: 138, y: 100, uid: 2 });
+  c.state.bubbles = [left, right];
+  c.updateJellyMotion(1 / 60);
+  c.decayWallSquash(left, 1 / 60);
+  const recovering = { position: left.wallSquash, velocity: left.wallSquashVelocity };
+  c.updateJellyMotion(1 / 60);
+  assert.equal(left.wallSquash, recovering.position);
+  assert.equal(left.wallSquashVelocity, recovering.velocity);
+  right.x = 250;
+  c.updateJellyMotion(1 / 60);
+  assert.equal(left.meshContactUid, null);
+  right.x = 138;
+  c.updateJellyMotion(1 / 60);
+  assert.ok(left.wallSquash > recovering.position, "new contact re-excites the membrane");
+});
+
+test("released drag shape rebounds independently of the bubble's position and velocity", () => {
+  const c = meshIntegrationContext(["updateDragBubble", "meshOptionsForBubble"], {
+    dragBubbleFadeSeconds: 0.8,
+    dragBubbleLifeForLevel: () => 20,
+    failDragBubble: () => { throw new Error("test drag expired unexpectedly"); },
+    completeDragBubble: () => { throw new Error("released drag completed unexpectedly"); },
+  });
+  const fixture = {
+    isDrag: true, uid: 11, x: 150, y: 200, vx: 12, vy: -2,
+    dragAnchorX: 150, dragAnchorY: 200, dragLifeSeconds: 20,
+    dragActive: false, dragStretchVelocity: 0,
+    meshPullX: 1, meshPullY: 0, skinPhase: 0, wobble: 0, wobbleSpeed: 1,
+  };
+  const stretched = normal({ ...fixture, dragStretch: 0.9 });
+  const rest = normal({ ...fixture, uid: 12, dragStretch: 0 });
+  const material = c.window.PaopaoBubbleMaterial;
+  const radiusAtPull = bubble => {
+    const options = c.meshOptionsForBubble(bubble);
+    return Math.hypot(...material.sampleSurface(options.contactDirection, options).position);
+  };
+  assert.ok(radiusAtPull(stretched) - radiusAtPull(rest) > 0.08);
+  let minimumStretch = stretched.dragStretch;
+  for (let frame = 0; frame < 60; frame += 1) {
+    stretched.age += 1 / 60; rest.age += 1 / 60;
+    assert.equal(c.updateDragBubble(stretched, 0, 1 / 60), false);
+    assert.equal(c.updateDragBubble(rest, 1, 1 / 60), false);
+    minimumStretch = Math.min(minimumStretch, stretched.dragStretch);
+    for (const key of ["x", "y", "vx", "vy"]) assert.equal(stretched[key], rest[key], `shape changed ${key}`);
+  }
+  assert.ok(minimumStretch < -0.08, "release preserves signed elastic overshoot");
+  assert.ok(Math.abs(radiusAtPull(stretched) - radiusAtPull(rest)) < 0.001);
+});
+
 const failed = results.filter(result => !result.ok);
 console.log(`\n${results.length - failed.length}/${results.length} behavioral checks passed.`);
 process.exitCode = failed.length ? 1 : 0;

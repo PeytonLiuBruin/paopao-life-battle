@@ -58,17 +58,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   position: relative;
   touch-action: manipulation;
 }
-.sample-canvas { display: block; width: 100%; height: auto; transform-origin: center; }
+.sample-canvas { display: block; width: 100%; height: auto; touch-action: none; }
 .bubble-sample span { position: absolute; bottom: 17px; left: 0; right: 0; font-size: 14px; font-weight: 700; }
 .sample-tip { position: absolute; bottom: 7px; font-size: 12px; color: #e3f1fb; }
-.bubble-sample.is-squishing .sample-canvas { animation: sample-squish 560ms both; }
-@keyframes sample-squish {
-  0% { transform: scale(1); }
-  18% { transform: scale(1.17, .82); }
-  43% { transform: scale(.91, 1.1); }
-  67% { transform: scale(1.04, .96); }
-  100% { transform: scale(1); }
-}
 
 .start-home .start-copy { font-size: 15px; line-height: 1.65; color: #edf6ff; text-align: center; }
 .start-status { gap: 12px; }
@@ -177,7 +169,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
-  .bubble-sample.is-squishing .sample-canvas { animation: none; }
 }
 
 @media (max-height: 600px) and (orientation: portrait) {

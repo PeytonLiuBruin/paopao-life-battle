@@ -4,7 +4,8 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.5.0";
+  const buildVersion = "1.6.0";
+  let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
   const curtain = document.getElementById("curtain");
@@ -4754,7 +4755,15 @@
     bubble.y = clamp(bubble.y, margin, state.height - margin);
     const pullDistance = dragging ? Math.hypot(bubble.dragPointerX - bubble.x, bubble.dragPointerY - bubble.y) : 0;
     const desiredStretch = dragging ? clamp(pullDistance / Math.max(1, bubble.baseRadius * 1.35) + speed / 980, 0.08, 1.25) : 0;
-    bubble.dragStretch += (desiredStretch - bubble.dragStretch) * Math.min(1, dt * (dragging ? 9 : 5));
+    const stretchSpring = window.PaopaoBubbleMaterial.stepSpring(
+      bubble.dragStretch - desiredStretch, bubble.dragStretchVelocity || 0, dt,
+    );
+    bubble.dragStretch = desiredStretch + stretchSpring.position;
+    bubble.dragStretchVelocity = stretchSpring.velocity;
+    if (dragging && pullDistance > 1) {
+      bubble.meshPullX = (bubble.dragPointerX - bubble.x) / pullDistance;
+      bubble.meshPullY = (bubble.dragPointerY - bubble.y) / pullDistance;
+    }
     bubble.wobble += bubble.wobbleSpeed * dt * 0.42;
 
     if (
@@ -8757,6 +8766,7 @@
     const distance = Math.hypot(dx, dy);
     const fallbackAngle = Number.isFinite(bubble.skinPhase) ? bubble.skinPhase : -Math.PI * 0.5;
     state.membraneSnaps.push({
+      mesh: usesGlassMesh(bubble), surfaceAge: bubble.age, phase: bubble.skinPhase || 0,
       x: bubble.x,
       y: bubble.y,
       radius: Math.max(8, bubble.radius || bubble.baseRadius || 24),
@@ -9462,6 +9472,35 @@
     }
   }
 
+  function updateJellyMotion(dt) {
+    const bodies = state.bubbles.filter((bubble) => usesGlassMesh(bubble) && bubble.age >= 0 && !bubble.stageTransitionOut);
+    for (const bubble of bodies) {
+      const vx = (bubble.x - (bubble.meshLastX ?? bubble.x)) / Math.max(dt, 0.001);
+      const vy = (bubble.y - (bubble.meshLastY ?? bubble.y)) / Math.max(dt, 0.001);
+      const blend = 1 - Math.exp(-dt * 7);
+      bubble.meshFlowX = (bubble.meshFlowX ?? bubble.vx ?? 0) + (vx - (bubble.meshFlowX ?? bubble.vx ?? 0)) * blend;
+      bubble.meshFlowY = (bubble.meshFlowY ?? bubble.vy ?? 0) + (vy - (bubble.meshFlowY ?? bubble.vy ?? 0)) * blend;
+      bubble.meshLastX = bubble.x;
+      bubble.meshLastY = bubble.y;
+      let nearest = null, nearestRatio = Infinity;
+      for (const other of bodies) {
+        if (other === bubble) continue;
+        const distance = Math.hypot(bubble.x - other.x, bubble.y - other.y);
+        const ratio = distance / Math.max(1, bubble.radius + other.radius);
+        if (ratio < 1.015 && ratio > 0.58 && ratio < nearestRatio) { nearest = other; nearestRatio = ratio; }
+      }
+      if (nearest && bubble.meshContactUid !== nearest.uid) {
+        const dx = bubble.x - nearest.x, dy = bubble.y - nearest.y;
+        const distance = Math.max(1, Math.hypot(dx, dy));
+        bubble.wallSquash = Math.max(bubble.wallSquash || 0, 0.095 + (1 - nearestRatio) * 0.17);
+        bubble.wallSquashVelocity = 0;
+        bubble.wallSquashNx = dx / distance;
+        bubble.wallSquashNy = dy / distance;
+      }
+      bubble.meshContactUid = nearest?.uid ?? null;
+    }
+  }
+
   function decayWallSquash(bubble, dt) {
     const spring = window.PaopaoBubbleMaterial.stepSpring(bubble.wallSquash, bubble.wallSquashVelocity, dt);
     bubble.wallSquash = Math.abs(spring.position) < 0.0001 ? 0 : spring.position;
@@ -10058,6 +10097,8 @@
     if (!state.running) return;
     if (!state.tutorialMode && isWaterGameOver()) { endGame(); return; }
 
+    updateJellyMotion(dt);
+
     for (let i = state.blasts.length - 1; i >= 0; i -= 1) {
       const blast = state.blasts[i];
       blast.age += dt;
@@ -10377,34 +10418,57 @@
     ctx.stroke();
   }
 
-  function drawBubbleSpriteBody(bubble, color, x, y, r, alpha) {
-    if (!window.PaopaoBubbleMaterial) return false;
-    window.PaopaoBubbleMaterial.draw(ctx, color, x, y, r, {
+  function usesGlassMesh(bubble) {
+    return !bubble.isCharge && !bubble.isPulse && !bubble.isCat && !bubble.isBomb && !bubble.isBleach;
+  }
+
+  function meshOptionsForBubble(bubble, alpha = 1) {
+    return {
       age: bubble.age, phase: bubble.skinPhase, alpha,
-      speed: Math.hypot(bubble.vx, bubble.vy), reducedMotion: reducedMotion.matches,
-    });
-    // The constant center mark makes the hit rule visible without flashing the body.
-    if (isStageTargetBubble(bubble) && !isSpecialBubble(bubble) && !bubble.isPulse) {
-      const ready = canPopBubble(bubble);
-      ctx.save();
-      ctx.globalAlpha *= alpha;
-      ctx.beginPath();
-      ctx.arc(x, y, Math.max(3, r * 0.075), 0, Math.PI * 2);
-      ctx.fillStyle = color.deep;
-      ctx.fill();
-      ctx.strokeStyle = ready ? "rgba(255,255,255,0.98)" : color.light;
-      ctx.lineWidth = ready ? 2 : 1;
-      ctx.stroke();
-      if (ready) {
-        ctx.beginPath();
-        ctx.arc(x, y, r * 0.87, Math.PI * 0.32, Math.PI * 0.68);
-        ctx.strokeStyle = "rgba(255,255,255,0.92)";
-        ctx.lineWidth = Math.max(2, r * 0.047);
-        ctx.lineCap = "round";
-        ctx.stroke();
-      }
-      ctx.restore();
+      speed: Math.hypot(bubble.meshFlowX || bubble.vx || 0, bubble.meshFlowY || bubble.vy || 0),
+      flowDirection: [bubble.meshFlowX || bubble.vx || 0, -(bubble.meshFlowY || bubble.vy || 0), 25],
+      pressure: bubble.isDrag ? -(bubble.dragStretch || 0) * 0.12 : (bubble.wallSquash || 0) * 0.72,
+      contactDirection: bubble.isDrag
+        ? [bubble.meshPullX ?? bubble.dragHintX ?? 1, -(bubble.meshPullY ?? bubble.dragHintY ?? 0), 0.2]
+        : [-(bubble.wallSquashNx || 0), bubble.wallSquashNy || 0, 0.18],
+      reducedMotion: reducedMotion.matches,
+      ready: canPopBubble(bubble),
+    };
+  }
+
+  function renderGlassMeshes() {
+    const entries = [];
+    for (const bubble of state.bubbles) {
+      if (!usesGlassMesh(bubble) || bubble.age < 0) continue;
+      const reveal = bubble.spawnRevealSeconds > 0 ? smoothstep(0, bubble.spawnRevealSeconds, bubble.age) : 1;
+      const transition = bubble.stageTransitionOut ? clamp(bubble.transitionAlpha ?? 1, 0, 1) : 1;
+      if (reveal * transition <= 0.01) continue;
+      const tone = bubble.isDrag ? palette[bubble.dragSourceColorIndex] ?? openTone
+        : bubble.isWhite ? whiteTone : bubble.isClear ? clearTone : bubble.isSuper || bubble.colorIndex < 0 ? openTone : palette[bubble.colorIndex];
+      entries.push({ tone, x: bubble.x, y: bubble.y,
+        r: bubble.radius * (bubble.spawnRevealSeconds > 0 ? 0.34 + reveal * 0.66 : 1),
+        options: meshOptionsForBubble(bubble, reveal * transition * (bubble.isDrag ? 1 - (bubble.dragFade || 0) * 0.9 : 1)),
+      });
     }
+    for (const snap of state.membraneSnaps) {
+      if (!snap.mesh) continue;
+      const t = clamp(snap.age / snap.life, 0, 1);
+      entries.push({ tone: { color: snap.color, deep: snap.deep, light: snap.light },
+        x: snap.x, y: snap.y, r: snap.radius * (1 + t * 0.09),
+        options: { age: snap.surfaceAge + snap.age, phase: snap.phase, alpha: (1 - t) * 0.9,
+          pressure: 0.2 * Math.sin(Math.PI * t), burst: smoothstep(0.08, 0.92, t),
+          contactDirection: [Math.cos(snap.angle) * 0.72, -Math.sin(snap.angle) * 0.72, 0.7],
+          reducedMotion: reducedMotion.matches,
+        },
+      });
+    }
+    return window.PaopaoBubbleMaterial.renderScene(ctx, entries, { width: state.width, height: state.height });
+  }
+
+  function drawBubbleMeshBody(bubble, color, x, y, r, alpha) {
+    if (!window.PaopaoBubbleMaterial) return false;
+    if (glassPassActive) return usesGlassMesh(bubble);
+    window.PaopaoBubbleMaterial.draw(ctx, color, x, y, r, meshOptionsForBubble(bubble, alpha));
     return true;
   }
 
@@ -10788,96 +10852,31 @@
   function drawDragBubbleTexture(bubble, x, y, r, alpha = 1) {
     const source = palette[bubble.dragSourceColorIndex] ?? openTone;
     const target = palette[bubble.dragTargetColorIndex] ?? openTone;
-    const pointerDx = (bubble.dragPointerX ?? x) - x;
-    const pointerDy = (bubble.dragPointerY ?? y) - y;
-    const hintDx = bubble.dragHintX ?? 1;
-    const hintDy = bubble.dragHintY ?? 0;
-    const direction = bubble.dragActive
-      ? normalizeVector(pointerDx, pointerDy, { x: hintDx, y: hintDy })
-      : normalizeVector(hintDx, hintDy, { x: 1, y: 0 });
-    const stretch = clamp(0.26 + (bubble.dragStretch ?? 0) * 0.82, 0.26, 1.25);
-    const fade = clamp(bubble.dragFade ?? 0, 0, 1);
-    const breathe = 1 + Math.sin(bubble.age * 2.25 + bubble.skinPhase) * 0.018;
-    const length = r * (1.05 + stretch * 0.92) * breathe;
-    const back = r * (0.9 + stretch * 0.2);
-    const height = r * (0.94 - stretch * 0.2) / breathe;
-    const angle = Math.atan2(direction.y, direction.x);
-    const waist = 0.78 - stretch * 0.12;
-
-    function traceFilm(scale = 1) {
-      const frontX = length * scale;
-      const backX = back * scale;
-      const h = height * scale;
-      ctx.beginPath();
-      ctx.moveTo(-backX, 0);
-      ctx.bezierCurveTo(-backX * 0.9, -h * 0.68, -backX * 0.25, -h, h * 0.08, -h * waist);
-      ctx.bezierCurveTo(frontX * 0.36, -h * 0.72, frontX * 0.84, -h * 0.62, frontX, 0);
-      ctx.bezierCurveTo(frontX * 0.84, h * 0.62, frontX * 0.36, h * 0.72, h * 0.08, h * waist);
-      ctx.bezierCurveTo(-backX * 0.25, h, -backX * 0.9, h * 0.68, -backX, 0);
-      ctx.closePath();
+    const direction = normalizeVector(bubble.dragHintX ?? 1, bubble.dragHintY ?? 0, { x: 1, y: 0 });
+    const fade = 1 - clamp(bubble.dragFade ?? 0, 0, 1) * 0.9;
+    if (!glassPassActive) {
+      window.PaopaoBubbleMaterial.draw(ctx, source, x, y, r, meshOptionsForBubble(bubble, alpha * fade));
     }
-
+    // The material is the 3D membrane. A small target-color arrow explains the
+    // drag destination without painting a second, flat silhouette over it.
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.globalAlpha *= alpha * (1 - fade * 0.9);
-
-    const shadow = ctx.createRadialGradient(0, 0, r * 0.15, 0, 0, Math.max(length, back) * 1.05);
-    shadow.addColorStop(0, colorWithAlpha(source.light, 0.1));
-    shadow.addColorStop(1, colorWithAlpha(source.light, 0));
-    ctx.fillStyle = shadow;
+    ctx.rotate(Math.atan2(direction.y, direction.x));
+    ctx.globalAlpha *= alpha * fade;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.ellipse((length - back) * 0.15, r * 0.08, (length + back) * 0.58, height * 0.98, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    traceFilm();
-    const film = ctx.createLinearGradient(-back, -height * 0.35, length, height * 0.28);
-    film.addColorStop(0, colorWithAlpha(source.color, 0.25));
-    film.addColorStop(0.22, "rgba(255,255,255,0.2)");
-    film.addColorStop(0.5, colorWithAlpha(source.light, 0.11));
-    film.addColorStop(0.77, colorWithAlpha(target.light, 0.2));
-    film.addColorStop(1, colorWithAlpha(target.color, 0.28));
-    ctx.fillStyle = film;
-    ctx.fill();
-
-    ctx.save();
-    traceFilm(0.98);
-    ctx.clip();
-    ctx.globalCompositeOperation = "screen";
-    const rainbow = ctx.createLinearGradient(-back, height, length, -height);
-    rainbow.addColorStop(0, "rgba(255,184,226,0.22)");
-    rainbow.addColorStop(0.28, "rgba(151,237,255,0.2)");
-    rainbow.addColorStop(0.54, "rgba(255,247,177,0.16)");
-    rainbow.addColorStop(0.8, "rgba(184,168,255,0.2)");
-    rainbow.addColorStop(1, "rgba(255,255,255,0.3)");
-    ctx.strokeStyle = rainbow;
-    ctx.lineWidth = Math.max(5, r * 0.16);
-    ctx.beginPath();
-    ctx.moveTo(-back * 0.72, height * 0.48);
-    ctx.bezierCurveTo(-back * 0.05, height * 0.82, length * 0.38, height * 0.48, length * 0.9, -height * 0.18);
+    ctx.moveTo(-r * 0.23, 0);
+    ctx.lineTo(r * 0.25, 0);
+    ctx.moveTo(r * 0.08, -r * 0.17);
+    ctx.lineTo(r * 0.25, 0);
+    ctx.lineTo(r * 0.08, r * 0.17);
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = Math.max(4, r * 0.14);
     ctx.stroke();
-    ctx.restore();
-
-    traceFilm();
-    ctx.strokeStyle = "rgba(247,253,255,0.78)";
-    ctx.lineWidth = Math.max(1.4, r * 0.045);
+    ctx.strokeStyle = target.color;
+    ctx.lineWidth = Math.max(2, r * 0.065);
     ctx.stroke();
-    traceFilm(0.94);
-    ctx.strokeStyle = colorWithAlpha(target.light, 0.34);
-    ctx.lineWidth = Math.max(1, r * 0.025);
-    ctx.stroke();
-
-    ctx.globalCompositeOperation = "screen";
-    ctx.fillStyle = "rgba(255,255,255,0.72)";
-    ctx.beginPath();
-    ctx.ellipse(-back * 0.42, -height * 0.46, r * 0.28, r * 0.085, -0.42, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = colorWithAlpha(target.light, 0.52);
-    for (let i = 0; i < 3; i += 1) {
-      ctx.beginPath();
-      ctx.arc(length * 0.72 + i * r * 0.11, (i - 1) * r * 0.1, Math.max(1.3, r * 0.035), 0, Math.PI * 2);
-      ctx.fill();
-    }
     ctx.restore();
     return true;
   }
@@ -11062,7 +11061,7 @@
     ctx.translate(x, y);
     const squash = bubble.wallSquash ?? 0;
     const squashLength = Math.hypot(bubble.wallSquashNx || 0, bubble.wallSquashNy || 0);
-    if (Math.abs(squash) > 0.001 && squashLength > 0.1 && !reducedMotion.matches) {
+    if (!usesGlassMesh(bubble) && Math.abs(squash) > 0.001 && squashLength > 0.1 && !reducedMotion.matches) {
       const nx = bubble.wallSquashNx / squashLength;
       const ny = bubble.wallSquashNy / squashLength;
       const squashAngle = Math.atan2(ny, nx);
@@ -11072,7 +11071,7 @@
       ctx.scale(normalScale, tangentScale);
       ctx.rotate(-squashAngle);
     }
-    ctx.rotate(Math.sin(bubble.wobble) * 0.08 + bubble.spin * 0.05);
+    if (!usesGlassMesh(bubble)) ctx.rotate(Math.sin(bubble.wobble) * 0.08 + bubble.spin * 0.05);
     ctx.translate(-x, -y);
 
     if (bubble.isWhite && bubble.whiteUntil > 0) {
@@ -11105,7 +11104,7 @@
     const bombTextured = !catTextured && bubble.isBomb && drawBombTexture(bubble, x, y, r, whiteAlpha);
     const bleachTextured = !catTextured && !bombTextured && bubble.isBleach && drawBleachTexture(bubble, x, y, r, whiteAlpha);
     if (!pulseChargeTextured && !chargeTextured && !catTextured && !bombTextured && !bleachTextured) {
-      if (!drawBubbleSpriteBody(bubble, color, x, y, r, whiteAlpha)) {
+      if (!drawBubbleMeshBody(bubble, color, x, y, r, whiteAlpha)) {
         const body = ctx.createRadialGradient(x - r * 0.36, y - r * 0.42, r * 0.08, x, y, r);
         body.addColorStop(0, "#ffffff");
         body.addColorStop(0.18, color.light);
@@ -11130,7 +11129,7 @@
     drawCustomBubbleProgress(bubble, x, y, r, color);
 
     ctx.restore();
-    drawWallSquashContact(bubble, x, y, r, drawAlpha);
+    if (!usesGlassMesh(bubble)) drawWallSquashContact(bubble, x, y, r, drawAlpha);
   }
 
   function drawStar(x, y, outer, fill, stroke) {
@@ -11448,6 +11447,7 @@
 
   function drawMembraneSnaps() {
     state.membraneSnaps.forEach((snap) => {
+      if (snap.mesh) return;
       const t = clamp(snap.age / Math.max(0.001, snap.life), 0, 1);
       const fade = 1 - smoothstep(0.5, 1, t);
       const release = smoothstep(0, 0.72, t);
@@ -11906,7 +11906,9 @@
     drawDifficultyBanners();
     drawWaterStressOverlay();
     drawPointerFeedback("trail");
+    glassPassActive = renderGlassMeshes();
     state.bubbles.forEach(drawBubble);
+    glassPassActive = false;
     drawTutorialDragGuide();
     drawMembraneSnaps();
     drawRipples();
@@ -13645,21 +13647,61 @@
   canvas.addEventListener("pointerup", handlePointerEnd);
   canvas.addEventListener("pointercancel", handlePointerEnd);
   function initGlassInterface() {
-    document.querySelectorAll(".sample-canvas").forEach((surface) => {
-      const tone = palette[Number(surface.dataset.color)];
-      window.PaopaoBubbleMaterial.draw(surface.getContext("2d"), tone, 128, 128, 100, { reducedMotion: true });
+    const samples = Array.from(document.querySelectorAll(".sample-canvas")).map((surface, index) => {
+      const sample = { surface, context: surface.getContext("2d"), tone: palette[Number(surface.dataset.color)],
+        position: 0, velocity: 0, contact: [0, 0, 1], held: false, phase: index * 2.2,
+      };
       const button = surface.closest("button");
-      button.addEventListener("click", () => {
-        button.classList.remove("is-squishing");
-        // Restart the short, user-triggered spring animation on every tap.
-        void button.offsetWidth;
-        button.classList.add("is-squishing");
+      const locateContact = (event) => {
+        const rect = surface.getBoundingClientRect();
+        const x = Number.isFinite(event.clientX) ? ((event.clientX - rect.left) / Math.max(1, rect.width) * 256 - 128) / 100 : 0;
+        const y = Number.isFinite(event.clientY) ? (128 - (event.clientY - rect.top) / Math.max(1, rect.height) * 256) / 100 : 0;
+        sample.contact = [x, y, Math.sqrt(Math.max(0.12, 1 - x * x - y * y))];
+      };
+      const press = (event) => {
+        locateContact(event);
+        sample.position = 0.24;
+        sample.velocity = 0;
+      };
+      button.addEventListener("pointerdown", (event) => {
+        press(event); sample.held = true;
+        button.setPointerCapture?.(event.pointerId);
+      });
+      button.addEventListener("pointermove", (event) => { if (sample.held) locateContact(event); });
+      const release = () => { sample.held = false; };
+      button.addEventListener("pointerup", release);
+      button.addEventListener("pointercancel", release);
+      button.addEventListener("lostpointercapture", release);
+      button.addEventListener("click", (event) => {
+        if (event.detail === 0) press({});
         unlockGameAudioFromGesture();
         playPop("regular", 0, 0.55);
         navigator.vibrate?.(8);
       });
-      button.addEventListener("animationend", () => button.classList.remove("is-squishing"));
+      return sample;
     });
+    let previewTime = 0;
+    const animateSamples = (now) => {
+      const visible = !document.hidden && !state.running && !curtain.classList.contains("hidden") && !curtain.classList.contains("result-mode");
+      const interval = window.PaopaoBubbleMaterial.diagnostics().backend === "software-mesh" ? 100 : 33;
+      if (visible && now - previewTime >= interval) {
+        const dt = Math.min(0.05, (now - previewTime) / 1000 || 1 / 30);
+        previewTime = now;
+        for (const sample of samples) {
+          if (!sample.held) {
+            const spring = window.PaopaoBubbleMaterial.stepSpring(sample.position, sample.velocity, dt);
+            sample.position = spring.position; sample.velocity = spring.velocity;
+          }
+          sample.context.clearRect(0, 0, sample.surface.width, sample.surface.height);
+          window.PaopaoBubbleMaterial.draw(sample.context, sample.tone, 128, 128, 100, {
+            age: now / 1000, phase: sample.phase, pressure: sample.position,
+            contactDirection: sample.contact, reducedMotion: reducedMotion.matches, preview: true,
+          });
+        }
+      }
+      window.requestAnimationFrame(animateSamples);
+    };
+    if (samples.length) window.requestAnimationFrame(animateSamples);
     document.addEventListener("keydown", (event) => {
       if (event.defaultPrevented) return;
       const panel = settingsAreOpen() ? settingsPanel : homeLeaderboardIsOpen() ? leaderboardOverlay : null;
