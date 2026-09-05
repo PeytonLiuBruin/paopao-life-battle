@@ -7,11 +7,11 @@
   const fieldCtx = fieldCanvas.getContext("2d", { alpha: false });
 
   const liquidPalette = {
-    blue: [17, 158, 190],
-    blueDeep: [7, 115, 153],
+    blue: [63, 158, 187],
+    blueDeep: [38, 123, 163],
     blueLight: [147, 222, 231],
-    pink: [255, 117, 138],
-    pinkDeep: [203, 77, 101],
+    pink: [233, 138, 172],
+    pinkDeep: [197, 100, 143],
     pinkLight: [255, 186, 201],
     boundary: [43, 39, 86],
     boundaryLight: [233, 252, 255],

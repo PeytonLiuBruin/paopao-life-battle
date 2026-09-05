@@ -7,11 +7,13 @@
     <meta http-equiv="Cache-Control" content="no-store" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-  <title>泡泡乐 DEMO</title>
-    <link rel="stylesheet" href="./styles.css?v=1.4.19" />
+  <title>泡泡乐 · 蓝粉玻璃泡泡挑战</title>
+    <meta name="description" content="看准蓝粉颜色，轻点、滑动、拖拽透明泡泡。三颗生命，无限挑战。" />
+    <link rel="stylesheet" href="./styles.css?v=1.5.0" />
+    <link rel="stylesheet" href="./ui-polish.css?v=1.5.0" />
   </head>
   <body>
-  <main class="phone-shell" aria-label="泡泡乐 DEMO 游戏">
+  <main class="phone-shell" aria-label="泡泡乐游戏">
       <canvas id="game" aria-label="游戏画面"></canvas>
 
       <section class="hud" aria-label="游戏状态">
@@ -30,19 +32,21 @@
             <img class="heart-bubble" alt="" />
             <img class="heart-bubble" alt="" />
           </div>
-          <div id="comboChip" class="combo-chip" aria-live="polite"></div>
+          <div id="comboChip" class="combo-chip"></div>
         </div>
 
         <div class="score-block right">
-          <span class="caption">分数</span>
+          <span class="caption">击破</span>
           <strong id="score">0</strong>
           <span id="timeValue" class="time-pill" aria-label="存活时间">0:00</span>
         </div>
       </section>
 
+      <div id="runGoal" class="run-goal" hidden></div>
+
       <button id="clearSkill" class="clear-skill ready" type="button" aria-label="清屏技能">
         <span>清屏</span>
-        <strong id="clearSkillValue">READY</strong>
+        <strong id="clearSkillValue">可用</strong>
       </button>
 
       <button
@@ -98,16 +102,16 @@
           >
             <span class="settings-admin-mark" aria-hidden="true">A</span>
             <span class="settings-admin-copy">
-              <strong>管理员模式</strong>
-              <small>测试工具 · 跳关不计榜</small>
+              <strong>自由练习</strong>
+              <small>选关练习 · 不计排行榜</small>
             </span>
             <span class="settings-admin-chevron" aria-hidden="true"></span>
           </button>
           <div id="settingsAdminPanel" class="settings-admin-panel" hidden>
             <div class="settings-stage">
-              <label for="settingsLevel">测试关卡</label>
+              <label for="settingsLevel">选择关卡</label>
               <div class="settings-level-control">
-                <select id="settingsLevel" aria-label="选择测试关卡"></select>
+                <select id="settingsLevel" aria-label="选择练习关卡"></select>
                 <button id="settingsJump" type="button">进入</button>
               </div>
               <span id="settingsStageMeta" class="settings-stage-meta">Lv 1 · 中央水波</span>
@@ -123,42 +127,43 @@
       </section>
 
       <section id="curtain" class="curtain">
-        <div class="title-mark" data-edition="DEMO">泡泡乐</div>
+        <div class="title-mark" data-edition="GLASS">泡泡乐</div>
         <div class="start-home">
-          <div class="start-kicker"><span></span> 双手节奏生存挑战</div>
-          <div class="start-showcase" aria-hidden="true">
-            <span class="start-wave start-wave-pink"></span>
-            <span class="start-wave start-wave-blue"></span>
-            <span class="start-orbit orbit-one"></span>
-            <span class="start-orbit orbit-two"></span>
-            <span class="start-logo-bubble"></span>
-            <span class="start-mini-bubble mini-one"></span>
-            <span class="start-mini-bubble mini-two"></span>
-            <span class="start-mini-bubble mini-three"></span>
+          <div class="start-kicker">同色轻点 · 一划连击</div>
+          <div class="start-showcase" aria-label="试戳蓝粉泡泡">
+            <button class="bubble-sample sample-blue" type="button" aria-label="试戳蓝色泡泡">
+              <canvas class="sample-canvas" data-color="0" width="256" height="256" aria-hidden="true"></canvas>
+              <span>蓝色</span>
+            </button>
+            <button class="bubble-sample sample-pink" type="button" aria-label="试戳粉色泡泡">
+              <canvas class="sample-canvas" data-color="1" width="256" height="256" aria-hidden="true"></canvas>
+              <span>粉色</span>
+            </button>
+            <small class="sample-tip">戳一下，试试手感</small>
           </div>
-          <p class="start-copy">看准颜色，跟上节拍。点击、滑动、拖拽，在越来越快的水流中守住三颗生命。</p>
+          <p class="start-copy">看泡泡中心：蓝色配蓝底，粉色配粉底。轻点或划过同色泡泡，连续击破，挑战更高关卡。</p>
           <div class="start-status" aria-label="游戏特点">
             <span><b>3</b> 颗生命</span>
             <i></i>
             <span><b>∞</b> 无限挑战</span>
             <i></i>
-            <span><b>2</b> 手协作</span>
+            <span><b>↗</b> 连击充能</span>
           </div>
           <label class="start-profile" for="playerNameInput">
-            <span>排行榜昵称</span>
-            <input id="playerNameInput" type="text" maxlength="10" autocomplete="nickname" placeholder="输入你的名字" />
+            <span>排行榜昵称 · 选填</span>
+            <input id="playerNameInput" type="text" maxlength="10" autocomplete="nickname" placeholder="留空自动取名" />
             <small id="leaderboardStatus">正在连接全球榜</small>
           </label>
           <div class="start-actions">
             <button id="startButton" class="primary-button" type="button"><strong>开始挑战</strong><span>进入 Level 1</span></button>
-            <button id="tutorialButton" class="tutorial-button" type="button"><span class="tutorial-play" aria-hidden="true">?</span><strong>新手教程</strong><small>约 1 分钟</small></button>
+            <button id="tutorialButton" class="tutorial-button" type="button"><span class="tutorial-play" aria-hidden="true">?</span><strong>新手教程</strong><small>互动练习</small></button>
             <button id="leaderboardButton" class="leaderboard-button" type="button" aria-controls="leaderboardOverlay" aria-expanded="false">
               <span class="leaderboard-button-icon" aria-hidden="true"><i></i></span>
               <strong>查看排行榜</strong>
               <small>全球实时榜</small>
             </button>
           </div>
-          <p class="start-footnote">建议开启声音</p>
+          <p class="start-footnote">触屏 / 鼠标均可 · 开启声音更有感觉</p>
         </div>
         <div id="endStats" class="end-stats"></div>
       </section>
@@ -201,7 +206,7 @@
         <header class="tutorial-header">
           <div>
             <span class="tutorial-label">HOW TO PLAY</span>
-            <strong id="tutorialProgress">1 / 7</strong>
+            <strong id="tutorialProgress">1 / 11</strong>
           </div>
         </header>
         <div id="tutorialFrame" class="tutorial-frame" data-scene="normal">
@@ -237,7 +242,7 @@
       </section>
       <section id="tutorialLive" class="tutorial-live" aria-live="polite" hidden>
         <div class="tutorial-live-topline">
-          <span id="tutorialLiveProgress">练习 1 / 7</span>
+          <span id="tutorialLiveProgress">练习 1 / 11</span>
           <button id="tutorialLiveExit" type="button">返回主页</button>
         </div>
         <strong id="tutorialLiveTitle">同色时点击泡泡</strong>
@@ -261,12 +266,13 @@
         <button id="rewardedAdSkip" class="rewarded-ad-skip" type="button" hidden>跳过</button>
         <div class="rewarded-ad-progress" aria-hidden="true"><span id="rewardedAdProgress"></span></div>
       </section>
-      <audio id="backgroundMusic" src="./assets/music/bgm.mp3?v=1.4.19" preload="metadata"></audio>
+      <audio id="backgroundMusic" src="./assets/music/bgm.mp3?v=1.5.0" preload="metadata"></audio>
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./firebase-leaderboard.js?v=1.4.19" defer></script>
-    <script src="./background-engine.js?v=1.4.19" defer></script>
-    <script src="./game.js?v=1.4.19" defer></script>
+    <script src="./firebase-leaderboard.js?v=1.5.0" defer></script>
+    <script src="./background-engine.js?v=1.5.0" defer></script>
+    <script src="./bubble-material.js?v=1.5.0" defer></script>
+    <script src="./game.js?v=1.5.0" defer></script>
   </body>
 </html>

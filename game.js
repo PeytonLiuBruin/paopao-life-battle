@@ -4,7 +4,8 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.4.19";
+  const buildVersion = "1.5.0";
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
   const curtain = document.getElementById("curtain");
   const startButton = document.getElementById("startButton");
@@ -68,6 +69,7 @@
   const settingsScrim = document.getElementById("settingsScrim");
   const settingsPanel = document.getElementById("settingsPanel");
   const settingsCloseButton = document.getElementById("settingsClose");
+  let settingsReturnFocus = null;
   const settingsStatus = document.getElementById("settingsStatus");
   const settingsAdminToggle = document.getElementById("settingsAdminToggle");
   const settingsAdminPanel = document.getElementById("settingsAdminPanel");
@@ -86,31 +88,12 @@
   const debugLevelSelect = document.getElementById("debugLevel");
   const debugJumpButton = document.getElementById("debugJump");
   const debugStageInfo = document.getElementById("debugStageInfo");
-  const bubbleAtlas = new Image();
   const bombBubbleImage = new Image();
   bombBubbleImage.src = "./assets/bomb-bubble.png";
   const bleachBubbleImage = new Image();
   bleachBubbleImage.src = "./assets/bleach-bubble.png";
   const catBubbleImage = new Image();
   catBubbleImage.src = "./assets/cat-bubble.png";
-  const bubbleSpriteCell = 192;
-  const bubbleSpriteCols = 5;
-  const bubbleSpriteAnimationFrames = 140;
-  const bubbleSpriteAnimationCols = 20;
-  const bubbleSpriteAnimationRows = 7;
-  const bubbleSpriteAnimationSeconds = 10;
-  const bubbleSpriteSetCount = 2;
-  const bubbleSpriteFramePages = Array.from({ length: bubbleSpriteSetCount }, () => [[], []]);
-  for (let setIndex = 0; setIndex < bubbleSpriteFramePages.length; setIndex += 1) {
-    for (let colorIndex = 0; colorIndex < bubbleSpriteFramePages[setIndex].length; colorIndex += 1) {
-      const colorName = colorIndex === 0 ? "blue" : "pink";
-      for (let pageIndex = 0; pageIndex < bubbleSpriteAnimationRows; pageIndex += 1) {
-        const image = new Image();
-        image.src = `./assets/bubble-set-${setIndex}-${colorName}-page-${pageIndex}.png?v=${buildVersion}`;
-        bubbleSpriteFramePages[setIndex][colorIndex][pageIndex] = image;
-      }
-    }
-  }
   const targetFrameMs = 1000 / 60;
   const maxActiveBubbles = 12;
   const spawnProtectionSeconds = 0.82;
@@ -224,8 +207,8 @@
   const stageDurationMs = 20000;
 
   const palette = [
-    { name: "湖雾蓝", color: "#6eafc0", deep: "#3f7f91", light: "#cbe8ef" },
-    { name: "雾玫粉", color: "#d8899d", deep: "#a05f73", light: "#f0c7d3" },
+    { name: "琉璃蓝", color: "#339fdf", deep: "#0968b5", light: "#cdf4ff" },
+    { name: "水晶粉", color: "#e578b4", deep: "#b93681", light: "#ffe0f2" },
   ];
   const backgroundPalette = [
     { color: "#8fcbd4", deep: "#62aeba", light: "#d8f0f3" },
@@ -271,6 +254,8 @@
   const localLeaderboardLimit = 80;
   const customPackSchema = "paopao-bubble-pack@1";
   const fairMatchDwell = 2.5;
+  const minimumMissExposure = 0.65;
+  const damageRecoveryMs = 550;
   const structuredPathMinMatch = fairMatchDwell + 0.35;
   const clearSkillMaxUses = 3;
   const edgeCycle = ["left", "right", "bottom", "top"];
@@ -303,6 +288,7 @@
     water: 100,
     reviveUsed: false,
     invulnerableUntil: 0,
+    damageRecoveryUntil: 0,
     runRecordId: "",
     runCreatedAt: 0,
     leaderboardEligible: true,
@@ -718,12 +704,16 @@
     return normalized;
   }
 
-  function colorWithAlpha(hex, alpha) {
-    const value = hex.replace("#", "");
+  function colorWithAlpha(color, alpha) {
+    const opacity = clamp(alpha, 0, 1);
+    const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i.exec(color);
+    if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${opacity * Number(rgb[4] ?? 1)})`;
+    let value = color.replace("#", "");
+    if (value.length === 3) value = Array.from(value, (digit) => digit + digit).join("");
     const r = parseInt(value.slice(0, 2), 16);
     const g = parseInt(value.slice(2, 4), 16);
     const b = parseInt(value.slice(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
   }
 
   function mixHex(a, b, amount) {
@@ -1982,14 +1972,8 @@
 
   function commitPlayerProfile({ focus = true } = {}) {
     const rawName = String(playerNameInput?.value || "").trim();
-    if (!rawName) {
-      playerNameInput?.classList.add("is-invalid");
-      setLeaderboardStatus("请先输入排行榜昵称", "error");
-      if (focus) playerNameInput?.focus();
-      return false;
-    }
     playerNameInput?.classList.remove("is-invalid");
-    savePlayerName(rawName);
+    savePlayerName(rawName || loadExplicitPlayerName() || `泡泡${Math.random().toString(36).slice(2, 8).toUpperCase()}`);
     return true;
   }
 
@@ -2582,7 +2566,13 @@
   }
 
   function handleComboMilestone(comboValue) {
-    if (!state.running || state.tutorialMode || comboValue < 100) return;
+    if (!state.running || state.tutorialMode) return;
+    if (comboValue === 10 || comboValue === 25 || comboValue === 50) {
+      chargeClearSkill(comboValue === 50 ? 0.15 : 0.08);
+      makeFloatText(state.width * 0.5, state.height * 0.25, `${comboValue} 连击！`, "#ffffff", 1.1);
+      playEventSound("combo", { volume: 0.48 });
+    }
+    if (comboValue < 100) return;
     const nextTwoHundred = Math.ceil(comboValue / 200) * 200;
     if (comboValue >= nextTwoHundred - 5 && comboValue <= nextTwoHundred) {
       enqueueComboCountdown(comboValue, nextTwoHundred);
@@ -2754,6 +2744,7 @@
     waterBlock.classList.toggle("combo-hot", state.combo >= 5);
     waterBlock.classList.toggle("gain", state.running && state.elapsed < waterGainUntil);
     waterBlock.classList.toggle("shock", state.running && state.elapsed < waterShockUntil);
+    waterBlock.classList.toggle("damage-protected", state.running && state.elapsed < state.damageRecoveryUntil);
     waterBlock.classList.toggle("critical-flash", state.running && state.elapsed < waterCriticalUntil);
     waterBlock.classList.toggle("full-confirm", state.running && state.elapsed < fullLifeFeedbackUntil);
     comboChip.style.setProperty("--combo-left", comboProgress().toFixed(3));
@@ -2784,8 +2775,17 @@
     clearSkillButton.classList.toggle("ready", skillReady);
     clearSkillButton.disabled = !state.running || state.paused || !skillReady;
     const clearSkillText =
-      state.clearSkillUses >= clearSkillMaxUses ? "DONE" : skillReady ? "READY" : `${Math.round(state.clearSkillCharge * 100)}%`;
+      state.clearSkillUses >= clearSkillMaxUses ? "用完" : skillReady ? "可用" : `${Math.round(state.clearSkillCharge * 100)}%`;
     if (clearSkillValue.textContent !== clearSkillText) clearSkillValue.textContent = clearSkillText;
+    clearSkillButton.setAttribute("aria-label", `清屏，剩余 ${Math.max(0, clearSkillMaxUses - state.clearSkillUses)} 次，${clearSkillText}`);
+    const goal = document.getElementById("runGoal");
+    if (goal) {
+      const nextCombo = state.combo < 10 ? 10 : state.combo < 25 ? 25 : state.combo < 50 ? 50 : Math.ceil((state.combo + 1) / 100) * 100;
+      const goalText = state.elapsed < state.damageRecoveryUntil ? "受伤保护 · 继续找同色泡泡" : state.elapsed < 6500 ? "看中心 · 同色轻点或划过" : `${nextCombo} 连击目标 · 还差 ${nextCombo - state.combo}`;
+      if (goal.textContent !== goalText) goal.textContent = goalText;
+      goal.hidden = !state.running || state.tutorialMode;
+    }
+    if (difficultyEl) difficultyEl.style.setProperty("--stage-progress", `${Math.round(stageCompletion() * 100)}%`);
     updateDebugPanel();
   }
 
@@ -2808,6 +2808,7 @@
     state.water = 100;
     state.reviveUsed = false;
     state.invulnerableUntil = 0;
+    state.damageRecoveryUntil = 0;
     state.runCreatedAt = Date.now();
     state.runRecordId = `run-${state.runCreatedAt}-${Math.random().toString(36).slice(2, 8)}`;
     resultTopFiveCelebratedRunId = "";
@@ -3200,7 +3201,7 @@
       reviveButton.className = "result-action result-revive";
       reviveButton.type = "button";
       const reviveLabel = document.createElement("strong");
-      reviveLabel.textContent = "看广告 原地复活";
+      reviveLabel.textContent = "观看短片复活";
       const reviveDetail = document.createElement("span");
       reviveDetail.textContent = "恢复 1 颗生命 · 3 秒无敌";
       reviveButton.append(reviveLabel, reviveDetail);
@@ -3238,7 +3239,8 @@
         : `冲击 Level ${level + 1}`;
     retryButton.append(retryLabel, retryGoal);
     retryButton.addEventListener("click", () => playStartTransition({ quick: true }));
-    actions.append(homeButton, retryButton);
+    actions.prepend(retryButton);
+    actions.append(homeButton);
 
     root.append(halo, summary, board, actions);
     return root;
@@ -3381,6 +3383,7 @@
     if (titleMark) titleMark.textContent = "泡泡乐";
     state.water = heartWater;
     state.invulnerableUntil = state.elapsed + reviveInvulnerabilityMs;
+    state.damageRecoveryUntil = 0;
     state.running = true;
     state.paused = false;
     state.mistakeFlash = 0;
@@ -3541,13 +3544,16 @@
   }
 
   function applyHeartPenalty(penalty) {
-    if (!state.running || isReviveInvulnerable()) return false;
-    state.water = Math.max(0, state.water - Math.max(0, penalty));
+    if (!state.running || state.paused || isReviveInvulnerable() || state.elapsed < state.damageRecoveryUntil) return false;
+    if (!Number.isFinite(penalty) || penalty <= 0) return false;
+    state.water = Math.max(0, state.water - penalty);
+    state.damageRecoveryUntil = state.elapsed + damageRecoveryMs;
     return true;
   }
 
   function penalizeStageMistake(bubble, type) {
-    if (!isStageTargetBubble(bubble)) return false;
+    if (!state.running || state.paused || !isStageTargetBubble(bubble)) return false;
+    if (type === "miss" && !(bubble.isPulse ? bubble.wasReady : (bubble.matchDwell ?? 0) >= minimumMissExposure)) return false;
     const penalty = stageMistakePenalty(type, bubble);
     if (bubble.stageLevel === state.stageLevel) {
       if (type === "wrong") state.stageWrongPops += 1;
@@ -3563,9 +3569,7 @@
     }
     const tookDamage = applyHeartPenalty(penalty);
     updateHud();
-    if (tookDamage && isWaterGameOver()) {
-      endGame();
-    }
+    if (tookDamage && type === "miss") resetCombo();
     return tookDamage;
   }
 
@@ -5590,7 +5594,7 @@
         },
       );
       bubble.pathComplete = true;
-      if (path.completeFairPass !== false || (bubble.wasReady && (bubble.matchDwell ?? 0) >= fairMatchDwell)) {
+      if (bubble.wasReady && (bubble.matchDwell ?? 0) >= fairMatchDwell) {
         bubble.fairPassComplete = true;
       }
       bubble.streamAmplitude = 0;
@@ -8731,6 +8735,19 @@
 
   function makeMembraneSnap(bubble, hitX, hitY, color, power = 1) {
     if (!bubble || !color) return;
+    for (const neighbor of state.bubbles) {
+      if (neighbor === bubble || neighbor.age < 0 || neighbor.stageTransitionOut) continue;
+      const nx = neighbor.x - bubble.x;
+      const ny = neighbor.y - bubble.y;
+      const distance = Math.hypot(nx, ny);
+      const reach = bubble.radius + neighbor.radius + 100;
+      if (distance > 1 && distance < reach) {
+        neighbor.wallSquash = Math.max(neighbor.wallSquash || 0, (1 - distance / reach) * 0.14);
+        neighbor.wallSquashVelocity = 0;
+        neighbor.wallSquashNx = nx / distance;
+        neighbor.wallSquashNy = ny / distance;
+      }
+    }
     const limit = Math.max(6, Math.round(maxMembraneSnaps * currentPerformanceProfile().effectChance));
     if (state.membraneSnaps.length >= limit) {
       state.membraneSnaps.splice(0, state.membraneSnaps.length - limit + 1);
@@ -9049,7 +9066,7 @@
     state.score += scoreGain;
     const appliedWaterGain = addWater(waterGain);
     if (appliedWaterGain <= 0) confirmFullLife();
-    state.flash = Math.max(state.flash, bubble.isSuper ? 0.46 : isSmall ? 0.16 : 0.28);
+    if (bubble.isSuper) state.flash = Math.max(state.flash, 0.12);
     makeFloatText(
       bubble.x,
       bubble.y - bubble.radius * 0.72,
@@ -9137,24 +9154,7 @@
     if (isTap && navigator.vibrate) {
       navigator.vibrate(8);
     }
-  }
-
-  function bubbleCheckPoint(bubble, hitX = bubble.x, hitY = bubble.y) {
-    const dx = hitX - bubble.x;
-    const dy = hitY - bubble.y;
-    const distance = Math.hypot(dx, dy);
-    const maxDistance = Math.max(1, bubble.radius * 0.96);
-    if (distance <= maxDistance) {
-      return { x: hitX, y: hitY };
-    }
-    if (distance <= 0.001) {
-      return { x: bubble.x, y: bubble.y };
-    }
-    const amount = maxDistance / distance;
-    return {
-      x: bubble.x + dx * amount,
-      y: bubble.y + dy * amount,
-    };
+    if (!state.tutorialMode && isWaterGameOver()) endGame();
   }
 
   function canPopBubble(bubble, hitX = bubble.x, hitY = bubble.y) {
@@ -9175,25 +9175,14 @@
       return true;
     }
 
-    const point = bubbleCheckPoint(bubble, hitX, hitY);
-    return bubble.colorIndex === backgroundColorIndexAt(point.x, point.y);
+    return bubble.colorIndex === backgroundColorIndexAt(bubble.x, bubble.y);
   }
 
   function bubbleHasMatchingPatch(bubble) {
     if (!isStageTargetBubble(bubble)) return false;
     if (bubble.isPulse) return pulseBubbleInHitWindow(bubble);
-    const r = bubble.radius * 0.58;
-    const points = [
-      { x: bubble.x, y: bubble.y },
-      { x: bubble.x - r, y: bubble.y },
-      { x: bubble.x + r, y: bubble.y },
-      { x: bubble.x, y: bubble.y - r },
-      { x: bubble.x, y: bubble.y + r },
-    ];
-    return points.some((point) => {
-      if (point.x < 0 || point.x > state.width || point.y < 0 || point.y > state.height) return false;
-      return backgroundColorIndexAt(point.x, point.y) === bubble.colorIndex;
-    });
+    if (bubble.x < 0 || bubble.x > state.width || bubble.y < 0 || bubble.y > state.height) return false;
+    return canPopBubble(bubble);
   }
 
   function cachedBubbleHasMatchingPatch(bubble) {
@@ -9474,10 +9463,9 @@
   }
 
   function decayWallSquash(bubble, dt) {
-    bubble.wallSquash = Math.max(0, (bubble.wallSquash ?? 0) - dt * 4.9);
-    if (bubble.wallSquash <= 0.001) {
-      bubble.wallSquash = 0;
-    }
+    const spring = window.PaopaoBubbleMaterial.stepSpring(bubble.wallSquash, bubble.wallSquashVelocity, dt);
+    bubble.wallSquash = Math.abs(spring.position) < 0.0001 ? 0 : spring.position;
+    bubble.wallSquashVelocity = Math.abs(spring.velocity) < 0.0001 ? 0 : spring.velocity;
   }
 
   function resolveBubbleWallContact(bubble, nx, ny, penetration, d) {
@@ -9519,13 +9507,13 @@
     const squash = clamp((penetration / radius) * 0.3 + impact / (260 + d * 90) * 0.14, 0.055, calmSmall ? 0.22 : 0.28);
     if (squash >= (bubble.wallSquash ?? 0)) {
       bubble.wallSquash = squash;
+      bubble.wallSquashVelocity = 0;
       bubble.wallSquashNx = nx;
       bubble.wallSquashNy = ny;
     }
   }
 
   function applySoftWallBounce(bubble, dt, d) {
-    decayWallSquash(bubble, dt);
     if (!bubble.hasEntered || bubble.customPath) return;
     if (isStageTargetBubble(bubble) && bubble.fairPassComplete) return;
     if (bubble.isBleach && bubble.bleachEscaping) return;
@@ -9664,7 +9652,10 @@
       const distanceSquared = dx * dx + dy * dy;
       if (distanceSquared > hitRadius * hitRadius) continue;
       const normalizedDistance = Math.sqrt(distanceSquared) / Math.max(1, hitRadius);
-      const correctBoost = !bubble.isDrag && canPopBubble(bubble, x, y) ? 72 : 0;
+      const correct = !bubble.isDrag && canPopBubble(bubble, x, y);
+      // Touch assistance may grant a hit; empty space must never cause damage.
+      if (!correct && !bubble.isDrag && distanceSquared > bubble.radius * bubble.radius) continue;
+      const correctBoost = correct ? 72 : 0;
       const score = bubbleInputPriority(bubble) + correctBoost - normalizedDistance * 96 + index * 0.001;
       if (!best || score > best.score) {
         best = { bubble, index, score };
@@ -9674,6 +9665,7 @@
   }
 
   function tryPopAt(x, y, isTap, pointerId = null) {
+    if (!state.running || state.paused) return false;
     if (tryPopPriorityChargeAt(x, y, isTap, pointerId)) return true;
     const candidate = bubbleInputCandidateAt(x, y, isTap, pointerId);
     if (!candidate) return false;
@@ -9715,6 +9707,7 @@
         popBubble(bubble, index, x, y);
       }
     } else {
+      if (state.elapsed < state.damageRecoveryUntil) return true;
       missBubble(bubble, index, isTap, x, y);
     }
     return true;
@@ -9739,7 +9732,7 @@
       tutorialRun.practicing &&
       tutorialSlides[tutorialStepIndex]?.scene === "skill"
     ) {
-      retryTutorialPractice("不要点击画面里的泡泡，要点击右上角发光的“清屏 READY”按钮");
+      retryTutorialPractice("不要点击画面里的泡泡，要点击右上角发光的“清屏 可用”按钮");
       return;
     }
 
@@ -9805,13 +9798,16 @@
     const dx = x - pointer.x;
     const dy = y - pointer.y;
     const distance = Math.hypot(dx, dy);
-    const steps = Math.max(1, Math.ceil(distance / 18));
+    if (pointer.maxTravel < 8 || distance < 0.5) return;
+    const steps = Math.max(1, Math.ceil(distance / 12));
+    const recoveryBefore = state.damageRecoveryUntil;
 
-    for (let step = 1; step <= steps; step += 1) {
+    for (let step = 1; step <= steps && state.running && !state.paused; step += 1) {
       const t = step / steps;
       if (tryPopAt(pointer.x + dx * t, pointer.y + dy * t, false, event.pointerId)) {
         pointer.interacted = true;
       }
+      if (state.damageRecoveryUntil > recoveryBefore) break;
     }
 
     pointer.x = x;
@@ -9928,8 +9924,11 @@
     updateCustomBubbleHold(dt);
 
     for (let i = state.bubbles.length - 1; i >= 0; i -= 1) {
+      if (!state.running) return;
+      if (!state.tutorialMode && isWaterGameOver()) { endGame(); return; }
       const bubble = state.bubbles[i];
       bubble.age += dt;
+      decayWallSquash(bubble, dt);
       if (bubble.age < 0) {
         continue;
       }
@@ -10055,6 +10054,9 @@
         state.bubbles.splice(i, 1);
       }
     }
+
+    if (!state.running) return;
+    if (!state.tutorialMode && isWaterGameOver()) { endGame(); return; }
 
     for (let i = state.blasts.length - 1; i >= 0; i -= 1) {
       const blast = state.blasts[i];
@@ -10376,257 +10378,33 @@
   }
 
   function drawBubbleSpriteBody(bubble, color, x, y, r, alpha) {
-    const profile = currentPerformanceProfile();
-    const detail = profile.bubbleDetail;
-    const spriteIndex = bubble.spriteIndex ?? 0;
-    const variant = spriteIndex % bubbleSpriteCols;
-    const aspect =
-      variant === 1
-        ? { x: 0.92, y: 1.1 }
-        : variant === 3
-          ? { x: 1.06, y: 0.95 }
-          : variant === 4
-            ? { x: 0.96, y: 1.08 }
-            : { x: 1, y: 1 };
-    const squash = Math.sin(bubble.age * 1.32 + bubble.skinPhase) * (bubble.isStream ? 0.038 : 0.06) * detail;
-    const pulse = Math.sin(bubble.age * 2.1 + bubble.skinPhase) * 0.018 * detail;
-    const driftRotation =
-      bubble.skinRotation +
-      Math.sin(bubble.wobble * 0.54 + bubble.skinPhase) * 0.16 * detail +
-      bubble.age * bubble.skinSpin * 0.07;
-    const points = bubble.isStream ? (detail < 0.65 ? 7 : detail < 0.9 ? 8 : 10) : detail < 0.65 ? 9 : detail < 0.9 ? 11 : 14;
-    const wobbleAmount = (bubble.isStream ? 0.04 : 0.068) * detail;
-
-    const traceShape = (scale = 1) => {
+    if (!window.PaopaoBubbleMaterial) return false;
+    window.PaopaoBubbleMaterial.draw(ctx, color, x, y, r, {
+      age: bubble.age, phase: bubble.skinPhase, alpha,
+      speed: Math.hypot(bubble.vx, bubble.vy), reducedMotion: reducedMotion.matches,
+    });
+    // The constant center mark makes the hit rule visible without flashing the body.
+    if (isStageTargetBubble(bubble) && !isSpecialBubble(bubble) && !bubble.isPulse) {
+      const ready = canPopBubble(bubble);
+      ctx.save();
+      ctx.globalAlpha *= alpha;
       ctx.beginPath();
-      for (let i = 0; i <= points; i += 1) {
-        const angle = (i / points) * Math.PI * 2;
-        const wobble =
-          Math.sin(angle * 2 + bubble.age * 1.35 + bubble.skinPhase) * wobbleAmount +
-          Math.sin(angle * 3.2 - bubble.age * 0.92 + bubble.skinPhase * 0.7) * wobbleAmount * 0.52;
-        const bias = variant === 4 ? Math.sin(angle - 0.8) * 0.045 : variant === 3 ? Math.sin(angle * 4 + 0.3) * 0.025 : 0;
-        const rr = r * scale * (1 + wobble + bias + pulse);
-        const px = Math.cos(angle) * rr;
-        const py = Math.sin(angle) * rr;
-        if (i === 0) {
-          ctx.moveTo(px, py);
-        } else {
-          const prevAngle = ((i - 0.5) / points) * Math.PI * 2;
-          const prevWobble =
-            Math.sin(prevAngle * 2 + bubble.age * 1.35 + bubble.skinPhase) * wobbleAmount +
-            Math.sin(prevAngle * 3.2 - bubble.age * 0.92 + bubble.skinPhase * 0.7) * wobbleAmount * 0.52;
-          const prevBias = variant === 4 ? Math.sin(prevAngle - 0.8) * 0.045 : variant === 3 ? Math.sin(prevAngle * 4 + 0.3) * 0.025 : 0;
-          const cr = r * scale * (1 + prevWobble + prevBias + pulse);
-          ctx.quadraticCurveTo(Math.cos(prevAngle) * cr, Math.sin(prevAngle) * cr, px, py);
-        }
-      }
-      ctx.closePath();
-    };
-
-    const drawColorMask = () => {
-      if (bubble.isWhite || bubble.colorIndex < 0) return;
-
-      ctx.save();
-      traceShape(1.02);
-      ctx.clip();
-      const tint = ctx.createRadialGradient(-r * 0.28, -r * 0.34, r * 0.1, 0, 0, r * 1.08);
-      tint.addColorStop(0, colorWithAlpha(color.light, 0.16));
-      tint.addColorStop(0.42, colorWithAlpha(color.color, 0.34));
-      tint.addColorStop(1, colorWithAlpha(color.deep, 0.48));
-      ctx.fillStyle = tint;
-      ctx.fillRect(-r * 1.25, -r * 1.25, r * 2.5, r * 2.5);
-      ctx.restore();
-
-      traceShape(1.04);
-      ctx.strokeStyle = colorWithAlpha(color.deep, 0.56);
-      ctx.lineWidth = Math.max(1.4, r * 0.045);
-      ctx.stroke();
-      traceShape(0.82);
-      ctx.strokeStyle = colorWithAlpha(color.light, 0.34);
-      ctx.lineWidth = Math.max(1, r * 0.025);
-      ctx.stroke();
-    };
-
-    ctx.save();
-    ctx.globalAlpha *= alpha;
-    ctx.translate(x, y);
-    ctx.rotate(driftRotation);
-    ctx.scale(aspect.x * (1 + squash), aspect.y * (1 - squash * 0.48));
-
-    const frameSetIndex = variant % bubbleSpriteFramePages.length;
-    const frameColorRow = clamp(Math.floor(spriteIndex / bubbleSpriteCols), 0, bubbleSpriteFramePages[frameSetIndex].length - 1);
-    const animationProgress = ((bubble.age % bubbleSpriteAnimationSeconds) + bubbleSpriteAnimationSeconds) % bubbleSpriteAnimationSeconds;
-    const animationFrame = Math.floor((animationProgress / bubbleSpriteAnimationSeconds) * bubbleSpriteAnimationFrames) % bubbleSpriteAnimationFrames;
-    const animationPage = Math.floor(animationFrame / bubbleSpriteAnimationCols);
-    const animationCol = animationFrame % bubbleSpriteAnimationCols;
-    const bubbleFramePage = bubbleSpriteFramePages[frameSetIndex]?.[frameColorRow]?.[animationPage];
-    if (bubbleFramePage?.complete && bubbleFramePage.naturalWidth > 0) {
-      const sx = animationCol * bubbleSpriteCell;
-      const imageRadius = r * 1.11;
-
-      ctx.shadowColor = "rgba(4, 35, 64, 0.16)";
-      ctx.shadowBlur = r * (detail < 0.65 ? 0.08 : 0.14);
-      ctx.drawImage(
-        bubbleFramePage,
-        sx,
-        0,
-        bubbleSpriteCell,
-        bubbleSpriteCell,
-        -imageRadius,
-        -imageRadius,
-        imageRadius * 2,
-        imageRadius * 2,
-      );
-      ctx.shadowBlur = 0;
-      drawColorMask();
-
-      if (bubble.isWhite) {
-        traceShape(1.03);
-        ctx.fillStyle = "rgba(255, 255, 255, 0.56)";
-        ctx.fill();
-      } else if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb) {
-        traceShape(1.03);
-        ctx.fillStyle = colorWithAlpha(color.light, 0.08);
-        ctx.fill();
-      }
-
-      ctx.restore();
-      return true;
-    }
-
-    if (bubbleAtlas.complete && bubbleAtlas.naturalWidth > 0) {
-      const fullGifAtlasWidth = bubbleSpriteCell * bubbleSpriteAnimationCols;
-      const fullGifAtlasHeight = bubbleSpriteCell * bubbleSpriteAnimationRows * 2;
-      const usesFullGifAtlas = bubbleAtlas.naturalWidth >= fullGifAtlasWidth && bubbleAtlas.naturalHeight >= fullGifAtlasHeight;
-      const fallbackAnimationFrame = usesFullGifAtlas ? animationFrame : 0;
-      const colorRow = Math.max(0, Math.floor(spriteIndex / bubbleSpriteCols));
-      const sx = (usesFullGifAtlas ? fallbackAnimationFrame % bubbleSpriteAnimationCols : variant) * bubbleSpriteCell;
-      const sy =
-        (usesFullGifAtlas
-          ? colorRow * bubbleSpriteAnimationRows + Math.floor(fallbackAnimationFrame / bubbleSpriteAnimationCols)
-          : colorRow) * bubbleSpriteCell;
-      const imageRadius = r * 1.11;
-
-      ctx.shadowColor = "rgba(4, 35, 64, 0.18)";
-      ctx.shadowBlur = r * (detail < 0.65 ? 0.1 : 0.18);
-      ctx.drawImage(
-        bubbleAtlas,
-        sx,
-        sy,
-        bubbleSpriteCell,
-        bubbleSpriteCell,
-        -imageRadius,
-        -imageRadius,
-        imageRadius * 2,
-        imageRadius * 2,
-      );
-      ctx.shadowBlur = 0;
-
-      if (bubble.isWhite) {
-        traceShape(1.03);
-        ctx.fillStyle = "rgba(255, 255, 255, 0.56)";
-        ctx.fill();
-      } else if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb) {
-        traceShape(1.03);
-        ctx.fillStyle = colorWithAlpha(color.light, 0.08);
-        ctx.fill();
-      }
-
-      ctx.restore();
-      return true;
-    }
-
-    ctx.shadowColor = colorWithAlpha(color.deep, 0.26);
-    ctx.shadowBlur = r * (detail < 0.65 ? 0.2 : 0.44);
-    traceShape(1.02);
-    const body = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.08, 0, 0, r * 1.12);
-    body.addColorStop(0, "rgba(255, 255, 255, 0.94)");
-    body.addColorStop(0.22, colorWithAlpha(color.light, 0.76));
-    body.addColorStop(0.62, colorWithAlpha(color.color, bubble.isWhite ? 0.25 : 0.42));
-    body.addColorStop(1, colorWithAlpha(color.deep, 0.58));
-    ctx.fillStyle = body;
-    ctx.fill();
-
-    ctx.shadowBlur = 0;
-    ctx.save();
-    traceShape(1.03);
-    ctx.clip();
-    if (profile.textureOverlay && bubbleAtlas.complete && bubbleAtlas.naturalWidth > 0) {
-      const sx = (spriteIndex % bubbleSpriteCols) * bubbleSpriteCell;
-      const sy = Math.floor(spriteIndex / bubbleSpriteCols) * bubbleSpriteCell;
-      const imageRadius = r * 1.55;
-      ctx.globalCompositeOperation = "screen";
-      ctx.globalAlpha *= 0.28;
-      ctx.drawImage(
-        bubbleAtlas,
-        sx,
-        sy,
-        bubbleSpriteCell,
-        bubbleSpriteCell,
-        -imageRadius,
-        -imageRadius,
-        imageRadius * 2,
-        imageRadius * 2,
-      );
-    }
-    if (detail >= 0.65) {
-      const sheen = ctx.createLinearGradient(-r, -r, r, r);
-      sheen.addColorStop(0, "rgba(255,255,255,0.34)");
-      sheen.addColorStop(0.28, "rgba(255,255,255,0)");
-      sheen.addColorStop(0.72, "rgba(255,255,255,0.12)");
-      sheen.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.globalCompositeOperation = "screen";
-      ctx.globalAlpha *= 0.7;
-      ctx.fillStyle = sheen;
-      ctx.fillRect(-r * 1.4, -r * 1.4, r * 2.8, r * 2.8);
-    }
-    ctx.restore();
-
-    if (bubble.isWhite) {
-      ctx.save();
-      traceShape(1.02);
-      ctx.clip();
-      ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-      ctx.fillRect(-r * 1.5, -r * 1.5, r * 3, r * 3);
-      ctx.restore();
-    } else if (bubble.isSuper || bubble.isClear || bubble.isBleach || bubble.isBomb) {
-      ctx.save();
-      traceShape(1.02);
-      ctx.clip();
-      ctx.fillStyle = colorWithAlpha(color.light, 0.14);
-      ctx.fillRect(-r * 1.5, -r * 1.5, r * 3, r * 3);
-      ctx.restore();
-    }
-
-    ctx.globalCompositeOperation = "source-over";
-    traceShape(1.06);
-    ctx.strokeStyle = colorWithAlpha(color.deep, bubble.isWhite ? 0.16 : 0.22);
-    ctx.lineWidth = Math.max(1.4, r * 0.07);
-    ctx.stroke();
-    traceShape(1.01);
-    ctx.strokeStyle = colorWithAlpha(color.light, 0.68);
-    ctx.lineWidth = Math.max(1.4, r * 0.062);
-    ctx.stroke();
-    if (detail >= 0.78) {
-      traceShape(0.92);
-      ctx.strokeStyle = "rgba(255,255,255,0.28)";
-      ctx.lineWidth = Math.max(1, r * 0.032);
-      ctx.stroke();
-    }
-
-    ctx.globalAlpha *= 0.72;
-    ctx.beginPath();
-    ctx.ellipse(-r * 0.35, -r * 0.38, r * 0.25, r * 0.08, -0.62, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
-    if (detail >= 0.6) {
-      ctx.beginPath();
-      ctx.arc(r * 0.36, r * 0.22, r * 0.14, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      ctx.arc(x, y, Math.max(3, r * 0.075), 0, Math.PI * 2);
+      ctx.fillStyle = color.deep;
       ctx.fill();
+      ctx.strokeStyle = ready ? "rgba(255,255,255,0.98)" : color.light;
+      ctx.lineWidth = ready ? 2 : 1;
+      ctx.stroke();
+      if (ready) {
+        ctx.beginPath();
+        ctx.arc(x, y, r * 0.87, Math.PI * 0.32, Math.PI * 0.68);
+        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.lineWidth = Math.max(2, r * 0.047);
+        ctx.lineCap = "round";
+        ctx.stroke();
+      }
+      ctx.restore();
     }
-    ctx.restore();
-
     return true;
   }
 
@@ -11251,8 +11029,7 @@
     const whiteLeft = bubble.isWhite && bubble.whiteUntil > 0 ? Math.max(0, bubble.whiteUntil - state.elapsed) : 0;
     const whiteProgress = bubble.isWhite && bubble.whiteUntil > 0 ? clamp(whiteLeft / decolorDuration, 0, 1) : 1;
     const whiteWarning = bubble.isWhite && bubble.whiteUntil > 0 ? 1 - smoothstep(0, decolorWarningMs, whiteLeft) : 0;
-    const whiteBlink = whiteWarning * (0.5 + Math.sin(state.visualTime / 82) * 0.5);
-    const whiteAlpha = bubble.isWhite ? clamp(0.94 + whiteProgress * 0.05 - whiteBlink * 0.16, 0.76, 1) : 1;
+    const whiteAlpha = 1;
     const drawAlpha = whiteAlpha * revealAlpha * transitionAlpha;
 
     if (bubble.isDrag) {
@@ -11285,12 +11062,12 @@
     ctx.translate(x, y);
     const squash = bubble.wallSquash ?? 0;
     const squashLength = Math.hypot(bubble.wallSquashNx || 0, bubble.wallSquashNy || 0);
-    if (squash > 0.01 && squashLength > 0.1) {
+    if (Math.abs(squash) > 0.001 && squashLength > 0.1 && !reducedMotion.matches) {
       const nx = bubble.wallSquashNx / squashLength;
       const ny = bubble.wallSquashNy / squashLength;
       const squashAngle = Math.atan2(ny, nx);
       const normalScale = 1 - squash * 0.82;
-      const tangentScale = 1 + squash * 0.38;
+      const tangentScale = 1 / normalScale;
       ctx.rotate(squashAngle);
       ctx.scale(normalScale, tangentScale);
       ctx.rotate(-squashAngle);
@@ -12622,16 +12399,16 @@
 
   const tutorialSlides = [
     {
-      scene: "life", kicker: "生命", title: "三颗爱心，用完就结束",
-      copy: "点错、漏掉泡泡或蓄力泡爆炸，都会少一颗。正确点击会为下一颗爱心充能。",
-      tip: "故意点错一次，看看爱心减少", label: "观察生命变化",
-      instruction: "点一下颜色不对的泡泡", success: "爱心少了一颗。正式游戏里要避免失误。", focusLabel: "生命在这里",
-    },
-    {
       scene: "normal", kicker: "普通泡泡", title: "泡泡和背景同色，再点",
       copy: "蓝泡在蓝色背景、粉泡在粉色背景时，轻点一下。颜色不一样时不要点。",
       tip: "点掉两个同色泡泡", label: "同色时点击",
       instruction: "找出两个同色泡泡并点掉", success: "正确，你认出了同色泡泡。",
+    },
+    {
+      scene: "life", kicker: "生命", title: "三颗爱心，用完就结束",
+      copy: "点错、漏掉泡泡或蓄力泡爆炸，都会少一颗。正确点击会为下一颗爱心充能。",
+      tip: "故意点错一次，看看爱心减少", label: "观察生命变化",
+      instruction: "点一下颜色不对的泡泡", success: "爱心少了一颗。正式游戏里要避免失误。", focusLabel: "生命在这里",
     },
     {
       scene: "chargeDemo", kicker: "蓄力泡", title: "先看一次：它会越长越大",
@@ -12682,10 +12459,10 @@
       instruction: "只点击正在飞行的炸弹泡", success: "正确，炸弹清掉了附近泡泡。",
     },
     {
-      scene: "skill", kicker: "一键清屏", title: "右上角显示 READY，就点它",
+      scene: "skill", kicker: "一键清屏", title: "右上角显示“可用”，就点它",
       copy: "一键清屏会清掉画面里所有泡泡。使用后，正确点击可以重新充能。",
       tip: "只点击右上角发光的清屏按钮", label: "清除全部泡泡",
-      instruction: "点击右上角的“清屏 READY”", success: "正确，所有泡泡都被清空。", focusLabel: "点这里清屏",
+      instruction: "点击右上角的“清屏 可用”", success: "正确，所有泡泡都被清空。", focusLabel: "点这里清屏",
     },
   ];
 
@@ -13082,6 +12859,8 @@
     tutorialRun.resolveAt = 0;
     state.paused = true;
     state.water = 100;
+    state.damageRecoveryUntil = 0;
+    state.invulnerableUntil = 0;
     state.dragPointerId = null;
     state.dragBubbleUid = null;
     clearRuntimeEffects();
@@ -13369,7 +13148,7 @@
     }
     if (tutorialRun.deadlineAt > 0 && state.elapsed >= tutorialRun.deadlineAt) {
       retryTutorialPractice(scene === "skill"
-        ? "要点击右上角发光的“清屏 READY”按钮"
+        ? "要点击右上角发光的“清屏 可用”按钮"
         : "炸弹泡飞走了。认准带引线的炸弹泡并及时点击");
       return;
     }
@@ -13562,6 +13341,7 @@
       settingsLevelSelect.value = String(displayDifficultyLevel());
     }
     pauseGame();
+    settingsReturnFocus = document.activeElement;
     settingsPanel.classList.add("open");
     settingsPanel.setAttribute("aria-hidden", "false");
     settingsScrim?.classList.add("open");
@@ -13570,11 +13350,12 @@
     settingsButton?.setAttribute("aria-label", "关闭设置");
     phoneShell?.classList.add("settings-open");
     syncSettingsPanel();
-    if (musicEnabled && state.running) playBackgroundMusic();
+    settingsCloseButton?.focus({ preventScroll: true });
   }
 
   function closeSettings({ resume = true } = {}) {
     if (!settingsPanel) return;
+    const wasOpen = settingsAreOpen();
     setSettingsAdminOpen(false);
     settingsPanel.classList.remove("open");
     settingsPanel.setAttribute("aria-hidden", "true");
@@ -13584,6 +13365,7 @@
     settingsButton?.setAttribute("aria-label", "打开设置");
     phoneShell?.classList.remove("settings-open");
     if (resume) resumeGame();
+    if (wasOpen && !document.hidden) (settingsReturnFocus || settingsButton)?.focus({ preventScroll: true });
     syncSettingsPanel();
   }
 
@@ -13698,6 +13480,8 @@
     state.comboRecoveryUntil = 0;
     state.comboRecoveryPower = 0;
     state.elapsed = Math.max(0, (targetLevel - 1) * stageDurationMs);
+    state.damageRecoveryUntil = 0;
+    state.invulnerableUntil = 0;
     state.water = 100;
     state.wrongStreak = 0;
     state.lastUsefulActionAt = state.elapsed;
@@ -13860,6 +13644,46 @@
   canvas.addEventListener("pointermove", handlePointerMove, { passive: false });
   canvas.addEventListener("pointerup", handlePointerEnd);
   canvas.addEventListener("pointercancel", handlePointerEnd);
+  function initGlassInterface() {
+    document.querySelectorAll(".sample-canvas").forEach((surface) => {
+      const tone = palette[Number(surface.dataset.color)];
+      window.PaopaoBubbleMaterial.draw(surface.getContext("2d"), tone, 128, 128, 100, { reducedMotion: true });
+      const button = surface.closest("button");
+      button.addEventListener("click", () => {
+        button.classList.remove("is-squishing");
+        // Restart the short, user-triggered spring animation on every tap.
+        void button.offsetWidth;
+        button.classList.add("is-squishing");
+        unlockGameAudioFromGesture();
+        playPop("regular", 0, 0.55);
+        navigator.vibrate?.(8);
+      });
+      button.addEventListener("animationend", () => button.classList.remove("is-squishing"));
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented) return;
+      const panel = settingsAreOpen() ? settingsPanel : homeLeaderboardIsOpen() ? leaderboardOverlay : null;
+      if (panel && event.key === "Tab") {
+        const controls = Array.from(panel.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]'))
+          .filter((element) => element.getClientRects().length > 0 && !element.closest("[hidden]"));
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (first && (!panel.contains(document.activeElement) || (event.shiftKey && document.activeElement === first))) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (last && !event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+      const editing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+      if (!editing && !panel && state.running && !state.tutorialMode && (event.key === "Escape" || event.key.toLowerCase() === "p")) {
+        event.preventDefault();
+        openSettings();
+      }
+    });
+  }
+
   function applyViewportResize() {
     viewportResizeRequest = 0;
     resize();
@@ -13897,6 +13721,7 @@
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      if (state.running && !state.paused) { pauseGame(); openSettings(); }
       pauseBackgroundMusic();
       if (frameRequest) {
         cancelAnimationFrame(frameRequest);
@@ -13923,6 +13748,7 @@
   initBackgroundMusic();
   syncMusicControls();
   initSettingsControls();
+  initGlassInterface();
   initDebugControls();
   updateHud();
   draw();
