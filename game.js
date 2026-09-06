@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.8.1";
+  const buildVersion = "1.9.0";
   let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
@@ -10330,6 +10330,7 @@
         fps: profile.backgroundFps,
         frameSkip: profile.backgroundFrameSkip,
         contours: profile.contours,
+        reducedMotion: reducedMotion.matches,
       });
       return;
     }
@@ -13690,6 +13691,8 @@
       if (visible && now - previewTime >= interval) {
         const dt = Math.min(0.05, (now - previewTime) / 1000 || 1 / 30);
         previewTime = now;
+        if (!reducedMotion.matches) state.visualTime += dt * 1000;
+        draw();
         for (const sample of samples) {
           if (!sample.held) {
             const spring = window.PaopaoBubbleMaterial.stepSpring(sample.position, sample.velocity, dt);

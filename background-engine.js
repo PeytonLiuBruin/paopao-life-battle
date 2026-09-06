@@ -7,12 +7,12 @@
   const fieldCtx = fieldCanvas.getContext("2d", { alpha: false });
 
   const liquidPalette = {
-    blue: [63, 158, 187],
-    blueDeep: [38, 123, 163],
-    blueLight: [147, 222, 231],
-    pink: [233, 138, 172],
-    pinkDeep: [197, 100, 143],
-    pinkLight: [255, 186, 201],
+    blue: [51, 150, 211],
+    blueDeep: [27, 91, 155],
+    blueLight: [130, 211, 242],
+    pink: [227, 116, 170],
+    pinkDeep: [158, 65, 128],
+    pinkLight: [252, 179, 212],
     boundary: [43, 39, 86],
     boundaryLight: [233, 252, 255],
   };
@@ -49,6 +49,13 @@
   let contourSegmentCount = 0;
   let contourRenderedTime = Number.NaN;
   const pixelColor = [0, 0, 0];
+  const pearlImage = typeof Image === "undefined" ? null : new Image();
+  let pearlReady = false;
+  if (pearlImage) {
+    pearlImage.decoding = "async";
+    pearlImage.onload = () => { pearlReady = true; };
+    pearlImage.src = "./assets/background/pearl-silk.webp?v=1.9.0";
+  }
 
   const PATTERNS = {
     WAVE_CENTER: {
@@ -595,11 +602,11 @@
   }
 
   function updateShadeCaches(t) {
-    const lightPhase = t * 0.7;
-    const shimmerPhase = t * 1.6;
+    const lightPhase = t * 0.055;
+    const shimmerPhase = t * 0.09;
     for (let y = 0; y < lowHeight; y += 1) {
       const ny = nyByY[y];
-      const blueMix = 0.28 + 0.22 * Math.sin(ny * 5.6 + t);
+      const blueMix = 0.36 + 0.20 * Math.sin(ny * 3.1 + t * 0.085);
       rowBlueR[y] = mix(liquidPalette.blueDeep[0], liquidPalette.blueLight[0], blueMix);
       rowBlueG[y] = mix(liquidPalette.blueDeep[1], liquidPalette.blueLight[1], blueMix);
       rowBlueB[y] = mix(liquidPalette.blueDeep[2], liquidPalette.blueLight[2], blueMix);
@@ -610,7 +617,7 @@
     }
     for (let x = 0; x < lowWidth; x += 1) {
       const nx = nxByX[x];
-      const pinkMix = 0.32 + 0.2 * Math.cos(nx * 5.1 - t * 0.7);
+      const pinkMix = 0.46 + 0.18 * Math.cos(nx * 3.2 - t * 0.07);
       colPinkR[x] = mix(liquidPalette.pinkDeep[0], liquidPalette.pinkLight[0], pinkMix);
       colPinkG[x] = mix(liquidPalette.pinkDeep[1], liquidPalette.pinkLight[1], pinkMix);
       colPinkB[x] = mix(liquidPalette.pinkDeep[2], liquidPalette.pinkLight[2], pinkMix);
@@ -622,22 +629,28 @@
   }
 
   function shadePixel(field, x, y, band) {
-    const amount = smoothstep(-band, band, field);
+    const transition = smoothstep(-band, band, field);
+    const pinkChroma = colPinkR[x] - colPinkB[x];
+    const blueChroma = rowBlueB[y] - rowBlueR[y];
+    const balance = pinkChroma / Math.max(1, pinkChroma + blueChroma);
+    // Keep the visible blue/pink crossover on the exact gameplay boundary.
+    const amount = transition < 0.5 ? transition * 2 * balance
+      : balance + (transition - 0.5) * 2 * (1 - balance);
     let r = mix(colPinkR[x], rowBlueR[y], amount);
     let g = mix(colPinkG[x], rowBlueG[y], amount);
     let b = mix(colPinkB[x], rowBlueB[y], amount);
     const boundary = Math.exp(-Math.abs(field) / 0.032);
     const hardLine = Math.exp(-Math.abs(field) / 0.013);
     const shimmer = 0.5 + (colShimmerSin[x] * rowShimmerCos[y] + colShimmerCos[x] * rowShimmerSin[y]) * 0.5;
-    const boundaryMix = boundary * 0.1;
+    const boundaryMix = boundary * 0.045;
     r = mix(r, liquidPalette.boundary[0], boundaryMix);
     g = mix(g, liquidPalette.boundary[1], boundaryMix);
     b = mix(b, liquidPalette.boundary[2], boundaryMix);
-    const lineMix = hardLine * (0.12 + shimmer * 0.04);
+    const lineMix = hardLine * (0.025 + shimmer * 0.01);
     r = mix(r, liquidPalette.boundaryLight[0], lineMix);
     g = mix(g, liquidPalette.boundaryLight[1], lineMix);
     b = mix(b, liquidPalette.boundaryLight[2], lineMix);
-    const cleanLight = 0.94 + 0.055 * (colLightSin[x] * rowLightCos[y] + colLightCos[x] * rowLightSin[y]);
+    const cleanLight = 0.96 + 0.025 * (colLightSin[x] * rowLightCos[y] + colLightCos[x] * rowLightSin[y]);
     pixelColor[0] = clamp(r * cleanLight, 0, 255);
     pixelColor[1] = clamp(g * cleanLight, 0, 255);
     pixelColor[2] = clamp(b * cleanLight, 0, 255);
@@ -651,7 +664,7 @@
     const needsSeparateVisualField =
       frameState.current.type === "pulse" ||
       (frameState.transition > 0 && frameState.next?.type === "pulse");
-    const band = 0.078 + Math.sin(t * 0.34) * 0.006;
+    const band = 0.062 + Math.sin(t * 0.08) * 0.004;
     updateShadeCaches(t);
     let offset = 0;
     for (let y = 0; y < lowHeight; y += 1) {
@@ -849,9 +862,8 @@
       contourRenderedTime = renderedTime;
     }
     if (!contourSegmentCount) return;
-    strokeSegments(ctx, "rgba(29, 35, 72, 0.22)", qualityScale < 0.7 ? 1.7 : 2);
-    strokeSegments(ctx, "rgba(246, 253, 255, 0.44)", qualityScale < 0.7 ? 0.82 : 1);
-    strokeSegments(ctx, "rgba(255, 190, 210, 0.16)", 0.45);
+    strokeSegments(ctx, "rgba(29, 35, 72, 0.10)", 1.2);
+    strokeSegments(ctx, "rgba(246, 253, 255, 0.14)", 0.65);
   }
 
   function drawPulseBackground(ctx, frameState) {
@@ -932,27 +944,28 @@
     }
   }
 
-  function drawSilkThreads(ctx, t) {
-    // Low-contrast continuous fibers; color boundaries and matching stay intact.
-    // Neighboring strands bend together, with no sparkling or brightness pulse.
-    const count = Math.min(38, Math.max(18, Math.ceil(width / 14)));
+  function drawPearlSilk(ctx, t) {
+    if (!pearlReady || !pearlImage.naturalWidth) return;
+    const sourceWidth = pearlImage.naturalWidth, sourceHeight = pearlImage.naturalHeight;
+    const scale = Math.max(width / sourceWidth, height / sourceHeight) * 1.12;
+    const paintedWidth = sourceWidth * scale, paintedHeight = sourceHeight * scale;
+    const baseX = (width - paintedWidth) / 2;
+    const baseY = (height - paintedHeight) / 2 + Math.sin(t * 0.055) * height * 0.012;
     ctx.save();
-    ctx.lineCap = "round";
-    for (let i = -1; i <= count; i++) {
-      const base = (i + 0.5) * width / count;
-      ctx.beginPath();
-      for (let y = -24; y <= height + 24; y += 24) {
-        const v = y / height;
-        const x = base + Math.sin(v * 4.2 + t * 0.17 + i * 0.19) * width * 0.024
-          + Math.sin(v * 9.1 - t * 0.11 + i * 0.28) * width * 0.006;
-        if (y === -24) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = "rgba(225,246,255,0.012)";
-      ctx.lineWidth = 6;
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(239,250,255,0.036)";
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
+    ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();
+    ctx.globalCompositeOperation = "soft-light";
+    ctx.globalAlpha = 0.88;
+    ctx.imageSmoothingEnabled = true;
+    // Overscan keeps every edge covered while a slow displacement passes through
+    // the original artwork. Integer strip edges avoid double-blended seams.
+    const stripHeight = 12;
+    for (let y = 0; y < height; y += stripHeight) {
+      const h = Math.min(stripHeight, height - y);
+      const v = y / height;
+      const drift = Math.sin(v * 4.0 + t * 0.13) * width * 0.015
+        + Math.sin(v * 7.0 - t * 0.075) * width * 0.006;
+      ctx.drawImage(pearlImage, 0, (y - baseY) / scale, sourceWidth, h / scale,
+        baseX + drift, y, paintedWidth, h);
     }
     ctx.restore();
   }
@@ -969,10 +982,10 @@
     ctx.drawImage(fieldCanvas, 0, 0, width, height);
     if (frameState.current.type === "pulse") {
       drawPulseBackground(ctx, frameState);
-      drawSilkThreads(ctx, options?.reducedMotion ? 0 : frameTime);
+      drawPearlSilk(ctx, options?.reducedMotion ? 0 : frameTime);
       return;
     }
-    drawSilkThreads(ctx, options?.reducedMotion ? 0 : frameTime);
+    drawPearlSilk(ctx, options?.reducedMotion ? 0 : frameTime);
     drawContours(ctx, frameTime);
   }
 

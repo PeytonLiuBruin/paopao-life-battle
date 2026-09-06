@@ -1,0 +1,7 @@
+# Pearl silk artwork
+
+Original artwork generated with the built-in image generation tool for Paopao Life Battle on 2026-09-06. Optimized from the generated PNG to a 768×1152 WebP (17,792 bytes). Used as a neutral luminance material with soft-light blending, preserving the game's blue/pink color field.
+
+Prompt:
+
+Create a production texture asset for a refined abstract moving wallpaper and mobile bubble game background. Portrait 1024x1536, edge-to-edge artwork only, no text, UI, objects, circles or bubbles. A museum-quality macro photograph / abstract light sculpture of liquid pearl silk: two or three immensely broad, weightless, flowing translucent folds forming an elegant asymmetrical S composition. One graceful luminous fold sweeps from upper right to lower left, a second softer fold curves back in lower half. Large serene areas with almost no detail; folds occupy only about a third of the canvas. Smooth soft gradients, beautiful sculptural depth, diffused pearlescent light, extremely fine satin microtexture, no narrow repetitive lines, stripes, tiny threads, sparkles, or high-frequency pattern. Monochrome neutral silver-gray and ivory only, no colored tint: this is a luminance texture that the game will colorize blue and pink. Midtone dominant, broad soft highlights below pure white, gentle shadows well above black. Quiet, luxurious, contemplative, visually sophisticated enough for a phone wallpaper. Subtle satin rather than shiny chrome, no hard edges, no dramatic black shadows. Full bleed, no frame, no watermark.
