@@ -499,7 +499,7 @@ test("released drag shape rebounds independently of the bubble's position and ve
   assert.ok(Math.abs(radiusAtPull(stretched) - radiusAtPull(rest)) < 0.001);
 });
 
-test("blob input includes protrusions and excludes wrong-color empty dents", () => {
+test("animated membrane input follows protrusions and excludes wrong-color empty edges", () => {
   const c=meshIntegrationContext([...candidateFunctions,"usesGlassMesh","meshOptionsForBubble","bubbleBodyRadiusAt"], {
     backgroundColorIndexAt: () => 1,
   });
@@ -511,7 +511,7 @@ test("blob input includes protrusions and excludes wrong-color empty dents", () 
   const radii=angles.map(a=>c.bubbleBodyRadiusAt(b,b.x+Math.cos(a),b.y+Math.sin(a)));
   const maximum=Math.max(...radii),minimum=Math.min(...radii);
   const outerAngle=angles[radii.indexOf(maximum)],dentAngle=angles[radii.indexOf(minimum)];
-  assert(maximum>44&&minimum<34);
+  assert(maximum>40&&minimum<40);
   assert.ok(c.bubbleInputCandidateAt(b.x+Math.cos(outerAngle)*(maximum-1),b.y+Math.sin(outerAngle)*(maximum-1),true));
   assert.equal(c.bubbleInputCandidateAt(b.x+Math.cos(dentAngle)*(minimum+2),b.y+Math.sin(dentAngle)*(minimum+2),true),null);
   c.canPopBubble=()=>true;

@@ -255,6 +255,18 @@ test('empty batches allocate nothing, while invisible and invalid entries create
   assert.equal(h.named('drawElements').length, 2);
 });
 
+test('fixed-center animation uploads changing shape, ripples and reflection to the GPU', () => {
+  const h=harness(), frames=[];
+  for(let i=0;i<4;i++){
+    h.resetCalls();
+    h.api.renderScene(h.target,[{tone,x:100,y:150,r:40,options:{seed:2,age:i/15,reducedMotion:true}}],logical);
+    const value=(name)=>h.calls.find(c=>c.args[0]===name)?.args.slice(1);
+    frames.push({center:value('uCenter'),radius:value('uRadius'),shape:value('uShape'),wave:value('uWave'),reflection:value('uReflection')});
+  }
+  for(const f of frames){assert.deepEqual(f.center,frames[0].center);assert.deepEqual(f.radius,frames[0].radius);}
+  for(const key of ['shape','wave','reflection'])assert.equal(new Set(frames.map(f=>JSON.stringify(f[key]))).size,4);
+});
+
 let failed = 0;
 for (const { name, run } of tests) {
   try { run(); console.log(`PASS ${name}`); }

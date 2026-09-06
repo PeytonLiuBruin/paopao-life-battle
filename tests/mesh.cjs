@@ -113,20 +113,13 @@ test('signed spring recovery moves through outward overshoot then settles', () =
   assert(Math.hypot(...position([1,0,0],outward))>1);
 });
 
-test('reduced motion freezes distinct blob silhouettes and material has no time-based blink uniform', () => {
-  const p=material.parameters({age:27,phase:1,speed:140,pressure:.2,reducedMotion:true});
-  assert(p.a===0&&p.b===0&&p.c===0&&p.pressure===0);
-  const later=material.parameters({age:90,phase:1,speed:140,pressure:.2,reducedMotion:true});
-  const radii=[];
-  for(let i=0;i<20;i++){
-    const n=directionAt(i,20);
-    assert.deepEqual(position(n,p),position(n,later));
-    radii.push(Math.hypot(...position(n,p)));
-  }
-  assert(Math.max(...radii)-Math.min(...radii)>.2);
-  const fragment=material.shaders.fragment;
-  assert(!/uniform\s+\w+\s+u(?:Time|Age|Phase|Blink|Pulse)\b/i.test(fragment));
-  assert(!/\bsin\s*\(/.test(fragment));
+test('reduced motion lowers membrane amplitude without freezing it or blinking the body', () => {
+  const full=material.parameters({age:2,seed:3}),reduced=material.parameters({age:2,seed:3,reducedMotion:true});
+  const later=material.parameters({age:2.2,seed:3,reducedMotion:true});
+  assert(reduced.waveAmplitude>0&&reduced.waveAmplitude<full.waveAmplitude);
+  assert.notDeepEqual(reduced.shape,later.shape);
+  assert.notDeepEqual(reduced.reflection,later.reflection);
+  assert(!/uniform\s+\w+\s+u(?:Blink|Pulse)\b/i.test(material.shaders.fragment));
 });
 
 test('GPU vertex shader displaces actual 3D vertices and supplies surface normals', () => {
@@ -177,24 +170,21 @@ test('wind moves a bounded blob surface while volume remains approximately const
   assert(difference>10);
 });
 
-test('fixed-center silhouettes include clear oval and concave blob forms', () => {
-  const outlines = [];
-  let concave = 0;
-  for (let seed=0;seed<4;seed++) {
-    const options={seed,age:1,phase:0,speed:0,wind:0};
-    const points=Array.from({length:96},(_,i)=>{
-      const angle=i*Math.PI*2/96,r=material.projectedRadius(angle,options);
-      return [r*Math.cos(angle),r*Math.sin(angle),0];
-    });
-    const radii=points.map(p=>Math.hypot(...p));
-    if(seed>0) assert(Math.max(...radii)/Math.min(...radii)>1.3);
-    for(let i=0;i<points.length;i++) {
-      if(cross(sub(points[(i+1)%96],points[i]),sub(points[(i+2)%96],points[(i+1)%96]))[2]<-1e-5)concave++;
+test('stationary bubbles stay rounded while edges and reflections animate every frame', () => {
+  for(let seed=0;seed<8;seed++){
+    let totalEdgeChange=0;
+    const reflectionStates=[];
+    for(let frame=0;frame<24;frame++){
+      const options={seed,age:frame/30,speed:0,wind:0};
+      const p=material.parameters(options);
+      reflectionStates.push(JSON.stringify(p.reflection));
+      const radii=Array.from({length:24},(_,i)=>material.projectedRadius(i*Math.PI/12,{parameters:p}));
+      assert(Math.min(...radii)>.77&&Math.max(...radii)<1.23);
+      for(let i=0;i<24;i++)totalEdgeChange+=Math.abs(radii[i]-material.projectedRadius(i*Math.PI/12,{...options,age:(frame+1)/30}));
     }
-    outlines.push(points);
+    assert.equal(new Set(reflectionStates).size,24);
+    assert(totalEdgeChange>1,'stationary membrane must animate through successive frames');
   }
-  assert(concave>10,'blob lobes need actual concave contour sections');
-  assert.equal(new Set(outlines.map(JSON.stringify)).size,4);
 });
 
 test('outline changes over time with zero movement and retains substantial size variety', () => {

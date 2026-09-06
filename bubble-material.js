@@ -42,7 +42,7 @@
   function personality(seed = 0) {
     const noise = (n) => { const value = Math.sin(seed * 127.1 + n * 311.7) * 43758.5453; return value - Math.floor(value); };
     const family = Math.abs(Math.floor(seed)) % 4;
-    const silhouettes = [[0.065, 0.035, 0.012], [0.23, 0.055, -0.025], [0.13, 0.15, 0.025], [0.07, 0.19, 0.04]];
+    const silhouettes = [[0.012, 0.006, 0.002], [0.035, 0.009, -0.003], [0.018, 0.016, 0.003], [0.008, 0.021, 0.005]];
     return {
       family, sizeScale: 0.76 + noise(14) * 0.46,
       shape: silhouettes[family].map((v) => v * (0.9 + noise(15) * 0.2)),
@@ -60,16 +60,16 @@
   function parameters(options = {}) {
     const time = options.age || 0, phase = options.phase || 0;
     const individual = personality(options.seed ?? phase);
-    const motion = options.reducedMotion ? 0 : 1;
+    const motion = options.reducedMotion ? 0.45 : 1;
     const speed = clamp((options.speed || 0) / 180, 0, 1);
     const wind = clamp(options.wind || 0, -1, 1);
     const t = time * individual.rate;
-    // Large-scale contour and small ripples are separate. Reduced motion freezes
-    // the individual silhouette instead of turning every bubble into a circle.
-    const shapeTime = motion * t;
-    const shape = individual.shape.map((v, i) => v + motion * (i === 2 ? 0.018 : 0.035)
-      * Math.sin(shapeTime * (1.7 + i * 0.49) + phase + i * 1.4));
-    const angle = individual.shapeAngle + motion * 0.13 * Math.sin(shapeTime * 1.1 + phase);
+    // Nearly round at rest. Oscillating surface modes dominate the tiny individual
+    // bias; reduced motion lowers amplitude while keeping the membrane alive.
+    const shapeTime = t;
+    const shape = individual.shape.map((v, i) => v + motion * [0.075, 0.038, 0.016][i]
+      * Math.sin(shapeTime * [3.8, 6.1, 10.7][i] + phase + i * 1.4));
+    const angle = individual.shapeAngle + motion * 0.24 * Math.sin(shapeTime * 2.3 + phase);
     const shapeAxis = [Math.cos(angle), Math.sin(angle), 0];
     const volumeScale = Math.pow(1 + 3 * (shape[0] ** 2 * 4 / 15 + shape[1] ** 2 * 8 / 35 + shape[2] ** 2 * 64 / 315), -1 / 3);
     return {
@@ -80,7 +80,8 @@
       axisA: individual.axisA, axisB: individual.axisB,
       waveAxis: individual.waveAxis,
       waveAmplitude: motion * individual.softness * (0.009 + Math.abs(wind) * 0.009),
-      wavePhase: t * 3.4 + phase,
+      wavePhase: t * 12.7 + phase,
+      reflection: [motion * 0.20 * Math.sin(t * 1.9 + phase), motion * 0.16 * Math.sin(t * 2.7 + phase * 0.7), motion * 0.12 * Math.sin(t * 1.3 + phase)],
       pressure: motion * clamp(options.pressure || 0, -0.15, 0.3),
       direction: normalize(options.contactDirection || [-0.6, 0.4, 0.7]),
       flow: normalize(options.flowDirection || individual.axisA),
@@ -93,8 +94,8 @@
     const n = normalize(direction), p = options.parameters || parameters(options);
     const localA = p.axisA || axisA, localB = p.axisB || axisB;
     const waveAxis = p.waveAxis || axisA, amplitude = p.waveAmplitude || 0, phase = p.wavePhase || 0;
-    const waveAngle = 4.2 * dot(n, waveAxis) - phase;
-    const wave = amplitude * (Math.sin(waveAngle) + Math.sin(phase) * Math.sin(4.2) / 4.2);
+    const waveAngle = 7.0 * dot(n, waveAxis) - phase;
+    const wave = amplitude * (Math.sin(waveAngle) + Math.sin(phase) * Math.sin(7.0) / 7.0);
     const a = dot(n, p.flow), b = dot(n, localB), c = dot(n, localA);
     const lobe = Math.exp(8 * (dot(n, p.direction) - 1));
     const shape = p.shape || [0, 0, 0], shapeAxis = p.shapeAxis || [1, 0, 0];
@@ -110,7 +111,7 @@
     const gradient = n.map((_, i) => gx * shapeAxis[i] + gy * crossAxis[i] + p.a * 3 * a * p.flow[i]
       + p.b * (15 * b * b - 3) / 2 * localB[i]
       + p.c * (140 * c ** 3 - 60 * c) / 8 * localA[i]
-      - p.pressure * 8 * lobe * p.direction[i] + amplitude * 4.2 * Math.cos(waveAngle) * waveAxis[i]);
+      - p.pressure * 8 * lobe * p.direction[i] + amplitude * 7.0 * Math.cos(waveAngle) * waveAxis[i]);
     const radialGradient = dot(n, gradient);
     const normal = normalize(n.map((v, i) => f * v - gradient[i] + v * radialGradient));
     return { position: n.map((v) => v * f * volumeScale), normal };
@@ -166,8 +167,8 @@
       vec3 a1 = uAxisB;
       float s0 = dot(n, uFlow), s1 = dot(n, a1), s2 = dot(n, a0);
       float lobe = exp(8.0 * (dot(n, uContact) - 1.0));
-      float waveAngle = 4.2 * dot(n, uWaveAxis) - uWave.y;
-      float wave = uWave.x * (sin(waveAngle) + sin(uWave.y) * sin(4.2) / 4.2);
+      float waveAngle = 7.0 * dot(n, uWaveAxis) - uWave.y;
+      float wave = uWave.x * (sin(waveAngle) + sin(uWave.y) * sin(7.0) / 7.0);
       vec3 crossAxis = vec3(-uShapeAxis.y, uShapeAxis.x, 0.0);
       float x = dot(n, uShapeAxis), y = dot(n, crossAxis);
       float x2 = x * x, y2 = y * y;
@@ -182,7 +183,7 @@
       vec3 g = gx * uShapeAxis + gy * crossAxis + 3.0 * uModes.x * s0 * uFlow
         + uModes.y * (15.0 * s1 * s1 - 3.0) * 0.5 * a1
         + uModes.z * (140.0 * s2 * s2 * s2 - 60.0 * s2) * 0.125 * a0
-        - uPressure * 8.0 * lobe * uContact + uWave.x * 4.2 * cos(waveAngle) * uWaveAxis;
+        - uPressure * 8.0 * lobe * uContact + uWave.x * 7.0 * cos(waveAngle) * uWaveAxis;
       vec3 p = n * f * uVolumeScale;
       vNormal = normalize(f * n - (g - n * dot(n, g)));
       vPosition = p;
@@ -204,6 +205,7 @@
     uniform float uPreview;
     uniform float uBurst;
     uniform float uReady;
+    uniform vec3 uReflection;
     uniform vec3 uContact;
     varying vec3 vNormal;
     varying vec3 vPosition;
@@ -223,29 +225,30 @@
       float rim = pow(1.0 - ndv, 2.15);
       float fresnel = 0.025 + 0.975 * pow(1.0 - ndv, 5.0);
       vec3 ray = refract(-V, N, 0.755);
-      float thickness = 0.12 + 1.65 * max(0.0, vPosition.z);
+      float thickness = 0.10 + 0.55 * max(0.0, vPosition.z);
       vec2 uv = gl_FragCoord.xy / uResolution;
       vec2 offset = ray.xy * uRadius / uResolution * thickness * 0.34;
       vec3 transmitted = vec3(backgroundAt(uv + offset * 1.018).r,
         backgroundAt(uv + offset).g, backgroundAt(uv + offset * 0.982).b);
       vec3 absorption = exp(-(vec3(1.0) - uTint) * (0.1 + thickness * 0.1 + rim * 0.42));
       transmitted *= absorption;
-      vec3 L = normalize(vec3(-0.5, 0.72, 1.0));
+      vec3 L = normalize(vec3(-0.5, 0.72, 1.0) + uReflection);
       vec3 H = normalize(L + V);
-      float spec = pow(max(dot(N, H), 0.0), 115.0);
+      float spec = pow(max(dot(N, H), 0.0), 190.0);
       float broad = pow(max(dot(N, H), 0.0), 18.0);
       vec3 R = reflect(-V, N);
+      R.xy += uReflection.xy;
       // Broad studio panels become curved reflections on the displaced surface.
-      float panel = exp(-sq((R.x + 0.46) / 0.19) - sq((R.y - 0.62) / 0.45)) * step(0.0, R.z);
-      float side = exp(-sq((R.x - 0.78) / 0.11) - sq((R.y + 0.12) / 0.55));
-      vec3 film = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + ndv * 11.0 + N.y * 2.0);
-      vec3 color = mix(transmitted, uTint * 0.88 + vec3(0.12), 0.17 + rim * 0.28);
+      float panel = exp(-sq((R.x + 0.46) / 0.115) - sq((R.y - 0.62) / 0.34)) * step(0.0, R.z);
+      float side = exp(-sq((R.x - 0.78) / 0.065) - sq((R.y + 0.12) / 0.55));
+      vec3 film = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + ndv * 11.0 + N.y * 2.0 + uReflection.z * 3.0);
+      vec3 color = mix(transmitted, uTint * 0.88 + vec3(0.12), 0.10 + rim * 0.40);
       color = mix(color, uDeep * 0.62 + uTint * 0.38, rim * 0.16);
       color += film * rim * 0.13 + vec3(0.8, 0.93, 1.0) * fresnel * 0.33;
-      color += vec3(1.0) * (spec * 0.72 + broad * 0.065 + panel * 0.55 + side * 0.3);
+      color += vec3(1.0) * (spec * 0.72 + broad * 0.025 + panel * 0.55 + side * 0.3);
       color += vec3(0.7, 0.95, 1.0) * rim * smoothstep(0.4, 0.9, -normalize(vDirection).y) * uReady * 0.25;
       if (uBurst > 0.001) color += vec3(0.28) * (1.0 - smoothstep(0.0, 0.045, abs(hole - mix(1.05, -1.05, uBurst))));
-      float alpha = uAlpha * (0.70 + 0.30 * rim);
+      float alpha = uAlpha * clamp(0.24 + 0.62 * rim + 0.30 * panel + 0.32 * spec, 0.0, 0.94);
       gl_FragColor = vec4(clamp(color, 0.0, 1.0) * alpha, alpha);
     }
   `;
@@ -313,7 +316,7 @@
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
       this.attribute = gl.getAttribLocation(program, "aDirection");
       this.uniforms = {};
-      for (const name of ["Resolution", "Center", "Radius", "Modes", "Pressure", "Contact", "Flow", "Background", "Tint", "Deep", "Alpha", "Preview", "Burst", "Ready", "AxisA", "AxisB", "WaveAxis", "Wave", "Shape", "ShapeAxis", "VolumeScale"]) {
+      for (const name of ["Resolution", "Center", "Radius", "Modes", "Pressure", "Contact", "Flow", "Background", "Tint", "Deep", "Alpha", "Preview", "Burst", "Ready", "AxisA", "AxisB", "WaveAxis", "Wave", "Shape", "ShapeAxis", "VolumeScale", "Reflection"]) {
         this.uniforms[name] = gl.getUniformLocation(program, `u${name}`);
       }
       this.background = gl.createTexture();
@@ -381,6 +384,7 @@
         gl.uniform3fv(u.Shape, p.shape);
         gl.uniform3fv(u.ShapeAxis, p.shapeAxis);
         gl.uniform1f(u.VolumeScale, p.volumeScale);
+        gl.uniform3fv(u.Reflection, p.reflection);
         gl.uniform3fv(u.Tint, rgb(entry.tone.color));
         gl.uniform3fv(u.Deep, rgb(entry.tone.deep));
         gl.uniform1f(u.Alpha, clamp(o.alpha ?? 1, 0, 1));
@@ -418,7 +422,7 @@
     context.globalAlpha *= o.alpha ?? 1;
     for (const face of faces) {
       const rim = (1 - face.n[2]) ** 2;
-      const spec = Math.max(0, dot(face.n, normalize([-0.25, 0.38, 1]))) ** 55;
+      const spec = Math.max(0, dot(face.n, normalize([-0.25 + p.reflection[0], 0.38 + p.reflection[1], 1]))) ** 55;
       const color = tint.map((v) => Math.round(255 * clamp(v * (0.78 + rim * 0.22) + spec * 0.72, 0, 1)));
       context.fillStyle = `rgba(${color.join(",")},${0.11 + rim * 0.58 + spec * 0.55})`;
       context.beginPath();
