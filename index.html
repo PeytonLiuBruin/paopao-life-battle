@@ -9,8 +9,8 @@
     <meta http-equiv="Expires" content="0" />
   <title>泡泡乐 · 蓝粉玻璃泡泡挑战</title>
     <meta name="description" content="看准蓝粉颜色，轻点、滑动、拖拽透明泡泡。三颗生命，无限挑战。" />
-    <link rel="stylesheet" href="./styles.css?v=1.11.0" />
-    <link rel="stylesheet" href="./ui-polish.css?v=1.11.0" />
+    <link rel="stylesheet" href="./styles.css?v=1.12.0" />
+    <link rel="stylesheet" href="./ui-polish.css?v=1.12.0" />
   </head>
   <body>
   <main class="phone-shell" aria-label="泡泡乐游戏">
@@ -125,9 +125,8 @@
       </section>
 
       <section id="curtain" class="curtain">
-        <div class="title-mark" data-edition="3D">泡泡乐</div>
+        <div class="title-mark">泡泡乐</div>
         <div class="start-home">
-          <div class="start-kicker">同色轻点 · 一划连击</div>
           <div class="start-showcase" aria-label="试戳蓝粉泡泡">
             <button class="bubble-sample sample-blue" type="button" aria-label="试戳蓝色泡泡">
               <canvas class="sample-canvas" data-color="0" width="256" height="256" aria-hidden="true"></canvas>
@@ -139,29 +138,21 @@
             </button>
             <small class="sample-tip">按住揉一揉，松手看回弹</small>
           </div>
-          <p class="start-copy">看泡泡中心：蓝色配蓝底，粉色配粉底。轻点或划过同色泡泡，连续击破，挑战更高关卡。</p>
-          <div class="start-status" aria-label="游戏特点">
-            <span><b>3</b> 颗生命</span>
-            <i></i>
-            <span><b>∞</b> 无限挑战</span>
-            <i></i>
-            <span><b>↗</b> 连击充能</span>
-          </div>
-          <label class="start-profile" for="playerNameInput">
-            <span>排行榜昵称 · 选填</span>
-            <input id="playerNameInput" type="text" maxlength="10" autocomplete="nickname" placeholder="留空自动取名" />
-            <small id="leaderboardStatus">正在连接全球榜</small>
-          </label>
+          <p class="start-copy">泡泡中心与背景同色时，轻点或划过。</p>
           <div class="start-actions">
-            <button id="startButton" class="primary-button" type="button"><strong>开始挑战</strong><span>进入 Level 1</span></button>
+            <button id="startButton" class="primary-button" type="button"><strong>开始挑战</strong><span>从第 1 关开始</span></button>
             <button id="tutorialButton" class="tutorial-button" type="button"><span class="tutorial-play" aria-hidden="true">?</span><strong>新手教程</strong><small>互动练习</small></button>
             <button id="leaderboardButton" class="leaderboard-button" type="button" aria-controls="leaderboardOverlay" aria-expanded="false">
               <span class="leaderboard-button-icon" aria-hidden="true"><i></i></span>
-              <strong>查看排行榜</strong>
-              <small>全球实时榜</small>
+              <strong>排行榜</strong>
+              <small>查看最佳成绩</small>
             </button>
           </div>
-          <p class="start-footnote">触屏 / 鼠标均可 · 开启声音更有感觉</p>
+          <label class="start-profile" for="playerNameInput">
+            <span>昵称 · 选填</span>
+            <input id="playerNameInput" type="text" maxlength="10" autocomplete="nickname" placeholder="留空自动取名" />
+          </label>
+          <p class="start-footnote">3 颗生命 · 连击为清屏充能</p>
         </div>
         <div id="endStats" class="end-stats"></div>
       </section>
@@ -177,7 +168,7 @@
         <div class="leaderboard-sheet">
           <header class="home-leaderboard-header">
             <div>
-              <span>LIVE RANKING</span>
+              <small id="leaderboardStatus" role="status">正在连接全球榜</small>
               <h2 id="leaderboardTitle">全球排行榜</h2>
             </div>
             <div class="home-leaderboard-header-actions">
@@ -264,14 +255,14 @@
         <button id="rewardedAdSkip" class="rewarded-ad-skip" type="button" hidden>跳过</button>
         <div class="rewarded-ad-progress" aria-hidden="true"><span id="rewardedAdProgress"></span></div>
       </section>
-      <audio id="backgroundMusic" src="./assets/music/bgm.mp3?v=1.11.0" preload="metadata"></audio>
+      <audio id="backgroundMusic" src="./assets/music/bgm.mp3?v=1.12.0" preload="metadata"></audio>
       <div id="startTransition" class="start-transition" aria-hidden="true"></div>
     </main>
 
-    <script src="./firebase-leaderboard.js?v=1.11.0" defer></script>
-    <script src="./liquid-art.js?v=1.11.0" defer></script>
-    <script src="./background-engine.js?v=1.11.0" defer></script>
-    <script src="./bubble-material.js?v=1.11.0" defer></script>
-    <script src="./game.js?v=1.11.0" defer></script>
+    <script src="./firebase-leaderboard.js?v=1.12.0" defer></script>
+    <script src="./liquid-art.js?v=1.12.0" defer></script>
+    <script src="./background-engine.js?v=1.12.0" defer></script>
+    <script src="./bubble-material.js?v=1.12.0" defer></script>
+    <script src="./game.js?v=1.12.0" defer></script>
   </body>
 </html>

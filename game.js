@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.11.0";
+  const buildVersion = "1.12.0";
   let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
@@ -11562,149 +11562,52 @@
   }
 
   function drawWaterStressOverlay() {
-    const water = clamp(state.water, 0, 100);
-    const mood = smoothstep(86, 14, water);
-    const warn = smoothstep(52, 18, water);
-    const danger = smoothstep(24, 0, water);
-    const feedbackLive = state.running || water <= 0;
-    const shock = feedbackLive && state.elapsed < waterShockUntil ? clamp((waterShockUntil - state.elapsed) / 560, 0, 1) : 0;
-    const alert = feedbackLive && state.elapsed < waterCriticalUntil ? clamp((waterCriticalUntil - state.elapsed) / 980, 0, 1) : 0;
-    const strength = clamp(mood * 0.34 + warn * 0.46 + danger * 0.54 + shock * 0.32 + alert * 0.34, 0, 1);
-    if (strength <= 0.01) return;
-    if (!currentPerformanceProfile().fullScreenOverlays && strength < 0.62) return;
-
-    const minSide = Math.min(state.width, state.height);
-    const maxSide = Math.max(state.width, state.height);
-    const pulse = 0.5 + Math.sin(state.visualTime / (danger > 0.28 ? 132 : 220)) * 0.5;
-    const alpha = clamp((0.025 + mood * 0.055 + warn * 0.075 + danger * 0.1) * (0.78 + pulse * 0.22) + shock * 0.08 + alert * 0.1, 0, 0.28);
-    const edge = Math.max(18, minSide * (0.055 + danger * 0.035 + shock * 0.025));
-
+    if (!state.running) return;
+    const danger = clamp((28 - state.water) / 28, 0, 1);
+    if (danger <= 0) return;
+    // Persistent low-health feedback stays at the edge; the color field and
+    // transparent bubbles retain their exposure throughout the run.
     ctx.save();
-    const shadeAlpha = clamp((0.014 + mood * 0.092 + danger * 0.055 + shock * 0.035) * (0.94 + pulse * 0.06), 0, 0.18);
-    const shade = ctx.createLinearGradient(0, 0, 0, state.height);
-    shade.addColorStop(0, colorWithAlpha("#18364b", shadeAlpha * 0.76));
-    shade.addColorStop(0.38, colorWithAlpha("#25455b", shadeAlpha * 0.28));
-    shade.addColorStop(0.66, colorWithAlpha("#17364a", shadeAlpha * 0.34));
-    shade.addColorStop(1, colorWithAlpha("#0f2839", shadeAlpha * 0.82));
-    ctx.fillStyle = shade;
-    ctx.fillRect(0, 0, state.width, state.height);
-
-    const centerLift = ctx.createRadialGradient(
-      state.width * 0.5,
-      state.height * 0.42,
-      minSide * 0.1,
-      state.width * 0.5,
-      state.height * 0.46,
-      maxSide * 0.54,
-    );
-    centerLift.addColorStop(0, colorWithAlpha("#ffffff", clamp(0.012 + mood * 0.026, 0, 0.045)));
-    centerLift.addColorStop(0.72, "rgba(255, 255, 255, 0)");
-    centerLift.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = centerLift;
-    ctx.fillRect(0, 0, state.width, state.height);
-
-    const vignette = ctx.createRadialGradient(
-      state.width * 0.5,
-      state.height * 0.48,
-      minSide * 0.24,
-      state.width * 0.5,
-      state.height * 0.52,
-      maxSide * 0.74,
-    );
-    vignette.addColorStop(0, "rgba(255, 255, 255, 0)");
-    vignette.addColorStop(0.62, colorWithAlpha("#e5f6fb", alpha * 0.2));
-    vignette.addColorStop(1, colorWithAlpha("#243d55", alpha));
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, state.width, state.height);
-
-    const edgeAlpha = clamp(0.035 + warn * 0.045 + danger * 0.055 + shock * 0.06 + alert * 0.06, 0, 0.2);
-    const edgeColor = danger > 0.18 ? "#20384f" : "#dff6fb";
-    let gradient = ctx.createLinearGradient(0, 0, edge, 0);
-    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha));
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, edge, state.height);
-
-    gradient = ctx.createLinearGradient(state.width, 0, state.width - edge, 0);
-    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha));
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(state.width - edge, 0, edge, state.height);
-
-    gradient = ctx.createLinearGradient(0, 0, 0, edge);
-    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha * 0.78));
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, state.width, edge);
-
-    gradient = ctx.createLinearGradient(0, state.height, 0, state.height - edge);
-    gradient.addColorStop(0, colorWithAlpha(edgeColor, edgeAlpha * 0.9));
-    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, state.height - edge, state.width, edge);
-
-    if (water <= 8 || alert > 0.35) {
-      ctx.globalAlpha = clamp((danger * 0.06 + alert * 0.08) * (0.65 + pulse * 0.35), 0, 0.14);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, state.width, state.height);
-    }
+    ctx.strokeStyle = colorWithAlpha("#c95575", 0.12 + danger * 0.20);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(2, 2, Math.max(0, state.width - 4), Math.max(0, state.height - 4));
     ctx.restore();
   }
 
   function drawFlash() {
-    if (state.flash <= 0) return;
+    if (state.flash <= 0 || reducedMotion.matches) return;
     ctx.save();
-    ctx.globalAlpha = state.flash * 0.18;
+    ctx.globalAlpha = state.flash * 0.07;
     ctx.fillStyle = state.openUntil > state.elapsed ? openTone.light : "#ffffff";
     ctx.fillRect(0, 0, state.width, state.height);
     ctx.restore();
   }
 
-  function drawRhythmBreath() {
-    if (isPulsePattern()) return;
-    const pulse = clamp(state.rhythmPulse, 0, 1);
-    if (pulse <= 0.015) return;
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = pulse * (state.rhythmDownbeat ? 0.075 : 0.028);
-    ctx.strokeStyle = "rgba(232, 251, 255, 0.92)";
-    ctx.lineWidth = 1.2 + pulse * 2.8;
-    ctx.strokeRect(3, 3, Math.max(0, state.width - 6), Math.max(0, state.height - 6));
-    ctx.restore();
-  }
-
   function drawMistakeFlash() {
-    if (state.mistakeFlash <= 0) return;
-    const alpha = state.mistakeFlash * 0.2;
+    if (state.mistakeFlash <= 0 || reducedMotion.matches) return;
+    const alpha = state.mistakeFlash * 0.22;
+    const edge = 14;
     ctx.save();
-    const radius = Math.hypot(state.width, state.height) * 0.58;
-    const vignette = ctx.createRadialGradient(
-      state.width * 0.5,
-      state.height * 0.48,
-      Math.min(state.width, state.height) * 0.16,
-      state.width * 0.5,
-      state.height * 0.48,
-      radius,
-    );
-    vignette.addColorStop(0, "rgba(255,255,255,0)");
-    vignette.addColorStop(0.62, colorWithAlpha("#9b4565", alpha * 0.16));
-    vignette.addColorStop(1, colorWithAlpha("#4d2038", alpha));
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, state.width, state.height);
-    ctx.globalAlpha = state.mistakeFlash * 0.024;
-    ctx.fillStyle = "#ffb8c7";
-    ctx.fillRect(0, 0, state.width, state.height);
+    for (const right of [false, true]) {
+      const x = right ? state.width : 0;
+      const inner = right ? x - edge : edge;
+      const glow = ctx.createLinearGradient(x, 0, inner, 0);
+      glow.addColorStop(0, colorWithAlpha("#e27391", alpha));
+      glow.addColorStop(1, "rgba(226,115,145,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(right ? state.width - edge : 0, 0, edge, state.height);
+    }
     ctx.restore();
   }
 
   function drawReviveInvulnerability() {
     if (!isReviveInvulnerable()) return;
     const remaining = Math.max(0, state.invulnerableUntil - state.elapsed);
-    const pulse = 0.5 + Math.sin(state.visualTime / 110) * 0.5;
+    const fade = smoothstep(0, 450, remaining);
     ctx.save();
     ctx.globalCompositeOperation = "screen";
-    ctx.strokeStyle = colorWithAlpha("#9ff8ee", 0.34 + pulse * 0.18);
-    ctx.lineWidth = 3 + pulse * 1.5;
+    ctx.strokeStyle = colorWithAlpha("#8edbcf", 0.38 * fade);
+    ctx.lineWidth = 2;
     ctx.strokeRect(5, 5, Math.max(0, state.width - 10), Math.max(0, state.height - 10));
     const label = `无敌 ${(remaining / 1000).toFixed(1)}s`;
     ctx.font = '900 14px "Microsoft YaHei UI", "PingFang SC", sans-serif';
@@ -11906,7 +11809,6 @@
   function draw() {
     drawBackground();
     drawBuildVersion();
-    drawRhythmBreath();
     drawDifficultyBanners();
     drawWaterStressOverlay();
     drawPointerFeedback("trail");
@@ -13653,13 +13555,13 @@
   function initGlassInterface() {
     const samples = Array.from(document.querySelectorAll(".sample-canvas")).map((surface, index) => {
       const sample = { surface, context: surface.getContext("2d"), tone: palette[Number(surface.dataset.color)],
-        position: 0, velocity: 0, contact: [0, 0, 1], held: false, phase: index * 2.2, seed: index + 2,
+        radius: index ? 86 : 96, position: 0, velocity: 0, contact: [0, 0, 1], held: false, phase: index * 2.2, seed: index + 2,
       };
       const button = surface.closest("button");
       const locateContact = (event) => {
         const rect = surface.getBoundingClientRect();
-        const x = Number.isFinite(event.clientX) ? ((event.clientX - rect.left) / Math.max(1, rect.width) * 256 - 128) / 82 : 0;
-        const y = Number.isFinite(event.clientY) ? (128 - (event.clientY - rect.top) / Math.max(1, rect.height) * 256) / 82 : 0;
+        const x = Number.isFinite(event.clientX) ? ((event.clientX - rect.left) / Math.max(1, rect.width) * 256 - 128) / sample.radius : 0;
+        const y = Number.isFinite(event.clientY) ? (128 - (event.clientY - rect.top) / Math.max(1, rect.height) * 256) / sample.radius : 0;
         sample.contact = [x, y, Math.sqrt(Math.max(0.12, 1 - x * x - y * y))];
       };
       const press = (event) => {
@@ -13699,7 +13601,7 @@
             sample.position = spring.position; sample.velocity = spring.velocity;
           }
           sample.context.clearRect(0, 0, sample.surface.width, sample.surface.height);
-          window.PaopaoBubbleMaterial.draw(sample.context, sample.tone, 128, 128, 82, {
+          window.PaopaoBubbleMaterial.draw(sample.context, sample.tone, 128, 128, sample.radius, {
             age: now / 1000, phase: sample.phase, seed: sample.seed, pressure: sample.position,
             contactDirection: sample.contact, reducedMotion: reducedMotion.matches, preview: true,
           });

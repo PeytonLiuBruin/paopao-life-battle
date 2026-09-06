@@ -593,7 +593,7 @@
     const shimmerPhase = t * 0.09;
     for (let y = 0; y < lowHeight; y += 1) {
       const ny = nyByY[y];
-      const blueMix = 0.58 + 0.12 * Math.sin(ny * 3.1 + t * 0.085);
+      const blueMix = 0.58 + 0.10 * Math.cos(ny * Math.PI);
       rowBlueR[y] = mix(liquidPalette.blueDeep[0], liquidPalette.blueLight[0], blueMix);
       rowBlueG[y] = mix(liquidPalette.blueDeep[1], liquidPalette.blueLight[1], blueMix);
       rowBlueB[y] = mix(liquidPalette.blueDeep[2], liquidPalette.blueLight[2], blueMix);
@@ -602,7 +602,7 @@
     }
     for (let x = 0; x < lowWidth; x += 1) {
       const nx = nxByX[x];
-      const pinkMix = 0.56 + 0.12 * Math.cos(nx * 3.2 - t * 0.07);
+      const pinkMix = 0.60 + 0.08 * Math.cos(nx * Math.PI);
       colPinkR[x] = mix(liquidPalette.pinkDeep[0], liquidPalette.pinkLight[0], pinkMix);
       colPinkG[x] = mix(liquidPalette.pinkDeep[1], liquidPalette.pinkLight[1], pinkMix);
       colPinkB[x] = mix(liquidPalette.pinkDeep[2], liquidPalette.pinkLight[2], pinkMix);
@@ -635,8 +635,12 @@
     b = mix(b, liquidPalette.boundaryLight[2], lineMix);
     // Daylight exposure keeps the moving folds luminous. Neutral light/shade
     // preserves the blue/pink crossover and never clips channels into white.
-    const light = clamp((liquidArt.light[y * lowWidth + x] - 0.95) * 0.42, -0.07, 0.13);
-    const shade = 1 + Math.min(0, light), glow = Math.max(0, light);
+    const edgeDistance = Math.min(nxByX[x], 1 - nxByX[x], nyByY[y], 1 - nyByY[y]);
+    const surround = 1 - smoothstep(0.05, 0.4, edgeDistance);
+    // Broad flowing light lives mostly around the perimeter. The central play
+    // area has less luminance motion, while region colors keep their identity.
+    const light = clamp((liquidArt.light[y * lowWidth + x] - 0.95) * (0.20 + 0.18 * surround), -0.035, 0.10);
+    const shade = 1 + Math.min(0, light), glow = Math.max(0, light) + 0.028 * (1 - nyByY[y]);
     pixelColor[0] = r * shade + (255 - r) * glow;
     pixelColor[1] = g * shade + (255 - g) * glow;
     pixelColor[2] = b * shade + (255 - b) * glow;

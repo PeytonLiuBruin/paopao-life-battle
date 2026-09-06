@@ -30,9 +30,9 @@
       const w = this.width, h = this.height;
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const u = x / (w - 1), v = y / (h - 1);
-        const bend = u + 0.19 * Math.sin(v * 5.4) + 0.075 * Math.sin(v * 2.8 + u * 2.6);
-        const initial = 0.36 * Math.sin(bend * 7.4 + v * 1.8)
-          + 0.22 * Math.sin(bend * 3.7 - v * 4.9) + 0.06 * Math.cos(u * 8.8 + v * 6.2);
+        const bend = u + 0.17 * Math.sin(v * 4.2 + 0.3) + 0.065 * Math.sin(v * 2.1 + u * 2.6);
+        const initial = 0.36 * Math.sin(bend * 5.2 + v * 1.1)
+          + 0.20 * Math.cos(bend * 2.8 - v * 3.6);
         this.surface[y * w + x] = initial;
         this.base[y * w + x] = initial;
       }
@@ -52,7 +52,7 @@
       return a * (1 - fy) + b * fy;
     }
     step(dt) {
-      const w = this.width, h = this.height, t = this.time;
+      const w = this.width, h = this.height, t = this.time * 0.6;
       // Curl of a smooth stream function: neighboring cells form continuous
       // incompressible currents rather than independent random offsets.
       for (let x = 0; x < w; x++) {
@@ -72,8 +72,8 @@
       const driveA = Math.cos(t * 0.24), driveB = Math.sin(t * 0.31);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const i = y * w + x;
-        const vx = 0.0035 * Math.PI * this.xSin[x] * this.yCos[y] + 0.002 * TAU * this.xSin2[x] * this.yCos2[y];
-        const vy = -0.0035 * TAU * this.xCos[x] * this.ySin[y] - 0.002 * Math.PI * this.xCos2[x] * this.ySin2[y];
+        const vx = 0.68 * (0.0035 * Math.PI * this.xSin[x] * this.yCos[y] + 0.002 * TAU * this.xSin2[x] * this.yCos2[y]);
+        const vy = 0.68 * (-0.0035 * TAU * this.xCos[x] * this.ySin[y] - 0.002 * Math.PI * this.xCos2[x] * this.ySin2[y]);
         this.vx[i] = vx; this.vy[i] = vy;
         // Semi-Lagrangian advection transports last frame's surface through the
         // current flow. Slow forcing replenishes broad folds as they stretch.

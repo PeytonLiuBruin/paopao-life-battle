@@ -81,7 +81,7 @@
       waveAxis: individual.waveAxis,
       waveAmplitude: motion * individual.softness * (0.009 + Math.abs(wind) * 0.009),
       wavePhase: t * 12.7 + phase,
-      reflection: [motion * 0.20 * Math.sin(t * 1.9 + phase), motion * 0.16 * Math.sin(t * 2.7 + phase * 0.7), motion * 0.12 * Math.sin(t * 1.3 + phase)],
+      reflection: [motion * 0.11 * Math.sin(t * 1.15 + phase), motion * 0.085 * Math.sin(t * 1.41 + phase * 0.7), motion * 0.07 * Math.sin(t * 0.91 + phase)],
       pressure: motion * clamp(options.pressure || 0, -0.15, 0.3),
       direction: normalize(options.contactDirection || [-0.6, 0.4, 0.7]),
       flow: normalize(options.flowDirection || individual.axisA),
@@ -222,11 +222,11 @@
       vec3 N = normalize(vNormal);
       vec3 V = normalize(vec3(0.0, 0.0, 4.8) - vPosition * 0.28);
       float ndv = clamp(dot(N, V), 0.0, 1.0);
-      float rim = pow(1.0 - ndv, 1.65);
-      float edge = smoothstep(0.38, 0.92, 1.0 - ndv);
+      float rim = pow(1.0 - ndv, 1.8);
+      float edge = smoothstep(0.44, 0.94, 1.0 - ndv);
       float fresnel = 0.025 + 0.975 * pow(1.0 - ndv, 5.0);
       vec3 ray = refract(-V, N, 0.755);
-      float thickness = 0.10 + 0.55 * max(0.0, vPosition.z);
+      float thickness = 0.08 + 0.42 * max(0.0, vPosition.z);
       vec2 uv = gl_FragCoord.xy / uResolution;
       vec2 offset = ray.xy * uRadius / uResolution * thickness * 0.34;
       vec3 transmitted = vec3(backgroundAt(uv + offset * 1.018).r,
@@ -235,13 +235,17 @@
       transmitted *= absorption;
       vec3 L = normalize(vec3(-0.5, 0.72, 1.0) + uReflection);
       vec3 H = normalize(L + V);
-      float spec = pow(max(dot(N, H), 0.0), 190.0);
+      float spec = pow(max(dot(N, H), 0.0), 110.0);
       float broad = pow(max(dot(N, H), 0.0), 18.0);
       vec3 R = reflect(-V, N);
       R.xy += uReflection.xy;
       // Broad studio panels become curved reflections on the displaced surface.
       float panel = exp(-sq((R.x + 0.46) / 0.115) - sq((R.y - 0.62) / 0.34)) * step(0.0, R.z);
       float side = exp(-sq((R.x - 0.78) / 0.065) - sq((R.y + 0.12) / 0.55));
+      // A short grazing arc follows the actual normal, including local dents
+      // and traveling ripples. No screen-space outline or rotating sprite.
+      float crown = exp(-sq((N.z - 0.46 - uReflection.y * 0.22) / 0.065))
+        * smoothstep(0.10, 0.55, N.y) * (1.0 - smoothstep(-0.25, 0.25, N.x));
       vec3 film = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + ndv * 11.0 + N.y * 2.0 + uReflection.z * 3.0);
       // Colored grazing reflections separate the membrane from the pale field.
       // The clear center transmits it; white reflection stays on the lit side.
@@ -249,10 +253,10 @@
       vec3 color = mix(transmitted, uTint, 0.16 + rim * 0.50);
       color = mix(color, mix(uDeep, uTint, 0.35), edge * (0.68 - facingLight * 0.22));
       color += film * rim * 0.045 + vec3(0.86, 0.97, 1.0) * fresnel * (0.025 + facingLight * 0.14);
-      color += vec3(1.0) * (spec * 0.82 + broad * 0.02 + panel * 0.62 + side * 0.22);
+      color += vec3(1.0) * (spec * 0.48 + broad * 0.018 + panel * 0.42 + side * 0.16 + crown * 0.25);
       color += vec3(0.7, 0.95, 1.0) * rim * smoothstep(0.4, 0.9, -normalize(vDirection).y) * uReady * 0.15;
       if (uBurst > 0.001) color += vec3(0.28) * (1.0 - smoothstep(0.0, 0.045, abs(hole - mix(1.05, -1.05, uBurst))));
-      float alpha = uAlpha * clamp(0.26 + 0.56 * rim + 0.25 * edge + 0.36 * panel + 0.42 * spec, 0.0, 0.96);
+      float alpha = uAlpha * clamp(0.23 + 0.62 * rim + 0.25 * edge + 0.28 * panel + 0.30 * spec + 0.20 * crown, 0.0, 0.94);
       gl_FragColor = vec4(clamp(color, 0.0, 1.0) * alpha, alpha);
     }
   `;
@@ -426,10 +430,13 @@
     context.save();
     context.globalAlpha *= o.alpha ?? 1;
     for (const face of faces) {
-      const rim = (1 - face.n[2]) ** 1.65;
+      const rim = (1 - face.n[2]) ** 1.8;
       const spec = Math.max(0, dot(face.n, light)) ** 70;
-      const color = tint.map((v, i) => Math.round(255 * clamp(v * (1 - rim * 0.4) + deep[i] * rim * 0.4 + spec * 0.86, 0, 1)));
-      context.fillStyle = `rgba(${color.join(",")},${clamp(0.14 + rim * 0.76 + spec * 0.64, 0, 0.96)})`;
+      const crown = Math.exp(-(((face.n[2] - 0.46 - p.reflection[1] * 0.22) / 0.065) ** 2))
+        * clamp((face.n[1] - 0.1) / 0.45, 0, 1) * clamp((0.25 - face.n[0]) / 0.5, 0, 1);
+      const highlight = spec * 0.58 + crown * 0.25;
+      const color = tint.map((v, i) => Math.round(255 * clamp(v * (1 - rim * 0.4) + deep[i] * rim * 0.4 + highlight, 0, 1)));
+      context.fillStyle = `rgba(${color.join(",")},${clamp(0.12 + rim * 0.80 + spec * 0.40 + crown * 0.2, 0, 0.94)})`;
       context.beginPath();
       face.triangle.forEach((vertex, index) => {
         const x = entry.x + vertex.position[0] * entry.r, y = entry.y - vertex.position[1] * entry.r;
