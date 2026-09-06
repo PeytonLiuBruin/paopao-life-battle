@@ -41,7 +41,12 @@
   // Deterministic individuality: no per-frame randomness or shared animation cycle.
   function personality(seed = 0) {
     const noise = (n) => { const value = Math.sin(seed * 127.1 + n * 311.7) * 43758.5453; return value - Math.floor(value); };
+    const family = Math.abs(Math.floor(seed)) % 4;
+    const silhouettes = [[0.065, 0.035, 0.012], [0.23, 0.055, -0.025], [0.13, 0.15, 0.025], [0.07, 0.19, 0.04]];
     return {
+      family, sizeScale: 0.76 + noise(14) * 0.46,
+      shape: silhouettes[family].map((v) => v * (0.9 + noise(15) * 0.2)),
+      shapeAngle: noise(16) * TAU,
       softness: 0.65 + noise(1) * 0.7,
       rate: 0.65 + noise(2) * 0.7,
       biasA: (noise(3) - 0.5) * 0.05,
@@ -59,7 +64,16 @@
     const speed = clamp((options.speed || 0) / 180, 0, 1);
     const wind = clamp(options.wind || 0, -1, 1);
     const t = time * individual.rate;
+    // Large-scale contour and small ripples are separate. Reduced motion freezes
+    // the individual silhouette instead of turning every bubble into a circle.
+    const shapeTime = motion * t;
+    const shape = individual.shape.map((v, i) => v + motion * (i === 2 ? 0.018 : 0.035)
+      * Math.sin(shapeTime * (1.7 + i * 0.49) + phase + i * 1.4));
+    const angle = individual.shapeAngle + motion * 0.13 * Math.sin(shapeTime * 1.1 + phase);
+    const shapeAxis = [Math.cos(angle), Math.sin(angle), 0];
+    const volumeScale = Math.pow(1 + 3 * (shape[0] ** 2 * 4 / 15 + shape[1] ** 2 * 8 / 35 + shape[2] ** 2 * 64 / 315), -1 / 3);
     return {
+      shape, shapeAxis, volumeScale,
       a: motion * (individual.biasA + individual.softness * (0.023 * Math.sin(t * 2.1 + phase) + speed * 0.014 + wind * 0.026)),
       b: motion * (individual.biasB + individual.softness * 0.023 * Math.sin(t * 3.07 + phase * 1.71)),
       c: motion * individual.softness * 0.012 * Math.sin(t * 4.31 + phase * 0.73),
@@ -83,15 +97,47 @@
     const wave = amplitude * (Math.sin(waveAngle) + Math.sin(phase) * Math.sin(4.2) / 4.2);
     const a = dot(n, p.flow), b = dot(n, localB), c = dot(n, localA);
     const lobe = Math.exp(8 * (dot(n, p.direction) - 1));
-    const f = 1 + p.a * (3 * a * a - 1) / 2 + p.b * (5 * b * b * b - 3 * b) / 2
+    const shape = p.shape || [0, 0, 0], shapeAxis = p.shapeAxis || [1, 0, 0];
+    const crossAxis = [-shapeAxis[1], shapeAxis[0], 0];
+    const x = dot(n, shapeAxis), y = dot(n, crossAxis), x2 = x * x, y2 = y * y;
+    const blob = shape[0] * (x2 - y2) + shape[1] * (x * x2 - 3 * x * y2)
+      + shape[2] * (x2 * x2 - 6 * x2 * y2 + y2 * y2);
+    const gx = 2 * shape[0] * x + 3 * shape[1] * (x2 - y2) + 4 * shape[2] * x * (x2 - 3 * y2);
+    const gy = -2 * shape[0] * y - 6 * shape[1] * x * y + 4 * shape[2] * y * (y2 - 3 * x2);
+    const volumeScale = p.volumeScale || 1;
+    const f = 1 + blob + p.a * (3 * a * a - 1) / 2 + p.b * (5 * b * b * b - 3 * b) / 2
       + p.c * (35 * c ** 4 - 30 * c * c + 3) / 8 - p.pressure * (lobe - pressureMean) + wave;
-    const gradient = n.map((_, i) => p.a * 3 * a * p.flow[i]
+    const gradient = n.map((_, i) => gx * shapeAxis[i] + gy * crossAxis[i] + p.a * 3 * a * p.flow[i]
       + p.b * (15 * b * b - 3) / 2 * localB[i]
       + p.c * (140 * c ** 3 - 60 * c) / 8 * localA[i]
       - p.pressure * 8 * lobe * p.direction[i] + amplitude * 4.2 * Math.cos(waveAngle) * waveAxis[i]);
     const radialGradient = dot(n, gradient);
     const normal = normalize(n.map((v, i) => f * v - gradient[i] + v * radialGradient));
-    return { position: n.map((v) => v * f), normal };
+    return { position: n.map((v) => v * f * volumeScale), normal };
+  }
+
+  // Project the full 3D surface along the pointer's screen-space angle. This
+  // includes bulges in front of/behind the equator and matches the rendered body.
+  function projectedRadius(angle, options = {}) {
+    const p = options.parameters || parameters(options);
+    const cx = Math.cos(angle), cy = -Math.sin(angle);
+    const at = (latitude) => {
+      const radial = Math.cos(latitude), z = Math.sin(latitude);
+      const point = sampleSurface([cx * radial, cy * radial, z], { parameters: p }).position;
+      return Math.hypot(point[0], point[1]);
+    };
+    let best = -Infinity, bestLatitude = 0;
+    const step = Math.PI / 16;
+    for (let i = -8; i <= 8; i++) {
+      const value = at(i * step);
+      if (value > best) { best = value; bestLatitude = i * step; }
+    }
+    let lo = Math.max(-Math.PI / 2, bestLatitude - step), hi = Math.min(Math.PI / 2, bestLatitude + step);
+    for (let i = 0; i < 7; i++) {
+      const a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+      if (at(a) < at(b)) lo = a; else hi = b;
+    }
+    return Math.max(best, at((lo + hi) / 2));
   }
 
   const vertexShader = `
@@ -108,6 +154,9 @@
     uniform vec3 uAxisB;
     uniform vec3 uWaveAxis;
     uniform vec2 uWave;
+    uniform vec3 uShape;
+    uniform vec3 uShapeAxis;
+    uniform float uVolumeScale;
     varying vec3 vNormal;
     varying vec3 vPosition;
     varying vec3 vDirection;
@@ -119,15 +168,22 @@
       float lobe = exp(8.0 * (dot(n, uContact) - 1.0));
       float waveAngle = 4.2 * dot(n, uWaveAxis) - uWave.y;
       float wave = uWave.x * (sin(waveAngle) + sin(uWave.y) * sin(4.2) / 4.2);
-      float f = 1.0 + uModes.x * (3.0 * s0 * s0 - 1.0) * 0.5
+      vec3 crossAxis = vec3(-uShapeAxis.y, uShapeAxis.x, 0.0);
+      float x = dot(n, uShapeAxis), y = dot(n, crossAxis);
+      float x2 = x * x, y2 = y * y;
+      float blob = uShape.x * (x2 - y2) + uShape.y * (x * x2 - 3.0 * x * y2)
+        + uShape.z * (x2 * x2 - 6.0 * x2 * y2 + y2 * y2);
+      float gx = 2.0 * uShape.x * x + 3.0 * uShape.y * (x2 - y2) + 4.0 * uShape.z * x * (x2 - 3.0 * y2);
+      float gy = -2.0 * uShape.x * y - 6.0 * uShape.y * x * y + 4.0 * uShape.z * y * (y2 - 3.0 * x2);
+      float f = 1.0 + blob + uModes.x * (3.0 * s0 * s0 - 1.0) * 0.5
         + uModes.y * (5.0 * s1 * s1 * s1 - 3.0 * s1) * 0.5
         + uModes.z * (35.0 * (s2 * s2 * s2 * s2) - 30.0 * s2 * s2 + 3.0) * 0.125
         - uPressure * (lobe - 0.062499993) + wave;
-      vec3 g = 3.0 * uModes.x * s0 * uFlow
+      vec3 g = gx * uShapeAxis + gy * crossAxis + 3.0 * uModes.x * s0 * uFlow
         + uModes.y * (15.0 * s1 * s1 - 3.0) * 0.5 * a1
         + uModes.z * (140.0 * s2 * s2 * s2 - 60.0 * s2) * 0.125 * a0
         - uPressure * 8.0 * lobe * uContact + uWave.x * 4.2 * cos(waveAngle) * uWaveAxis;
-      vec3 p = n * f;
+      vec3 p = n * f * uVolumeScale;
       vNormal = normalize(f * n - (g - n * dot(n, g)));
       vPosition = p;
       vDirection = n;
@@ -257,7 +313,7 @@
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
       this.attribute = gl.getAttribLocation(program, "aDirection");
       this.uniforms = {};
-      for (const name of ["Resolution", "Center", "Radius", "Modes", "Pressure", "Contact", "Flow", "Background", "Tint", "Deep", "Alpha", "Preview", "Burst", "Ready", "AxisA", "AxisB", "WaveAxis", "Wave"]) {
+      for (const name of ["Resolution", "Center", "Radius", "Modes", "Pressure", "Contact", "Flow", "Background", "Tint", "Deep", "Alpha", "Preview", "Burst", "Ready", "AxisA", "AxisB", "WaveAxis", "Wave", "Shape", "ShapeAxis", "VolumeScale"]) {
         this.uniforms[name] = gl.getUniformLocation(program, `u${name}`);
       }
       this.background = gl.createTexture();
@@ -322,6 +378,9 @@
         gl.uniform3fv(u.AxisB, p.axisB);
         gl.uniform3fv(u.WaveAxis, p.waveAxis);
         gl.uniform2f(u.Wave, p.waveAmplitude, p.wavePhase);
+        gl.uniform3fv(u.Shape, p.shape);
+        gl.uniform3fv(u.ShapeAxis, p.shapeAxis);
+        gl.uniform1f(u.VolumeScale, p.volumeScale);
         gl.uniform3fv(u.Tint, rgb(entry.tone.color));
         gl.uniform3fv(u.Deep, rgb(entry.tone.deep));
         gl.uniform1f(u.Alpha, clamp(o.alpha ?? 1, 0, 1));
@@ -404,7 +463,7 @@
   }
 
   const api = {
-    draw, renderScene, stepSpring, createMesh, sampleSurface, parameters, personality,
+    draw, renderScene, stepSpring, createMesh, sampleSurface, projectedRadius, parameters, personality,
     shaders: { vertex: vertexShader, fragment: fragmentShader },
     diagnostics: () => ({ backend, vertices: mesh.positions.length / 3, triangles: mesh.indices.length / 3, lastError }),
   };

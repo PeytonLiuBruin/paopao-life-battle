@@ -113,10 +113,17 @@ test('signed spring recovery moves through outward overshoot then settles', () =
   assert(Math.hypot(...position([1,0,0],outward))>1);
 });
 
-test('reduced motion preserves a sphere and material has no time-based blink uniform', () => {
+test('reduced motion freezes distinct blob silhouettes and material has no time-based blink uniform', () => {
   const p=material.parameters({age:27,phase:1,speed:140,pressure:.2,reducedMotion:true});
   assert(p.a===0&&p.b===0&&p.c===0&&p.pressure===0);
-  for(let i=0;i<20;i++)assert(Math.abs(Math.hypot(...position(directionAt(i,20),p))-1)<1e-12);
+  const later=material.parameters({age:90,phase:1,speed:140,pressure:.2,reducedMotion:true});
+  const radii=[];
+  for(let i=0;i<20;i++){
+    const n=directionAt(i,20);
+    assert.deepEqual(position(n,p),position(n,later));
+    radii.push(Math.hypot(...position(n,p)));
+  }
+  assert(Math.max(...radii)-Math.min(...radii)>.2);
   const fragment=material.shaders.fragment;
   assert(!/uniform\s+\w+\s+u(?:Time|Age|Phase|Blink|Pulse)\b/i.test(fragment));
   assert(!/\bsin\s*\(/.test(fragment));
@@ -153,7 +160,7 @@ test('traveling ripples have accurate normals across different bubble personalit
   }
 });
 
-test('wind changes the surface and individualized deformation stays subtle', () => {
+test('wind moves a bounded blob surface while volume remains approximately constant', () => {
   let difference=0;
   for(let seed=0;seed<12;seed++){
     const calm=material.parameters({seed,age:4,wind:0});
@@ -161,13 +168,48 @@ test('wind changes the surface and individualized deformation stays subtle', () 
     let volume=0;
     for(let i=0;i<1000;i++){
       const n=directionAt(i,1000),radius=Math.hypot(...position(n,blown));
-      assert(radius>.85&&radius<1.15);
+      assert(radius>.6&&radius<1.5);
       volume+=radius**3;
       difference+=Math.hypot(...sub(position(n,calm),position(n,blown)));
     }
     assert(Math.abs(volume/1000-1)<.02);
   }
   assert(difference>10);
+});
+
+test('fixed-center silhouettes include clear oval and concave blob forms', () => {
+  const outlines = [];
+  let concave = 0;
+  for (let seed=0;seed<4;seed++) {
+    const options={seed,age:1,phase:0,speed:0,wind:0};
+    const points=Array.from({length:96},(_,i)=>{
+      const angle=i*Math.PI*2/96,r=material.projectedRadius(angle,options);
+      return [r*Math.cos(angle),r*Math.sin(angle),0];
+    });
+    const radii=points.map(p=>Math.hypot(...p));
+    if(seed>0) assert(Math.max(...radii)/Math.min(...radii)>1.3);
+    for(let i=0;i<points.length;i++) {
+      if(cross(sub(points[(i+1)%96],points[i]),sub(points[(i+2)%96],points[(i+1)%96]))[2]<-1e-5)concave++;
+    }
+    outlines.push(points);
+  }
+  assert(concave>10,'blob lobes need actual concave contour sections');
+  assert.equal(new Set(outlines.map(JSON.stringify)).size,4);
+});
+
+test('outline changes over time with zero movement and retains substantial size variety', () => {
+  const sizes=[];
+  for(let seed=0;seed<8;seed++){
+    sizes.push(material.personality(seed).sizeScale);
+    let change=0;
+    for(let i=0;i<24;i++){
+      const angle=i*Math.PI/12;
+      change=Math.max(change,Math.abs(material.projectedRadius(angle,{seed,age:0,speed:0,wind:0})
+        -material.projectedRadius(angle,{seed,age:0.8,speed:0,wind:0})));
+    }
+    assert(change>.025,`static-center bubble ${seed} needs visible contour change`);
+  }
+  assert(Math.max(...sizes)/Math.min(...sizes)>1.3);
 });
 
 let failed=0;

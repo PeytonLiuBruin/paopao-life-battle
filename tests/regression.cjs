@@ -60,6 +60,7 @@ function sandbox(names, overrides = {}) {
     easeVelocityToward: (b, target) => { b.vx = target.vx; b.vy = target.vy; },
     readablePlayfieldCorrection: () => ({ dx: 0, dy: 0 }),
     cachedBubbleHasMatchingPatch: () => false,
+    bubbleBodyRadiusAt: bubble => bubble.radius,
     ...overrides,
   };
   vm.createContext(c);
@@ -496,6 +497,28 @@ test("released drag shape rebounds independently of the bubble's position and ve
   }
   assert.ok(minimumStretch < -0.08, "release preserves signed elastic overshoot");
   assert.ok(Math.abs(radiusAtPull(stretched) - radiusAtPull(rest)) < 0.001);
+});
+
+test("blob input includes protrusions and excludes wrong-color empty dents", () => {
+  const c=meshIntegrationContext([...candidateFunctions,"usesGlassMesh","meshOptionsForBubble","bubbleBodyRadiusAt"], {
+    backgroundColorIndexAt: () => 1,
+  });
+  const b=normal({uid:3,x:180,y:250,radius:40,baseRadius:40,age:1,skinPhase:0,vx:0,vy:0});
+  c.state.bubbles=[b];
+  // Freeze correctness, varying only the location relative to the actual mesh.
+  c.canPopBubble=()=>false;
+  const angles=Array.from({length:96},(_,i)=>i*Math.PI/48);
+  const radii=angles.map(a=>c.bubbleBodyRadiusAt(b,b.x+Math.cos(a),b.y+Math.sin(a)));
+  const maximum=Math.max(...radii),minimum=Math.min(...radii);
+  const outerAngle=angles[radii.indexOf(maximum)],dentAngle=angles[radii.indexOf(minimum)];
+  assert(maximum>44&&minimum<34);
+  assert.ok(c.bubbleInputCandidateAt(b.x+Math.cos(outerAngle)*(maximum-1),b.y+Math.sin(outerAngle)*(maximum-1),true));
+  assert.equal(c.bubbleInputCandidateAt(b.x+Math.cos(dentAngle)*(minimum+2),b.y+Math.sin(dentAngle)*(minimum+2),true),null);
+  c.canPopBubble=()=>true;
+  assert.ok(c.bubbleInputCandidateAt(b.x+Math.cos(outerAngle)*(maximum-1),b.y+Math.sin(outerAngle)*(maximum-1),true));
+  b.spawnRevealSeconds=2;
+  const revealed=c.bubbleBodyRadiusAt(b,b.x+Math.cos(outerAngle),b.y+Math.sin(outerAngle));
+  assert(Math.abs(revealed/maximum-0.67)<1e-10);
 });
 
 const failed = results.filter(result => !result.ok);

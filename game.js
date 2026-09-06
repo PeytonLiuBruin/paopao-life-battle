@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.6.1";
+  const buildVersion = "1.7.0";
   let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
@@ -3647,7 +3647,12 @@
       forcedSize === "small" ||
       (forcedSize !== "normal" && (forceSmall || (d > 0.58 && Math.random() < (d - 0.42) * 0.34)));
     const radiusKind = forcedSize === "large" ? "large" : smallWave ? "small" : "normal";
-    const radius = options.radius ?? (isBleach ? radiusForDifficulty(d, "normal") * rand(0.9, 1.04) : radiusForDifficulty(d, radiusKind));
+    const requestedRadius = options.radius ?? (isBleach ? radiusForDifficulty(d, "normal") * rand(0.9, 1.04) : radiusForDifficulty(d, radiusKind));
+    const varyBodySize = kind === "normal" && !state.tutorialMode && !options.isPulse && !options.preserveSize;
+    const individualSize = varyBodySize ? window.PaopaoBubbleMaterial.personality(state.bubbleCounter + 1).sizeScale : 1;
+    const sizeScale = options.customPath ? Math.min(1, individualSize) : individualSize;
+    const radius = Math.max(varyBodySize ? Math.min(20, requestedRadius) : 1, requestedRadius * sizeScale);
+    if (options.customPath) options.customPath = { ...options.customPath, radius };
     if (options.customPath?.points?.length && Number.isInteger(options.colorIndex)) {
       options.customPath.colorIndex = options.colorIndex;
     }
@@ -3768,7 +3773,7 @@
       skinRotation: rand(-0.22, 0.22),
       skinSpin: rand(-0.18, 0.18),
       skinPhase: rand(0, Math.PI * 2),
-      radius: options.initialRadius ?? radius,
+      radius: options.initialRadius === undefined ? radius : options.initialRadius * sizeScale,
       baseRadius: radius,
       spawnProtectMass,
       spawnProtectInvMass: 1 / spawnProtectMass,
@@ -4595,7 +4600,7 @@
     for (let index = state.bubbles.length - 1; index >= 0; index -= 1) {
       const bubble = state.bubbles[index];
       if (!bubble.isDrag || bubble.dragResolved || bubble.stageTransitionOut || bubble.age < 0.14 || bubble.dragFade > 0.78) continue;
-      if (Math.hypot(x - bubble.x, y - bubble.y) > bubble.baseRadius * 1.28 + 8 + pointerTapHitSlop(pointerId, true)) continue;
+      if (Math.hypot(x - bubble.x, y - bubble.y) > bubbleBodyRadiusAt(bubble, x, y) * 1.12 + 8 + pointerTapHitSlop(pointerId, true)) continue;
       state.dragPointerId = pointerId;
       state.dragBubbleUid = bubble.uid;
       bubble.dragActive = true;
@@ -8943,7 +8948,8 @@
 
     const dx = state.customHoldX - bubble.x;
     const dy = state.customHoldY - bubble.y;
-    const inside = dx * dx + dy * dy <= (bubble.radius * 1.08) * (bubble.radius * 1.08);
+    const holdRadius = bubbleBodyRadiusAt(bubble, state.customHoldX, state.customHoldY) * 1.08;
+    const inside = dx * dx + dy * dy <= holdRadius * holdRadius;
     if (!inside || !canPopBubble(bubble, state.customHoldX, state.customHoldY)) {
       bubble.customHoldMs = Math.max(0, (bubble.customHoldMs ?? 0) - dt * 700);
       return;
@@ -9680,6 +9686,15 @@
     return 500;
   }
 
+  function bubbleBodyRadiusAt(bubble, x, y) {
+    if (!usesGlassMesh(bubble)) return bubble.radius;
+    const reveal = bubble.spawnRevealSeconds > 0 ? smoothstep(0, bubble.spawnRevealSeconds, bubble.age) : 1;
+    const scale = bubble.spawnRevealSeconds > 0 ? 0.34 + reveal * 0.66 : 1;
+    return bubble.radius * scale * window.PaopaoBubbleMaterial.projectedRadius(
+      Math.atan2(y - bubble.y, x - bubble.x), meshOptionsForBubble(bubble),
+    );
+  }
+
   function bubbleInputCandidateAt(x, y, isTap, pointerId = null) {
     let best = null;
     const latePrecision = smoothstep(0.48, 1, difficulty());
@@ -9697,13 +9712,16 @@
       const hitPadding = isTap ? 9 - latePrecision * 2.2 : 15 - latePrecision * 3.4;
       const stageTarget = isStageTargetBubble(bubble);
       const minTargetHitRadius = stageTarget ? (isCalmSmallBubble(bubble) ? 28 : 32) : 0;
-      const hitRadius = Math.max(bubble.radius + hitPadding + touchSlop, minTargetHitRadius + (isTap ? touchSlop : 4));
       const distanceSquared = dx * dx + dy * dy;
+      const broadRadius = Math.max(bubble.radius * 1.65 + hitPadding + touchSlop, minTargetHitRadius + touchSlop + 4);
+      if (distanceSquared > broadRadius * broadRadius) continue;
+      const bodyRadius = bubbleBodyRadiusAt(bubble, x, y);
+      const hitRadius = Math.max(bodyRadius + hitPadding + touchSlop, minTargetHitRadius + (isTap ? touchSlop : 4));
       if (distanceSquared > hitRadius * hitRadius) continue;
       const normalizedDistance = Math.sqrt(distanceSquared) / Math.max(1, hitRadius);
       const correct = !bubble.isDrag && canPopBubble(bubble, x, y);
       // Touch assistance may grant a hit; empty space must never cause damage.
-      if (!correct && !bubble.isDrag && distanceSquared > bubble.radius * bubble.radius) continue;
+      if (!correct && !bubble.isDrag && distanceSquared > bodyRadius * bodyRadius) continue;
       const correctBoost = correct ? 72 : 0;
       const score = bubbleInputPriority(bubble) + correctBoost - normalizedDistance * 96 + index * 0.001;
       if (!best || score > best.score) {
@@ -10024,7 +10042,7 @@
       }
       if (bubble.tutorialStatic) {
         bubble.wobble += bubble.wobbleSpeed * dt * 0.32;
-        bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 3.2) * 0.018);
+        bubble.radius = bubble.baseRadius;
         continue;
       }
       bubble.wobble += bubble.wobbleSpeed * dt;
@@ -10053,7 +10071,7 @@
         bubble.x += (bubble.vx + sway * bubble.drift + perpX * curvePush) * dt;
         bubble.y += (bubble.vy + (bubble.isStream ? 0 : Math.cos(bubble.wobble * 0.7) * 10) + perpY * curvePush) * dt;
       }
-      bubble.radius = bubble.baseRadius * (1 + Math.sin(bubble.age * 4.2) * 0.028);
+      bubble.radius = bubble.baseRadius;
 
       const entered =
         bubble.x > bubble.radius * 0.25 &&
@@ -10069,7 +10087,7 @@
         bubble.vy += (inward.y * currentSpeed - bubble.vy) * 0.12;
       }
 
-      const exitMargin = bubble.hasEntered ? bubble.radius * 1.02 : bubble.radius * 2;
+      const exitMargin = bubble.hasEntered ? bubble.radius * (usesGlassMesh(bubble) ? 1.65 : 1.02) : bubble.radius * 2;
       const outside =
         bubble.x < -exitMargin ||
         bubble.x > state.width + exitMargin ||
@@ -13659,13 +13677,13 @@
   function initGlassInterface() {
     const samples = Array.from(document.querySelectorAll(".sample-canvas")).map((surface, index) => {
       const sample = { surface, context: surface.getContext("2d"), tone: palette[Number(surface.dataset.color)],
-        position: 0, velocity: 0, contact: [0, 0, 1], held: false, phase: index * 2.2,
+        position: 0, velocity: 0, contact: [0, 0, 1], held: false, phase: index * 2.2, seed: index + 2,
       };
       const button = surface.closest("button");
       const locateContact = (event) => {
         const rect = surface.getBoundingClientRect();
-        const x = Number.isFinite(event.clientX) ? ((event.clientX - rect.left) / Math.max(1, rect.width) * 256 - 128) / 100 : 0;
-        const y = Number.isFinite(event.clientY) ? (128 - (event.clientY - rect.top) / Math.max(1, rect.height) * 256) / 100 : 0;
+        const x = Number.isFinite(event.clientX) ? ((event.clientX - rect.left) / Math.max(1, rect.width) * 256 - 128) / 82 : 0;
+        const y = Number.isFinite(event.clientY) ? (128 - (event.clientY - rect.top) / Math.max(1, rect.height) * 256) / 82 : 0;
         sample.contact = [x, y, Math.sqrt(Math.max(0.12, 1 - x * x - y * y))];
       };
       const press = (event) => {
@@ -13703,8 +13721,8 @@
             sample.position = spring.position; sample.velocity = spring.velocity;
           }
           sample.context.clearRect(0, 0, sample.surface.width, sample.surface.height);
-          window.PaopaoBubbleMaterial.draw(sample.context, sample.tone, 128, 128, 100, {
-            age: now / 1000, phase: sample.phase, pressure: sample.position,
+          window.PaopaoBubbleMaterial.draw(sample.context, sample.tone, 128, 128, 82, {
+            age: now / 1000, phase: sample.phase, seed: sample.seed, pressure: sample.position,
             contactDirection: sample.contact, reducedMotion: reducedMotion.matches, preview: true,
           });
         }
