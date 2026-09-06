@@ -28,15 +28,11 @@
   let rowBlueR = new Float32Array(lowHeight);
   let rowBlueG = new Float32Array(lowHeight);
   let rowBlueB = new Float32Array(lowHeight);
-  let rowLightSin = new Float32Array(lowHeight);
-  let rowLightCos = new Float32Array(lowHeight);
   let rowShimmerSin = new Float32Array(lowHeight);
   let rowShimmerCos = new Float32Array(lowHeight);
   let colPinkR = new Float32Array(lowWidth);
   let colPinkG = new Float32Array(lowWidth);
   let colPinkB = new Float32Array(lowWidth);
-  let colLightSin = new Float32Array(lowWidth);
-  let colLightCos = new Float32Array(lowWidth);
   let colShimmerSin = new Float32Array(lowWidth);
   let colShimmerCos = new Float32Array(lowWidth);
   let renderedTime = Number.NaN;
@@ -49,13 +45,8 @@
   let contourSegmentCount = 0;
   let contourRenderedTime = Number.NaN;
   const pixelColor = [0, 0, 0];
-  const pearlImage = typeof Image === "undefined" ? null : new Image();
-  let pearlReady = false;
-  if (pearlImage) {
-    pearlImage.decoding = "async";
-    pearlImage.onload = () => { pearlReady = true; };
-    pearlImage.src = "./assets/background/pearl-silk.webp?v=1.9.0";
-  }
+  let liquidArt = null;
+  let reducedArtMotion = false;
 
   const PATTERNS = {
     WAVE_CENTER: {
@@ -575,21 +566,18 @@
     fieldCanvas.width = lowWidth;
     fieldCanvas.height = lowHeight;
     imageData = fieldCtx.createImageData(lowWidth, lowHeight);
+    liquidArt = new window.PaopaoLiquidArt(lowWidth, lowHeight);
     values = new Float32Array(lowWidth * lowHeight);
     nxByX = new Float32Array(lowWidth);
     nyByY = new Float32Array(lowHeight);
     rowBlueR = new Float32Array(lowHeight);
     rowBlueG = new Float32Array(lowHeight);
     rowBlueB = new Float32Array(lowHeight);
-    rowLightSin = new Float32Array(lowHeight);
-    rowLightCos = new Float32Array(lowHeight);
     rowShimmerSin = new Float32Array(lowHeight);
     rowShimmerCos = new Float32Array(lowHeight);
     colPinkR = new Float32Array(lowWidth);
     colPinkG = new Float32Array(lowWidth);
     colPinkB = new Float32Array(lowWidth);
-    colLightSin = new Float32Array(lowWidth);
-    colLightCos = new Float32Array(lowWidth);
     colShimmerSin = new Float32Array(lowWidth);
     colShimmerCos = new Float32Array(lowWidth);
     for (let x = 0; x < lowWidth; x += 1) nxByX[x] = x / Math.max(1, lowWidth - 1);
@@ -602,7 +590,6 @@
   }
 
   function updateShadeCaches(t) {
-    const lightPhase = t * 0.055;
     const shimmerPhase = t * 0.09;
     for (let y = 0; y < lowHeight; y += 1) {
       const ny = nyByY[y];
@@ -610,8 +597,6 @@
       rowBlueR[y] = mix(liquidPalette.blueDeep[0], liquidPalette.blueLight[0], blueMix);
       rowBlueG[y] = mix(liquidPalette.blueDeep[1], liquidPalette.blueLight[1], blueMix);
       rowBlueB[y] = mix(liquidPalette.blueDeep[2], liquidPalette.blueLight[2], blueMix);
-      rowLightSin[y] = Math.sin(ny * 3.4);
-      rowLightCos[y] = Math.cos(ny * 3.4);
       rowShimmerSin[y] = Math.sin(ny * 15);
       rowShimmerCos[y] = Math.cos(ny * 15);
     }
@@ -621,8 +606,6 @@
       colPinkR[x] = mix(liquidPalette.pinkDeep[0], liquidPalette.pinkLight[0], pinkMix);
       colPinkG[x] = mix(liquidPalette.pinkDeep[1], liquidPalette.pinkLight[1], pinkMix);
       colPinkB[x] = mix(liquidPalette.pinkDeep[2], liquidPalette.pinkLight[2], pinkMix);
-      colLightSin[x] = Math.sin(nx * 6.2 + lightPhase);
-      colLightCos[x] = Math.cos(nx * 6.2 + lightPhase);
       colShimmerSin[x] = Math.sin(nx * 15 + shimmerPhase);
       colShimmerCos[x] = Math.cos(nx * 15 + shimmerPhase);
     }
@@ -650,7 +633,7 @@
     r = mix(r, liquidPalette.boundaryLight[0], lineMix);
     g = mix(g, liquidPalette.boundaryLight[1], lineMix);
     b = mix(b, liquidPalette.boundaryLight[2], lineMix);
-    const cleanLight = 0.96 + 0.025 * (colLightSin[x] * rowLightCos[y] + colLightCos[x] * rowLightSin[y]);
+    const cleanLight = liquidArt.light[y * lowWidth + x];
     pixelColor[0] = clamp(r * cleanLight, 0, 255);
     pixelColor[1] = clamp(g * cleanLight, 0, 255);
     pixelColor[2] = clamp(b * cleanLight, 0, 255);
@@ -666,6 +649,7 @@
       (frameState.transition > 0 && frameState.next?.type === "pulse");
     const band = 0.062 + Math.sin(t * 0.08) * 0.004;
     updateShadeCaches(t);
+    liquidArt.advance(t, reducedArtMotion);
     let offset = 0;
     for (let y = 0; y < lowHeight; y += 1) {
       const ny = nyByY[y];
@@ -922,6 +906,9 @@
   }
 
   function setQuality(options = {}) {
+    const reduced = options.reducedMotion == null ? reducedArtMotion : options.reducedMotion === true;
+    if (reduced !== reducedArtMotion) renderedTime = Number.NaN;
+    reducedArtMotion = reduced;
     const nextScale = clamp(Number(options.scale ?? options.quality ?? qualityScale), 0.62, 1);
     const frameFps = clamp(Number(options.fps ?? options.frameFps ?? 60), 18, 60);
     const frameSkip = clamp(Math.round(Number(options.frameSkip ?? 1)), 1, 5);
@@ -944,32 +931,6 @@
     }
   }
 
-  function drawPearlSilk(ctx, t) {
-    if (!pearlReady || !pearlImage.naturalWidth) return;
-    const sourceWidth = pearlImage.naturalWidth, sourceHeight = pearlImage.naturalHeight;
-    const scale = Math.max(width / sourceWidth, height / sourceHeight) * 1.12;
-    const paintedWidth = sourceWidth * scale, paintedHeight = sourceHeight * scale;
-    const baseX = (width - paintedWidth) / 2;
-    const baseY = (height - paintedHeight) / 2 + Math.sin(t * 0.055) * height * 0.012;
-    ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();
-    ctx.globalCompositeOperation = "soft-light";
-    ctx.globalAlpha = 0.88;
-    ctx.imageSmoothingEnabled = true;
-    // Overscan keeps every edge covered while a slow displacement passes through
-    // the original artwork. Integer strip edges avoid double-blended seams.
-    const stripHeight = 12;
-    for (let y = 0; y < height; y += stripHeight) {
-      const h = Math.min(stripHeight, height - y);
-      const v = y / height;
-      const drift = Math.sin(v * 4.0 + t * 0.13) * width * 0.015
-        + Math.sin(v * 7.0 - t * 0.075) * width * 0.006;
-      ctx.drawImage(pearlImage, 0, (y - baseY) / scale, sourceWidth, h / scale,
-        baseX + drift, y, paintedWidth, h);
-    }
-    ctx.restore();
-  }
-
   function render(ctx, t, nextWidth = width, nextHeight = height, options = null) {
     if (options) {
       setQuality(options);
@@ -982,10 +943,8 @@
     ctx.drawImage(fieldCanvas, 0, 0, width, height);
     if (frameState.current.type === "pulse") {
       drawPulseBackground(ctx, frameState);
-      drawPearlSilk(ctx, options?.reducedMotion ? 0 : frameTime);
       return;
     }
-    drawPearlSilk(ctx, options?.reducedMotion ? 0 : frameTime);
     drawContours(ctx, frameTime);
   }
 
@@ -1026,6 +985,7 @@
 
   window.PaopaoBackgroundEngine = {
     resize,
+    artDiagnostics: () => liquidArt?.diagnostics() ?? null,
     setQuality,
     render,
     colorIndexAt,

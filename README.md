@@ -2,6 +2,14 @@
 
 蓝粉配色的触屏 / 鼠标泡泡生存游戏。静态 HTML、CSS、Canvas 2D 与 WebGL，直接由 GitHub Pages 发布。
 
+## v1.10.0 · 实时流场演算
+
+背景的褶皱与反光由 `liquid-art.js` 实时计算。曲面网格通过半拉格朗日平流传递上一帧状态，平滑的旋涡流推动褶皱舒展，扩散与缓慢驱动维持流动；每次模拟更新后按高度梯度重算曲面法线与光照。它是用于视觉效果的平流高度场，并非完整的流体物理求解器。
+
+运行时无需背景图片。颜色分区继续由原有游戏逻辑计算，实时明暗仅改变材质。演算使用固定 30 Hz 时间步、有限补帧，并随画质调整网格大小；暂停和减少动态效果会暂停装饰演算。
+
+验证：`node tests/liquid-art.cjs` 覆盖连续演化、上一帧状态传递、不同显示帧率的一致性、暂停/跳时与最大网格的数值边界。
+
 ## v1.9.0 · 珍珠丝绸
 
 背景使用原创珍珠丝绸明暗材质，结合蓝粉渐变、柔和分界和缓慢的曲面流动。去掉重复细线，保留宽阔曲面与留白；首页空闲时也持续流动。装饰材质与颜色判定分离，已有关卡、路径和蓝粉判定保持原样。
@@ -40,6 +48,7 @@
 - `game.js`：玩法、输入、UI 与音频。
 - `bubble-material.js`：三维网格、顶点形变、透明材质与解析阻尼弹簧，首页和游戏共用。
 - `background-engine.js`：背景色场与颜色采样。
+- `liquid-art.js`：连续演化的背景曲面、流场与光照。
 - `styles.css`、`ui-polish.css`：基础布局与 Glass 界面。
 - `firebase-leaderboard.js`：现有全球排行榜连接。
 
@@ -51,9 +60,11 @@
 node --check game.js
 node --check bubble-material.js
 node --check background-engine.js
+node --check liquid-art.js
 node tests/regression.cjs
 node tests/mesh.cjs
 node tests/webgl.cjs
+node tests/liquid-art.cjs
 ```
 
 回归测试只依赖 Node.js，覆盖输入中断、误触保护、颜色判定、同色机会、受伤保护、练习重置、键盘暂停和帧率一致性；几何测试验证网格绕序、局部形变、法线精度与体积变化。WebGL 接口测试使用模拟上下文验证批处理和资源生命周期，不替代真实设备上的 GPU 渲染检查。推送到 `main` 时先运行检查，再发布 GitHub Pages。

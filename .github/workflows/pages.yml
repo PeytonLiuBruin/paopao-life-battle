@@ -30,9 +30,11 @@ jobs:
           node --check game.js
           node --check bubble-material.js
           node --check background-engine.js
+          node --check liquid-art.js
           node tests/regression.cjs
           node tests/mesh.cjs
           node tests/webgl.cjs
+          node tests/liquid-art.cjs
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

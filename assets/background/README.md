@@ -1,4 +1,6 @@
-# Pearl silk artwork
+# Archived pearl silk artwork
+
+Used in v1.9.0 only. Starting with v1.10.0, the runtime background is calculated by the live height-field simulation and does not load this image.
 
 Original artwork generated with the built-in image generation tool for Paopao Life Battle on 2026-09-06. Optimized from the generated PNG to a 768×1152 WebP (17,792 bytes). Used as a neutral luminance material with soft-light blending, preserving the game's blue/pink color field.
 
