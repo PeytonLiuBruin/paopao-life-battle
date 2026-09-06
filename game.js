@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.8.0";
+  const buildVersion = "1.8.1";
   let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
@@ -534,6 +534,7 @@
         fps: profile.backgroundFps,
         frameSkip: profile.backgroundFrameSkip,
         contours: profile.contours,
+        reducedMotion: reducedMotion.matches,
       });
       if (surfaceChanged || bitmapChanged) {
         window.PaopaoBackgroundEngine.resize(state.width, state.height);
@@ -2779,13 +2780,6 @@
       state.clearSkillUses >= clearSkillMaxUses ? "用完" : skillReady ? "可用" : `${Math.round(state.clearSkillCharge * 100)}%`;
     if (clearSkillValue.textContent !== clearSkillText) clearSkillValue.textContent = clearSkillText;
     clearSkillButton.setAttribute("aria-label", `清屏，剩余 ${Math.max(0, clearSkillMaxUses - state.clearSkillUses)} 次，${clearSkillText}`);
-    const goal = document.getElementById("runGoal");
-    if (goal) {
-      const nextCombo = state.combo < 10 ? 10 : state.combo < 25 ? 25 : state.combo < 50 ? 50 : Math.ceil((state.combo + 1) / 100) * 100;
-      const goalText = state.elapsed < state.damageRecoveryUntil ? "受伤保护 · 继续找同色泡泡" : state.elapsed < 6500 ? "看中心 · 同色轻点或划过" : `${nextCombo} 连击目标 · 还差 ${nextCombo - state.combo}`;
-      if (goal.textContent !== goalText) goal.textContent = goalText;
-      goal.hidden = !state.running || state.tutorialMode;
-    }
     if (difficultyEl) difficultyEl.style.setProperty("--stage-progress", `${Math.round(stageCompletion() * 100)}%`);
     updateDebugPanel();
   }
@@ -11064,25 +11058,6 @@
       return;
     }
 
-    if (bubble.isStream) {
-      const speed = Math.max(1, Math.hypot(bubble.vx, bubble.vy));
-      const tailX = -bubble.vx / speed;
-      const tailY = -bubble.vy / speed;
-      ctx.save();
-      ctx.translate(x + tailX * r * 1.18, y + tailY * r * 1.18);
-      ctx.rotate(Math.atan2(tailY, tailX));
-      ctx.globalAlpha = 0.07 * drawAlpha;
-      ctx.fillStyle = color.light;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.48, r * 0.18, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 0.13 * drawAlpha;
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(r * 0.18, -r * 0.04, Math.max(1.1, r * 0.055), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
 
     ctx.save();
     ctx.globalAlpha *= revealAlpha * transitionAlpha;

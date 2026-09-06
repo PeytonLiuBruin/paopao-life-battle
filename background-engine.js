@@ -932,6 +932,31 @@
     }
   }
 
+  function drawSilkThreads(ctx, t) {
+    // Low-contrast continuous fibers; color boundaries and matching stay intact.
+    // Neighboring strands bend together, with no sparkling or brightness pulse.
+    const count = Math.min(38, Math.max(18, Math.ceil(width / 14)));
+    ctx.save();
+    ctx.lineCap = "round";
+    for (let i = -1; i <= count; i++) {
+      const base = (i + 0.5) * width / count;
+      ctx.beginPath();
+      for (let y = -24; y <= height + 24; y += 24) {
+        const v = y / height;
+        const x = base + Math.sin(v * 4.2 + t * 0.17 + i * 0.19) * width * 0.024
+          + Math.sin(v * 9.1 - t * 0.11 + i * 0.28) * width * 0.006;
+        if (y === -24) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = "rgba(225,246,255,0.012)";
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(239,250,255,0.036)";
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function render(ctx, t, nextWidth = width, nextHeight = height, options = null) {
     if (options) {
       setQuality(options);
@@ -944,8 +969,10 @@
     ctx.drawImage(fieldCanvas, 0, 0, width, height);
     if (frameState.current.type === "pulse") {
       drawPulseBackground(ctx, frameState);
+      drawSilkThreads(ctx, options?.reducedMotion ? 0 : frameTime);
       return;
     }
+    drawSilkThreads(ctx, options?.reducedMotion ? 0 : frameTime);
     drawContours(ctx, frameTime);
   }
 

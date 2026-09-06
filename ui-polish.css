@@ -83,26 +83,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .tutorial-button strong, .leaderboard-button strong { font-size: 15px; }
 .tutorial-button small, .leaderboard-button small, .start-footnote { font-size: 12px; }
 
-.run-goal {
-  position: absolute;
-  top: calc(80px + var(--safe-top));
-  left: 12px;
-  right: 80px;
-  transform: none;
-  z-index: 5;
-  max-width: none;
-  padding: 7px 13px;
-  border: 1px solid rgba(255,255,255,.25);
-  border-radius: 999px;
-  color: #fff;
-  background: rgba(19,49,75,.48);
-  font-size: 13px;
-  line-height: 1.35;
-  text-align: center;
-  white-space: normal;
-  pointer-events: none;
-}
-.run-goal[hidden], .settings-open .run-goal, .tutorial-active .run-goal { display: none; }
 .difficulty-level {
   overflow: hidden;
   background: linear-gradient(90deg, rgba(189,234,255,.3) var(--stage-progress, 0%), transparent 0), rgba(18,48,73,.5);
@@ -157,7 +137,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 @media (max-width: 360px) {
   .home-leaderboard-list { grid-auto-columns: 42%; }
   .start-status { gap: 8px; }
-  .run-goal { font-size: 12px; }
 }
 @media (orientation: landscape) and (max-height: 600px) {
   .start-showcase { display: none; }
@@ -165,7 +144,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   .start-actions .primary-button { min-height: 44px; }
   .result-actions .result-retry { grid-column: auto; min-height: 44px; }
   .result-actions.has-revive { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .run-goal { top: auto; bottom: calc(12px + var(--safe-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
