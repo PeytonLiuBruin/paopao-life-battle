@@ -4,7 +4,7 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
   const phoneShell = canvas.closest(".phone-shell");
-  const buildVersion = "1.10.0";
+  const buildVersion = "1.11.0";
   let glassPassActive = false;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const buildLabel = `DEMO · v${buildVersion}`;
@@ -208,12 +208,12 @@
   const stageDurationMs = 20000;
 
   const palette = [
-    { name: "琉璃蓝", color: "#339fdf", deep: "#0968b5", light: "#cdf4ff" },
-    { name: "水晶粉", color: "#e578b4", deep: "#b93681", light: "#ffe0f2" },
+    { name: "琉璃蓝", color: "#159eea", deep: "#0573be", light: "#e2faff" },
+    { name: "水晶粉", color: "#fa4d9d", deep: "#ca287b", light: "#fff1f8" },
   ];
   const backgroundPalette = [
-    { color: "#8fcbd4", deep: "#62aeba", light: "#d8f0f3" },
-    { color: "#ee9fac", deep: "#d88798", light: "#f7c9d0" },
+    { color: "#a0dafa", deep: "#6fc3ef", light: "#c4ebff" },
+    { color: "#fac3df", deep: "#f49fca", light: "#ffdfef" },
   ];
 
   const openTone = makeOpenTone();
@@ -11733,9 +11733,9 @@
     ctx.font = "700 8px \"Arial Rounded MT Bold\", \"PingFang SC\", \"Microsoft YaHei UI\", ui-rounded, sans-serif";
     ctx.textAlign = "right";
     ctx.textBaseline = "bottom";
-    ctx.shadowColor = "rgba(17, 65, 80, 0.18)";
-    ctx.shadowBlur = 2;
-    ctx.fillStyle = "rgba(248, 254, 255, 0.92)";
+    ctx.shadowColor = "rgba(255, 255, 255, 0.7)";
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#326486";
     ctx.fillText(buildLabel, state.width - 9, state.height - 9);
     ctx.restore();
   }

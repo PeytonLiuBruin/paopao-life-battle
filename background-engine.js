@@ -7,14 +7,14 @@
   const fieldCtx = fieldCanvas.getContext("2d", { alpha: false });
 
   const liquidPalette = {
-    blue: [51, 150, 211],
-    blueDeep: [27, 91, 155],
-    blueLight: [130, 211, 242],
-    pink: [227, 116, 170],
-    pinkDeep: [158, 65, 128],
-    pinkLight: [252, 179, 212],
-    boundary: [43, 39, 86],
-    boundaryLight: [233, 252, 255],
+    blue: [45, 164, 230],
+    blueDeep: [111, 195, 239],
+    blueLight: [196, 235, 255],
+    pink: [244, 98, 164],
+    pinkDeep: [244, 159, 202],
+    pinkLight: [255, 223, 239],
+    boundary: [205, 219, 245],
+    boundaryLight: [255, 255, 255],
   };
 
   let width = 1;
@@ -593,7 +593,7 @@
     const shimmerPhase = t * 0.09;
     for (let y = 0; y < lowHeight; y += 1) {
       const ny = nyByY[y];
-      const blueMix = 0.36 + 0.20 * Math.sin(ny * 3.1 + t * 0.085);
+      const blueMix = 0.58 + 0.12 * Math.sin(ny * 3.1 + t * 0.085);
       rowBlueR[y] = mix(liquidPalette.blueDeep[0], liquidPalette.blueLight[0], blueMix);
       rowBlueG[y] = mix(liquidPalette.blueDeep[1], liquidPalette.blueLight[1], blueMix);
       rowBlueB[y] = mix(liquidPalette.blueDeep[2], liquidPalette.blueLight[2], blueMix);
@@ -602,7 +602,7 @@
     }
     for (let x = 0; x < lowWidth; x += 1) {
       const nx = nxByX[x];
-      const pinkMix = 0.46 + 0.18 * Math.cos(nx * 3.2 - t * 0.07);
+      const pinkMix = 0.56 + 0.12 * Math.cos(nx * 3.2 - t * 0.07);
       colPinkR[x] = mix(liquidPalette.pinkDeep[0], liquidPalette.pinkLight[0], pinkMix);
       colPinkG[x] = mix(liquidPalette.pinkDeep[1], liquidPalette.pinkLight[1], pinkMix);
       colPinkB[x] = mix(liquidPalette.pinkDeep[2], liquidPalette.pinkLight[2], pinkMix);
@@ -625,18 +625,21 @@
     const boundary = Math.exp(-Math.abs(field) / 0.032);
     const hardLine = Math.exp(-Math.abs(field) / 0.013);
     const shimmer = 0.5 + (colShimmerSin[x] * rowShimmerCos[y] + colShimmerCos[x] * rowShimmerSin[y]) * 0.5;
-    const boundaryMix = boundary * 0.045;
+    const boundaryMix = boundary * 0.018;
     r = mix(r, liquidPalette.boundary[0], boundaryMix);
     g = mix(g, liquidPalette.boundary[1], boundaryMix);
     b = mix(b, liquidPalette.boundary[2], boundaryMix);
-    const lineMix = hardLine * (0.025 + shimmer * 0.01);
+    const lineMix = hardLine * (0.035 + shimmer * 0.008);
     r = mix(r, liquidPalette.boundaryLight[0], lineMix);
     g = mix(g, liquidPalette.boundaryLight[1], lineMix);
     b = mix(b, liquidPalette.boundaryLight[2], lineMix);
-    const cleanLight = liquidArt.light[y * lowWidth + x];
-    pixelColor[0] = clamp(r * cleanLight, 0, 255);
-    pixelColor[1] = clamp(g * cleanLight, 0, 255);
-    pixelColor[2] = clamp(b * cleanLight, 0, 255);
+    // Daylight exposure keeps the moving folds luminous. Neutral light/shade
+    // preserves the blue/pink crossover and never clips channels into white.
+    const light = clamp((liquidArt.light[y * lowWidth + x] - 0.95) * 0.42, -0.07, 0.13);
+    const shade = 1 + Math.min(0, light), glow = Math.max(0, light);
+    pixelColor[0] = r * shade + (255 - r) * glow;
+    pixelColor[1] = g * shade + (255 - g) * glow;
+    pixelColor[2] = b * shade + (255 - b) * glow;
     return pixelColor;
   }
 
@@ -846,8 +849,8 @@
       contourRenderedTime = renderedTime;
     }
     if (!contourSegmentCount) return;
-    strokeSegments(ctx, "rgba(29, 35, 72, 0.10)", 1.2);
-    strokeSegments(ctx, "rgba(246, 253, 255, 0.14)", 0.65);
+    strokeSegments(ctx, "rgba(123, 152, 204, 0.13)", 1.1);
+    strokeSegments(ctx, "rgba(255, 255, 255, 0.32)", 0.65);
   }
 
   function drawPulseBackground(ctx, frameState) {

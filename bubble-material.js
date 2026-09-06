@@ -213,7 +213,7 @@
     float sq(float v) { return v * v; }
     vec3 backgroundAt(vec2 uv) {
       uv = clamp(uv, vec2(0.002), vec2(0.998));
-      if (uPreview > 0.5) return mix(vec3(0.22, 0.49, 0.64), vec3(0.66, 0.38, 0.58), smoothstep(0.2, 0.8, uv.x));
+      if (uPreview > 0.5) return mix(vec3(0.74, 0.91, 1.0), vec3(1.0, 0.84, 0.92), smoothstep(0.2, 0.8, uv.x));
       return texture2D(uBackground, uv).rgb;
     }
     void main() {
@@ -222,7 +222,8 @@
       vec3 N = normalize(vNormal);
       vec3 V = normalize(vec3(0.0, 0.0, 4.8) - vPosition * 0.28);
       float ndv = clamp(dot(N, V), 0.0, 1.0);
-      float rim = pow(1.0 - ndv, 2.15);
+      float rim = pow(1.0 - ndv, 1.65);
+      float edge = smoothstep(0.38, 0.92, 1.0 - ndv);
       float fresnel = 0.025 + 0.975 * pow(1.0 - ndv, 5.0);
       vec3 ray = refract(-V, N, 0.755);
       float thickness = 0.10 + 0.55 * max(0.0, vPosition.z);
@@ -230,7 +231,7 @@
       vec2 offset = ray.xy * uRadius / uResolution * thickness * 0.34;
       vec3 transmitted = vec3(backgroundAt(uv + offset * 1.018).r,
         backgroundAt(uv + offset).g, backgroundAt(uv + offset * 0.982).b);
-      vec3 absorption = exp(-(vec3(1.0) - uTint) * (0.1 + thickness * 0.1 + rim * 0.42));
+      vec3 absorption = exp(-(vec3(1.0) - uTint) * (0.08 + thickness * 0.12 + rim * 0.48));
       transmitted *= absorption;
       vec3 L = normalize(vec3(-0.5, 0.72, 1.0) + uReflection);
       vec3 H = normalize(L + V);
@@ -242,13 +243,16 @@
       float panel = exp(-sq((R.x + 0.46) / 0.115) - sq((R.y - 0.62) / 0.34)) * step(0.0, R.z);
       float side = exp(-sq((R.x - 0.78) / 0.065) - sq((R.y + 0.12) / 0.55));
       vec3 film = 0.5 + 0.5 * cos(vec3(0.0, 2.1, 4.2) + ndv * 11.0 + N.y * 2.0 + uReflection.z * 3.0);
-      vec3 color = mix(transmitted, uTint * 0.88 + vec3(0.12), 0.10 + rim * 0.40);
-      color = mix(color, uDeep * 0.62 + uTint * 0.38, rim * 0.16);
-      color += film * rim * 0.13 + vec3(0.8, 0.93, 1.0) * fresnel * 0.33;
-      color += vec3(1.0) * (spec * 0.72 + broad * 0.025 + panel * 0.55 + side * 0.3);
-      color += vec3(0.7, 0.95, 1.0) * rim * smoothstep(0.4, 0.9, -normalize(vDirection).y) * uReady * 0.25;
+      // Colored grazing reflections separate the membrane from the pale field.
+      // The clear center transmits it; white reflection stays on the lit side.
+      float facingLight = smoothstep(-0.25, 0.65, dot(N, normalize(vec3(-0.65, 0.75, 0.12) + uReflection)));
+      vec3 color = mix(transmitted, uTint, 0.16 + rim * 0.50);
+      color = mix(color, mix(uDeep, uTint, 0.35), edge * (0.68 - facingLight * 0.22));
+      color += film * rim * 0.045 + vec3(0.86, 0.97, 1.0) * fresnel * (0.025 + facingLight * 0.14);
+      color += vec3(1.0) * (spec * 0.82 + broad * 0.02 + panel * 0.62 + side * 0.22);
+      color += vec3(0.7, 0.95, 1.0) * rim * smoothstep(0.4, 0.9, -normalize(vDirection).y) * uReady * 0.15;
       if (uBurst > 0.001) color += vec3(0.28) * (1.0 - smoothstep(0.0, 0.045, abs(hole - mix(1.05, -1.05, uBurst))));
-      float alpha = uAlpha * clamp(0.24 + 0.62 * rim + 0.30 * panel + 0.32 * spec, 0.0, 0.94);
+      float alpha = uAlpha * clamp(0.26 + 0.56 * rim + 0.25 * edge + 0.36 * panel + 0.42 * spec, 0.0, 0.96);
       gl_FragColor = vec4(clamp(color, 0.0, 1.0) * alpha, alpha);
     }
   `;
@@ -404,7 +408,8 @@
 
   function drawSoftwareMesh(context, entry) {
     const o = entry.options || {}, p = parameters(o), vertices = [];
-    const tint = rgb(entry.tone.color);
+    const tint = rgb(entry.tone.color), deep = rgb(entry.tone.deep);
+    const light = normalize([-0.25 + p.reflection[0], 0.38 + p.reflection[1], 1]);
     for (let i = 0; i < softwareMesh.positions.length; i += 3) {
       vertices.push(sampleSurface(Array.from(softwareMesh.positions.subarray(i, i + 3)), { parameters: p }));
     }
@@ -421,10 +426,10 @@
     context.save();
     context.globalAlpha *= o.alpha ?? 1;
     for (const face of faces) {
-      const rim = (1 - face.n[2]) ** 2;
-      const spec = Math.max(0, dot(face.n, normalize([-0.25 + p.reflection[0], 0.38 + p.reflection[1], 1]))) ** 55;
-      const color = tint.map((v) => Math.round(255 * clamp(v * (0.78 + rim * 0.22) + spec * 0.72, 0, 1)));
-      context.fillStyle = `rgba(${color.join(",")},${0.11 + rim * 0.58 + spec * 0.55})`;
+      const rim = (1 - face.n[2]) ** 1.65;
+      const spec = Math.max(0, dot(face.n, light)) ** 70;
+      const color = tint.map((v, i) => Math.round(255 * clamp(v * (1 - rim * 0.4) + deep[i] * rim * 0.4 + spec * 0.86, 0, 1)));
+      context.fillStyle = `rgba(${color.join(",")},${clamp(0.14 + rim * 0.76 + spec * 0.64, 0, 0.96)})`;
       context.beginPath();
       face.triangle.forEach((vertex, index) => {
         const x = entry.x + vertex.position[0] * entry.r, y = entry.y - vertex.position[1] * entry.r;
